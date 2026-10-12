@@ -227,7 +227,7 @@ dependencies {
     implementation("app.cash.sqldelight:android-driver:2.0.2")
     implementation("app.cash.sqldelight:coroutines-extensions:2.0.2")
     // Database encryption at rest (SQLCipher), keyed from the Android Keystore.
-    implementation("net.zetetic:sqlcipher-android:4.17.0@aar")
+    implementation("net.zetetic:sqlcipher-android:4.19.1@aar")
     implementation("androidx.sqlite:sqlite:2.7.1")
 
     // libsignal Android native (replaces JVM variant from ObscuraKit)
