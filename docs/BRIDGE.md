@@ -93,7 +93,7 @@ emitted before JS subscribes are dropped.
 5. Emit events only through each bridge's `emit` helper.
 6. If the types do not capture its behavior, add a row here.
 
-[kit]: https://github.com/obscura-messaging/obscura-native/blob/fdaf3bb847100c1eef6b772828d2b5333fbd94ed/docs/KIT_API.md
-[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/fdaf3bb847100c1eef6b772828d2b5333fbd94ed/docs/KIT_API.md#envelope-identity
-[kit-login]: https://github.com/obscura-messaging/obscura-native/blob/fdaf3bb847100c1eef6b772828d2b5333fbd94ed/docs/KIT_API.md#login
-[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/fdaf3bb847100c1eef6b772828d2b5333fbd94ed/docs/KIT_API.md#inbox
+[kit]: https://github.com/obscura-messaging/obscura-native/blob/be2b96538647164c9ba60675f3836b063b4fcf80/docs/KIT_API.md
+[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/be2b96538647164c9ba60675f3836b063b4fcf80/docs/KIT_API.md#envelope-identity
+[kit-login]: https://github.com/obscura-messaging/obscura-native/blob/be2b96538647164c9ba60675f3836b063b4fcf80/docs/KIT_API.md#login
+[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/be2b96538647164c9ba60675f3836b063b4fcf80/docs/KIT_API.md#inbox
