@@ -11,7 +11,7 @@ These are the semantics the app owns in `src/models/`, `src/domain/` and
 | `directMessage` | APPEND  | conversation         | conversation names self and sender       | yes            |
 | `pix`           | APPEND  | conversation         | conversation names self and sender       | yes            |
 | `seen`          | APPEND  | conversation         | conversation names self and sender       | with its entry |
-| `story`         | APPEND  | all accepted friends | none; the transport sender is the author | no             |
+| `story`         | APPEND  | all accepted friends | none; the transport sender is the author | 24 h after post |
 | `profile`       | REPLACE | all accepted friends | entry ID is `profile_<senderUserId>`     | no             |
 
 `src/models/schema.ts` is the executable source: `audienceFor` for sends,
@@ -107,5 +107,8 @@ The rules for `directMessage` and `pix` are in `src/domain/seen.ts` and
   local-only `_erased` model, and the drain consumes later writes for it
   without storing them. Markers are pruned after 30 days, as are receipts whose
   entry never arrived.
+- **Stories.** A story has no receipts. It expires 24 hours after it was
+  posted, on every device, with the same marker and media purge. The stories
+  row hides an expired story until the sweep erases it.
 - **Sweep.** `src/state/expiry.ts` runs on cold start, reconnect, foreground and
   every 30 s while signed in.

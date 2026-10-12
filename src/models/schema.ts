@@ -70,7 +70,7 @@ export const obscuraSchema = {
       captionMeta: 'string?',
     },
     merge: 'APPEND',
-    // Stories are permanent until the app implements expiry.
+    // Erased 24 hours after posting (`domain/expiry.ts`).
   },
   profile: {
     fields: { displayName: 'string', bio: 'string?', avatarUrl: 'string?', _authorUserId: 'string' },
