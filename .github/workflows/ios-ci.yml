@@ -17,7 +17,7 @@ jobs:
     env:
       LIBSIGNAL_REF: 7ef4efdb85d8b2ebd77f3cf1e2b542a2115033c5
     steps:
-      - name: Checkout Pix and native dependencies
+      - name: Checkout app and native dependencies
         uses: actions/checkout@v7
         with:
           submodules: recursive

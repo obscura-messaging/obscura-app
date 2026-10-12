@@ -62,7 +62,7 @@ private fun conversationId(myUserId: String, friendUserId: String): String =
     listOf(myUserId, friendUserId).sorted().joinToString("_")
 
 /**
- * Send a `directMessage` entry the pix app will actually render.
+ * Send a `directMessage` entry the Obscura app will actually render.
  *
  * Uses the kit's `send(recipientUserIds, …)` — the caller names the recipients and hands over an
  * opaque payload.

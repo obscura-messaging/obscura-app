@@ -22,8 +22,8 @@ Gradle recipes reject any JDK except 21. They find it through `JAVA_HOME`, or
 ## Setup and builds
 
 ```bash
-git clone --recurse-submodules https://github.com/obscura-messaging/obscura-pix.git
-cd obscura-pix && just setup && just doctor
+git clone --recurse-submodules https://github.com/obscura-messaging/obscura-app.git
+cd obscura-app && just setup && just doctor
 just doctor-android && just android-release   # or: just android-run
 just doctor-ios && just ios-build             # simulator
 ```

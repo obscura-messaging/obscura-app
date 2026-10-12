@@ -79,22 +79,28 @@ Cloud only after verifying them.
 Use GitHub OIDC with Google Workload Identity Federation. Never create a
 service-account JSON key.
 
-1. Restrict the provider to `obscura-messaging/obscura-pix`. Its attribute
+1. Restrict the provider to `obscura-messaging/obscura-app`. Its attribute
    condition must also pin the calling and reusable workflows; a
    repository-only condition is too broad:
 
    ```text
-   assertion.repository == 'obscura-messaging/obscura-pix' &&
+   assertion.repository == 'obscura-messaging/obscura-app' &&
    assertion.ref == 'refs/heads/main' &&
    assertion.event_name == 'workflow_dispatch' &&
-   assertion.workflow_ref == 'obscura-messaging/obscura-pix/.github/workflows/release-internal.yml@refs/heads/main' &&
-   assertion.job_workflow_ref == 'obscura-messaging/obscura-pix/.github/workflows/internal-android.yml@refs/heads/main'
+   assertion.workflow_ref == 'obscura-messaging/obscura-app/.github/workflows/release-internal.yml@refs/heads/main' &&
+   assertion.job_workflow_ref == 'obscura-messaging/obscura-app/.github/workflows/internal-android.yml@refs/heads/main'
    ```
 
-2. Grant the repository principal `roles/iam.workloadIdentityUser` on a
-   dedicated service account.
+2. Map `attribute.repository` to `assertion.repository`, and grant the
+   `principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/attribute.repository/obscura-messaging/obscura-app`
+   principal `roles/iam.workloadIdentityUser` on a dedicated service account.
 3. Grant that service account `roles/firebaseappdistro.admin` in the Firebase
    project.
+
+On a repository rename, update both the provider condition and the
+service-account principal; GitHub redirects do not apply to OIDC claims.
+The provider resource ID is independent of the repository name and can stay
+unchanged. Keep workflow paths pinned even when using immutable subject claims.
 
 ## Installing
 
