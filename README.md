@@ -5,6 +5,11 @@ Kotlin and Swift kits in the [`obscura-native`](obscura-native/) submodule.
 Android is the release target. iOS ships internal TestFlight builds and works in
 the foreground; push is not implemented ([iOS status](docs/IOS_PARITY.md)).
 
+The product is **Obscura**; `obscura-app` is this repository. A **pix** is a
+direct, disappearing photo or video message, not the app's name. Its `pix`
+model key is part of stored and transmitted data and does not change with the
+repository name.
+
 ## Ownership
 
 | Layer | Owns |
@@ -16,7 +21,7 @@ the foreground; push is not implemented ([iOS status](docs/IOS_PARITY.md)).
 Never move application semantics into native code. Contracts:
 [`DOMAIN_CONTRACT.md`](docs/DOMAIN_CONTRACT.md) (app),
 [`BRIDGE.md`](docs/BRIDGE.md) (React Native bridge),
-[`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/7b72b52d033f098f5444d38bf8d4608120efa8c2/docs/KIT_API.md) (kit).
+[`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/be2b96538647164c9ba60675f3836b063b4fcf80/docs/KIT_API.md) (kit).
 
 ## Where things live
 

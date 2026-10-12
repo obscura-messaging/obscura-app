@@ -36,6 +36,6 @@ be validated on the simulator.
 
 - The Swift kit cannot receive device-link approval, so a new iOS device cannot
   be linked. See Known gaps in
-  [`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/7b72b52d033f098f5444d38bf8d4608120efa8c2/docs/KIT_API.md#known-gaps).
+  [`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/be2b96538647164c9ba60675f3836b063b4fcf80/docs/KIT_API.md#known-gaps).
 - Background and foreground transitions are not tested automatically on a
   device.

@@ -34,10 +34,10 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout pix
+      - name: Checkout app
         uses: actions/checkout@v7
         with:
-          # Native is pinned by Pix's gitlink and contains the transport proto
+          # Native is pinned by the app's gitlink and contains the transport proto
           # submodule required by Kotlin protobuf codegen.
           submodules: recursive
 

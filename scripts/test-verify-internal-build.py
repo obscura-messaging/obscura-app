@@ -23,7 +23,7 @@ class InternalBuildVerificationTest(unittest.TestCase):
         mock.write_text(
             '#!/bin/sh\n'
             'case "$2" in\n'
-            '  "repos/example/pix/actions/workflows/ci.yml/runs?"*)\n'
+            '  "repos/example/app/actions/workflows/ci.yml/runs?"*)\n'
             '    echo "${MOCK_CI_RESULT:-1}" ;;\n'
             '  *) echo "unexpected CI request" >&2; exit 1 ;;\n'
             "esac\n"
@@ -50,7 +50,7 @@ class InternalBuildVerificationTest(unittest.TestCase):
             GITHUB_TRIGGERING_ACTOR="barrelmaker97",
             GITHUB_RUN_NUMBER="1",
             GITHUB_OUTPUT=str(self.output),
-            GITHUB_REPOSITORY="example/pix",
+            GITHUB_REPOSITORY="example/app",
             MOCK_CI_RESULT="1",
             PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
         )
