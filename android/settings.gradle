@@ -6,7 +6,7 @@ include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')
 
 // ── obscura-native Kotlin composite build ───────────────────────────
-// Pix pins the native repo as a submodule. Rather than publish it to a
+// The app pins the native repo as a submodule. Rather than publish it to a
 // registry, we compose its Gradle build directly.
 //
 // `implementation("dev.barrelmaker.obscura.kit:obscura-kit:0.1.0")` in app/build.gradle

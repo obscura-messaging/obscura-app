@@ -62,7 +62,7 @@ updates:
         update-types: ["version-update:semver-major"]
       # Allow TypeScript majors to open PRs so CI exposes compatibility work.
 
-  # ─── Android gradle (pix app) ───────────────────────────
+  # ─── Android gradle (app) ───────────────────────────────
   - package-ecosystem: "gradle"
     directory: "/android"
     schedule:
@@ -81,8 +81,8 @@ updates:
           - "androidx.lifecycle:*"
     ignore:
       # Owned by obscura-native/kotlin — bumps must happen there first so the
-      # package re-publishes against the new version, then pix follows.
-      # Verified: bumping sqldelight in pix alone breaks compileReleaseKotlin
+      # package re-publishes against the new version, then the app follows.
+      # Verified: bumping sqldelight in the app alone breaks compileReleaseKotlin
       # because the kit jar references the older API surface.
       - dependency-name: "org.signal:libsignal-android"
       - dependency-name: "com.google.protobuf:protobuf-java"
