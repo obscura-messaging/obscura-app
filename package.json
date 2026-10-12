@@ -21,7 +21,7 @@
     "react-native-safe-area-context": "^5.10.1",
     "react-native-screens": "^4.27.0",
     "react-native-svg": "^15.15.5",
-    "react-native-video": "^6.19.2",
+    "react-native-video": "^6.19.3",
     "react-native-vision-camera": "^4.7.3",
     "zustand": "^5.0.15"
   },
