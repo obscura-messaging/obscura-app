@@ -17,8 +17,6 @@ interface NativeObscuraBridge {
   getFriendCode(): Promise<string>;
   addFriendByCode(code: string): Promise<void>;
   getFriends(): Promise<Friend[]>;
-  generateLinkCode(): Promise<string>;
-  validateAndApproveLink(code: string): Promise<void>;
   inboxPeek(limit: number): Promise<InboxRow[]>;
   inboxConsume(ids: number[]): Promise<void>;
   inboxDiscard(ids: number[], reason: string): Promise<void>;
@@ -121,7 +119,7 @@ export interface SendReport {
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'reconnecting' | 'connected';
-export type AuthState = 'loggedOut' | 'authenticated' | 'pendingApproval';
+export type AuthState = 'loggedOut' | 'authenticated';
 export type AppLifecycleState = 'active' | 'background';
 
 export interface LaunchIntent {
@@ -150,7 +148,6 @@ export type ObscuraErrorCode =
   | 'NO_DEVICES'
   | 'NO_MESSENGER'
   | 'TIMEOUT'
-  | 'DEVICE_LINK_FAILED'
   | 'SEND_FAILED';
 
 // ─── Core API ────────────────────────────────────────────
@@ -187,11 +184,6 @@ export const Obscura = {
   getFriendCode: (): Promise<string> => Bridge.getFriendCode(),
   addFriendByCode: (code: string): Promise<void> => Bridge.addFriendByCode(code),
   getFriends: (): Promise<Friend[]> => Bridge.getFriends(),
-
-  // Device linking
-  generateLinkCode: (): Promise<string> => Bridge.generateLinkCode(),
-  validateAndApproveLink: (code: string): Promise<void> =>
-    Bridge.validateAndApproveLink(code),
 
   // ─── Kit data surface ────
   //

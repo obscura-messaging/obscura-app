@@ -293,10 +293,8 @@ export function applyObscuraEvent(event: ObscuraEvent): void {
       if (event.state === 'connected') syncBothWays('connected');
       return;
     case 'authStateChanged':
-      if (event.state === 'loggedOut') { s.reset(); return; }
-      // Device-link approval transitions through `pendingApproval` to
-      // `authenticated`; update the store so session loading and draining run.
-      if (event.state === 'authenticated') s.setAuthed(true);
+      if (event.state === 'loggedOut') s.reset();
+      else s.setAuthed(true);
       return;
 
     case 'appStateChanged':

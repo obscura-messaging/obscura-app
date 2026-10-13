@@ -16,7 +16,7 @@
  * (the app decides who wins), and `sendEntry` produces no local row — the sender writes its own copy.
  */
 
-import type { Friend, InboxRow, LoginScenario, SendReport, StoredEntry, SubmissionResult } from '../ObscuraModule';
+import type { AuthState, Friend, InboxRow, LoginScenario, SendReport, StoredEntry, SubmissionResult } from '../ObscuraModule';
 
 type FakeInboxRow = InboxRow & { envelopeId: string };
 
@@ -31,7 +31,7 @@ export class FakeObscuraBridge {
   userId: string;
   username: string;
   deviceId: string;
-  authState: 'loggedOut' | 'authenticated' | 'pendingApproval' = 'loggedOut';
+  authState: AuthState = 'loggedOut';
   connectionState: 'disconnected' | 'connecting' | 'reconnecting' | 'connected' = 'disconnected';
 
   // ─── Stores ────────────────────────────────────────────
@@ -256,7 +256,7 @@ export class FakeObscuraBridge {
   }
 
   /** Flip auth state and emit, as login/logout does. */
-  __setAuthState(state: 'loggedOut' | 'authenticated' | 'pendingApproval'): void {
+  __setAuthState(state: AuthState): void {
     this.authState = state;
     this.__emit({ type: 'authStateChanged', state });
   }
@@ -457,17 +457,6 @@ export class FakeObscuraBridge {
   async getFriends(): Promise<Friend[]> {
     this.record('getFriends');
     return [...this.friends];
-  }
-
-  // ─── Device linking ────────────────────────────────────
-
-  async generateLinkCode(): Promise<string> {
-    this.record('generateLinkCode');
-    return 'LINK-0000';
-  }
-  async validateAndApproveLink(_code: string): Promise<void> {
-    this.record('validateAndApproveLink');
-    this.checkFailure('validateAndApproveLink');
   }
 
   // ─── Signals ───────────────────────────────────────────

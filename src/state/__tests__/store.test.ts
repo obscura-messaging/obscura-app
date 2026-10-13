@@ -291,11 +291,6 @@ describe('the drain triggers', () => {
     expect(await Obscura.inboxDepth()).toBe(0);
   });
 
-  /**
-   * **The defect.** `authenticated` was ignored, so `authed` only ever flipped true from the
-   * cold-start `getAuthState()` or an explicit login. When the kit emits this after a device link is
-   * approved, the `[authed]` effect never fired — no cold-start drain — until the app restarted.
-   */
   it('flips authed on `authStateChanged: authenticated`, which is what runs the cold-start drain', () => {
     expect(useStore.getState().authed).toBe(false);
 

@@ -67,7 +67,7 @@ All events share one stream, `ObscuraEvent`, keyed by `type`. The
 | Event | Emitted when | JS reaction (`src/state/store.ts`) |
 | --- | --- | --- |
 | `connectionChanged` | The WebSocket state changes | On `connected`: drain, flush the outbox, sweep expiry |
-| `authStateChanged` | Login, logout, a rejected refresh token or a pending-approval transition | `loggedOut` resets the session. `authenticated` loads it and runs the cold-start sync. |
+| `authStateChanged` | Login, logout or a rejected refresh token | `loggedOut` resets the session. `authenticated` loads it and runs the cold-start sync. |
 | `appStateChanged` | The process moves to foreground or background | On `active`: drain, flush, sweep |
 | `launchedFrom` | A notification is tapped while the app runs (Android only) | Navigate |
 | `friendsChanged` | The friend graph changes | Call `getFriends()` |
