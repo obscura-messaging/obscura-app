@@ -152,31 +152,6 @@ describe('drainAndRefresh', () => {
     expect(await Obscura.entryAll('directMessage')).toHaveLength(1);
   });
 
-  it('refreshes an explicitly named model too', async () => {
-    session();
-    await loadEntries('story');
-    await Obscura.entryPut('story', 's', JSON.stringify({ content: 'x' }), 1, 'd');
-
-    await drainAndRefresh('story');
-
-    expect(useStore.getState().entries.story).toHaveLength(1);
-  });
-
-  /** An inbox that is not empty after a full drain means the app has stopped keeping up. */
-  it('logs when the inbox is still not empty after a full drain', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    session();
-    // The kit reporting a non-empty inbox after the app believes it finished — which is what a
-    // concurrent delivery, or an app that has fallen behind, actually looks like from here.
-    const depth = jest.spyOn(bridge, 'inboxDepth').mockResolvedValueOnce(3);
-
-    await drainAndRefresh();
-
-    expect(warn.mock.calls.flat().join('\n')).toContain('notDrained');
-    depth.mockRestore();
-    warn.mockRestore();
-  });
-
   /** A drain failure must not propagate into an event handler that cannot do anything with it. */
   it('swallows a drain failure rather than rejecting', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});

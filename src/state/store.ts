@@ -69,8 +69,8 @@ interface ObscuraStore {
   _setEntries: (model: string, entries: ScreenEntry[]) => void;
 }
 
-export const useStore = create<ObscuraStore>((set) => ({
-  bootstrapped: false,
+/** Everything a session holds, as it is with nobody signed in. */
+const SIGNED_OUT = {
   authed: false,
   myUserId: '',
   myUsername: '',
@@ -79,33 +79,20 @@ export const useStore = create<ObscuraStore>((set) => ({
   pending: [],
   connState: 'disconnected',
   entries: {},
+} as const satisfies Partial<ObscuraStore>;
+
+export const useStore = create<ObscuraStore>((set, get) => ({
+  bootstrapped: false,
+  ...SIGNED_OUT,
 
   setAuthed: (v) => set({ authed: v }),
 
   logout: async () => {
     try { await Obscura.logout(); } catch (e) { logError('logout', e); }
-    set({
-      authed: false,
-      myUserId: '',
-      myUsername: '',
-      myDeviceId: '',
-      friends: [],
-      pending: [],
-      connState: 'disconnected',
-      entries: {},
-    });
+    get().reset();
   },
 
-  reset: () => set({
-    authed: false,
-    myUserId: '',
-    myUsername: '',
-    myDeviceId: '',
-    friends: [],
-    pending: [],
-    connState: 'disconnected',
-    entries: {},
-  }),
+  reset: () => set(SIGNED_OUT),
 
   _setBootstrapped: (v) => set({ bootstrapped: v }),
   _setUserId: (id) => set({ myUserId: id }),
@@ -183,17 +170,9 @@ async function refreshLoaded(models: Iterable<string>): Promise<void> {
  * **Every trigger goes through here**, because a drain that only happens on one of them is how
  * messages get stranded — see the triggers wired in `ObscuraBootstrap`.
  */
-export async function drainAndRefresh(alsoRefresh?: string): Promise<void> {
+export async function drainAndRefresh(): Promise<void> {
   try {
-    const result = await drainInboxFully();
-    await refreshLoaded(alsoRefresh ? [...result.touched, alsoRefresh] : result.touched);
-
-    // An inbox that is not empty after a full drain means the app has stopped keeping up; surface it
-    // before the kit's persistence fails and the server queue fills.
-    const depth = await Obscura.inboxDepth();
-    if (depth > 0) {
-      logError('inbox.notDrained', new Error(`${depth} row(s) still in the inbox after a full drain`));
-    }
+    await refreshLoaded((await drainInboxFully()).touched);
   } catch (e) {
     logError('inbox.drain', e);
   }
@@ -245,7 +224,7 @@ export async function saveEntry(
     //
     // An unresolvable audience throws before anything is stored, so refreshing then is a no-op read
     // rather than a wrong one.
-    await loadEntries(model);
+    await refreshLoaded([model]);
   }
 }
 
@@ -273,8 +252,8 @@ export async function flushOutboxFromStore(): Promise<void> {
  * They are always triggered together so the receive and retry paths respond to
  * the same connectivity and lifecycle signals.
  */
-function syncBothWays(label: string, alsoRefresh?: string): void {
-  drainAndRefresh(alsoRefresh).catch((e) => logError('entries.drain:' + label, e));
+function syncBothWays(label: string): void {
+  drainAndRefresh().catch((e) => logError('entries.drain:' + label, e));
   flushOutboxFromStore().catch((e) => logError('outbox.flush:' + label, e));
   sweepAndRefresh().catch((e) => logError('expiry.sweep:' + label, e));
 }
@@ -291,7 +270,6 @@ export async function markSeen(model: string, entry: Entry): Promise<void> {
   const conversationId = entry.data.conversationId;
   if (typeof conversationId !== 'string') return;
   await saveEntry(SEEN_MODEL, { conversationId, viewedAt: Date.now() }, seenEntryId(model, entry.id));
-  await loadEntries(model);
 }
 
 /**
@@ -310,7 +288,7 @@ export function applyObscuraEvent(event: ObscuraEvent): void {
       return;
     }
     case 'connectionChanged':
-      s._setConnState(event.state || 'disconnected');
+      s._setConnState(event.state);
       // Reconnecting is when the server redelivers anything it did not see acked, so it is one
       // of the moments the inbox is most likely to have grown.
       if (event.state === 'connected') syncBothWays('connected');
@@ -327,20 +305,14 @@ export function applyObscuraEvent(event: ObscuraEvent): void {
       // is suspended, so foregrounding must drain again.
       if (event.state === 'active') syncBothWays('foreground');
       return;
-    case 'pushTokenReceived': {
-      if (!event.token) return;
-      const preview = event.token.slice(0, 8) + '...';
-      console.log('[push] token received:', preview);
-      Obscura.registerPushToken(event.token).catch((e: unknown) => {
-        console.warn('[push] token registration failed:', e);
-      });
+    case 'pushTokenReceived':
+      Obscura.registerPushToken(event.token).catch((e) => logError('push.register', e));
       return;
-    }
     case 'messageReceived': {
       // DRAIN FIRST, then refresh. The event is only a wake-up — under the thin kit the data is
       // in the inbox, not in the event, and nothing reaches the entry store until the app moves
       // it there. Refreshing without draining would show a store that has not changed.
-      drainAndRefresh(event.model).catch((e) => logError('entries.drain:' + event.model, e));
+      drainAndRefresh().catch((e) => logError('entries.drain:' + event.model, e));
       return;
     }
   }

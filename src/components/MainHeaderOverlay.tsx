@@ -25,11 +25,8 @@ export function MainHeaderOverlay({ camera }: MainHeaderOverlayProps) {
       pointerEvents="box-none"
       style={[
         s.host,
-        {
-          height: insets.top + MAIN_HEADER_CONTENT_HEIGHT,
-          paddingTop: insets.top,
-          backgroundColor: camera ? 'rgba(0,0,0,0.32)' : colors.bg,
-        },
+        camera ? s.overCamera : s.overContent,
+        { height: insets.top + MAIN_HEADER_CONTENT_HEIGHT, paddingTop: insets.top },
       ]}
     >
       <TouchableOpacity
@@ -52,6 +49,8 @@ export function MainHeaderOverlay({ camera }: MainHeaderOverlayProps) {
 }
 
 const s = StyleSheet.create({
+  overCamera: { backgroundColor: 'rgba(0,0,0,0.32)' },
+  overContent: { backgroundColor: colors.bg },
   host: {
     position: 'absolute',
     top: 0,
