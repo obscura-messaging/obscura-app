@@ -30,7 +30,7 @@ jobs:
       - run: python3 scripts/test-verify-internal-build.py -q
 
   android:
-    name: Android + push sender
+    name: Android
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -60,7 +60,3 @@ jobs:
       # Main builds a signed APK once in the separate distribution workflow.
       - name: Compile arm64 release APK
         run: just android-release arm64-v8a false
-
-      # Reuses the composite-built native kit outputs from the app build.
-      - name: Build push sender
-        run: just push-sender-build

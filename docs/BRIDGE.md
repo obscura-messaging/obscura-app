@@ -33,7 +33,7 @@ All methods exist on both platforms. Behavior beyond the types:
 | Method | Behavior |
 | --- | --- |
 | `login` | Returns one of the four outcomes in [Login][kit-login]. Persists the session only for `existingDevice`. The app handles the other outcomes in `src/state/login.ts`: `deviceMismatch` calls `wipeDevice` then `loginAndProvision`. |
-| `wipeDevice` | Runs the kit wipe, then clears the persisted session that the kit leaves behind. |
+| `wipeDevice` | The kit logs out, clears its persisted session and securely wipes local data; the host releases the client. |
 | `entryPut` | A blind upsert: the app merges first. It emits no event, so the app refreshes itself. |
 | `entryGet`, `entryErase` | Take a list of IDs; missing IDs are skipped. Each `entryErase` call checkpoints the WAL, so erase in batches. |
 | `sendEntry` | Resolves to a `SendReport` of per-device outcomes ([Send][kit-send]) and does not reject because nobody accepted. `src/domain/delivery.ts` decides whether the send failed. |
@@ -81,6 +81,15 @@ why the app also drains on cold start, reconnect and foreground.
 On Android, a newly bound bridge first replays `appStateChanged`,
 `authStateChanged`, `connectionChanged` and `friendsChanged`. On iOS, events
 emitted before JS subscribes are dropped.
+
+Both hosts wait for cold-start session restoration before resolving the
+initial auth read. Session blobs are written only by the kit through an
+encrypted Android adapter or the iOS Keychain adapter; token rotation is not
+an application callback. Storage write/clear failures reject rather than
+reporting success.
+
+Concurrent auth operations reject with `INVALID_ARGUMENT` instead of racing
+different clients against the same session store.
 
 ## Adding a method or event
 

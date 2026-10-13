@@ -14,134 +14,96 @@ import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.ConnectionState
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraConfig
+import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.ObscuraLogger
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
-import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
+import dev.barrelmaker.obscura.kit.stores.FriendStatus
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
+import java.util.Locale
 
-/**
- * Process-scoped owner of the [ObscuraClient] — the "who is the live client and
- * when is the app foregrounded" layer. NOT the auth-session store: token/refresh/
- * schema persistence is owned by the kit (see [ObscuraClient.persistSession] /
- * [ObscuraClient.restorePersistedSession]); this only supplies the platform
- * [SessionStorage] impl and picks the per-user SQLite DB. Responsibilities:
- *
- *   - Client lifecycle (build per-user client / restore on cold start / destroy)
- *   - Foreground/background tracking (ProcessLifecycleOwner); reconnect on resume
- *     via [ObscuraClient.ensureConnected]
- *   - The SINGLE consumer of [ObscuraClient.incomingMessages] — classifies
- *     each envelope, fans out to the bound [EventSink] (i.e. the RN bridge),
- *     and posts a generic local notification when the app is backgrounded.
- *
- * Initialized from [MainApplication.onCreate] so an FCM cold-start can
- * restore the session and start consuming messages before the RN bridge
- * is ever constructed.
- *
- * Threading: callable from any thread; internal coroutines run on
- * [Dispatchers.Default] / [Dispatchers.Main] as appropriate.
- */
+/** Owns the live client, OS lifecycle and notifications. The kit owns session persistence. */
 object ObscuraSession {
-
     private const val TAG = "ObscuraSession"
-    private const val PREFS_NAME = "obscura_session"
     private const val API_URL = "https://obscura.barrelmaker.dev"
 
-    /** Listener registered by the RN bridge so kit events reach JS. */
     interface EventSink {
         fun onConnectionChanged(state: ConnectionState)
         fun onAuthStateChanged(state: AuthState)
         fun onFriendsChanged()
-        fun onMessageReceived(type: String, modelName: String?)
+        fun onMessageReceived(model: String)
         fun onPushToken(token: String)
         fun onAppStateChanged(state: AppState)
     }
 
-    /** Process-wide app foreground/background. Matches the iOS-friendly minimal set. */
     enum class AppState { ACTIVE, BACKGROUND }
 
     private lateinit var appContext: Context
     private val prefs: SharedPreferences by lazy {
-        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        appContext.getSharedPreferences("obscura_session", Context.MODE_PRIVATE)
     }
-
+    private val sessionStorage by lazy { SharedPreferencesSessionStorage(prefs) }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val collectorJobs = mutableListOf<Job>()
+    private var restoreJob: Job? = null
 
     @Volatile var client: ObscuraClient? = null
         private set
-
-    @Volatile var appInForeground: Boolean =
+    @Volatile var appInForeground =
         ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
         private set
-
     @Volatile private var sink: EventSink? = null
 
-    /** Logger that forwards everything to logcat and surfaces auth failures via the sink. */
     val logger: ObscuraLogger = object : ObscuraLogger {
         override fun log(message: String) { Log.d(TAG, message) }
-        override fun decryptFailed(sourceUserId: String, reason: String) { Log.w(TAG, "decrypt failed from ${sourceUserId.take(8)}: $reason") }
+        override fun decryptFailed(sourceUserId: String, reason: String) { Log.w(TAG, "decrypt failed from $sourceUserId: $reason") }
         override fun ackFailed(envelopeId: String, reason: String) { Log.w(TAG, "ack failed $envelopeId: $reason") }
-        // A rejected refresh token signs the kit out; the auth-state collector reports that.
-        override fun tokenRefreshFailed(attempt: Int, reason: String) { Log.e(TAG, "token refresh failed (attempt $attempt): $reason") }
+        override fun tokenRefreshFailed(attempt: Int, reason: String) { Log.e(TAG, "token refresh failed ($attempt): $reason") }
         override fun preKeyReplenishFailed(reason: String) { Log.w(TAG, "prekey replenish failed: $reason") }
         override fun identityChanged(address: String) { Log.w(TAG, "identity changed: $address") }
         override fun sessionEstablishFailed(userId: String, reason: String) { Log.e(TAG, "session establish failed $userId: $reason") }
         override fun databaseError(store: String, operation: String, reason: String) { Log.e(TAG, "db error $store.$operation: $reason") }
     }
 
-    /**
-     * Called once from [MainApplication.onCreate]. Wires up the lifecycle
-     * observer and attempts to restore a persisted session.
-     */
     fun init(app: Context) {
         appContext = app.applicationContext
-
-        // Foreground/background tracking. ProcessLifecycleOwner requires main thread.
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
                 override fun onStart(owner: LifecycleOwner) {
                     appInForeground = true
                     sink?.onAppStateChanged(AppState.ACTIVE)
                     val c = client ?: return
-                    // Kit owns the reconnect decision (idempotent — no-op if already
-                    // connected). This also covers the case the gateway's own
-                    // auto-reconnect can't: a cold-start restore whose first connect
-                    // failed, or a resume where a dead socket isn't detected yet.
                     scope.launch {
-                        try { c.ensureConnected() } catch (e: Exception) {
-                            Log.e(TAG, "Foreground reconnect failed: ${e.message}")
-                        }
+                        restoreJob?.join()
+                        if (c.authState.value != AuthState.AUTHENTICATED) return@launch
+                        try { c.connect() }
+                        catch (e: CancellationException) { throw e }
+                        catch (e: Exception) { Log.e(TAG, "Foreground reconnect failed", e) }
                     }
                 }
+
                 override fun onStop(owner: LifecycleOwner) {
                     appInForeground = false
                     sink?.onAppStateChanged(AppState.BACKGROUND)
                 }
             })
         }
-
-        // Try to restore persisted session (idempotent — no-op if not present).
-        try {
-            tryRestore()
-        } catch (e: Exception) {
-            Log.e(TAG, "init: restore failed: ${e.message}")
-        }
+        try { tryRestore() }
+        catch (e: Exception) { Log.e(TAG, "Session restore failed", e) }
     }
-
-    // ─── EventSink registration (bridge) ────────────────────────────────────
 
     fun bindEventSink(s: EventSink) {
         sink = s
-        // Replay current state so a freshly-bound bridge immediately sees correct UI.
         s.onAppStateChanged(if (appInForeground) AppState.ACTIVE else AppState.BACKGROUND)
-        val c = client ?: return
-        s.onAuthStateChanged(c.authState.value)
-        s.onConnectionChanged(c.connectionState.value)
+        s.onAuthStateChanged(client?.authState?.value ?: AuthState.LOGGED_OUT)
+        s.onConnectionChanged(client?.connectionState?.value ?: ConnectionState.DISCONNECTED)
         s.onFriendsChanged()
     }
 
@@ -149,53 +111,46 @@ object ObscuraSession {
         if (sink === s) sink = null
     }
 
-    // ─── Client lifecycle ───────────────────────────────────────────────────
-    //
-    // Auth-session persistence (token/refresh/schema) is kit-owned via the
-    // injected [sessionStorage]; this section only owns the client instance and
-    // its per-user SQLite DB. Persist happens in the kit (connect + token
-    // rotation) and logout() clears sessionStorage; wipeDevice() does not.
-
-    private val sessionStorage by lazy { SharedPreferencesSessionStorage(prefs) }
-
-    /**
-     * Build a per-user client (SQLite DB keyed by username) wired to the shared
-     * logger + [sessionStorage], make it the live client, and start bridge
-     * collectors. Replaces any existing client. Does NOT connect or restore —
-     * callers drive auth (register / login / restorePersistedSession).
-     */
-    private fun buildClient(username: String): ObscuraClient {
-        destroyClient()
-        val dbName = "obscura_${username}.db"
-        System.loadLibrary("sqlcipher")
-        val driver = try {
-            openDatabase(username, dbName)
-        } catch (e: Exception) {
-            if (!isUndecryptable(e)) throw e
-            // Unreadable without its key: start over, and the next login provisions a new device.
-            Log.e(TAG, "Database for $username cannot be decrypted; discarding it", e)
-            LocalKeystore.discardDatabase(appContext, username, dbName)
-            sessionStorage.clear()
-            openDatabase(username, dbName)
-        }
-        val c = ObscuraClient(
-            ObscuraConfig(apiUrl = API_URL),
-            externalDriver = driver,
-            sessionStorage = sessionStorage,
-        )
-        c.logger = logger
-        client = c
-        startCollectors(c)
-        Log.d(TAG, "Client built (db=$dbName)")
-        return c
+    suspend fun createClient(username: String): ObscuraClient {
+        restoreJob?.cancelAndJoin()
+        restoreJob = null
+        client?.logout()
+        return buildClient(username)
     }
 
-    /** Opens the user's SQLCipher database and reads once, so a bad key fails here. */
+    private fun buildClient(username: String): ObscuraClient {
+        if (!Regex("^[a-zA-Z0-9_]{3,50}$").matches(username)) {
+            throw ObscuraError.InvalidArgument("Invalid username")
+        }
+        destroyClient()
+        // The server treats usernames case-insensitively; storage must identify the same account.
+        val storageName = username.lowercase(Locale.ROOT)
+        val dbName = "obscura_$storageName.db"
+        System.loadLibrary("sqlcipher")
+        val driver = try {
+            openDatabase(storageName, dbName)
+        } catch (e: Exception) {
+            if (!isUndecryptable(e)) throw e
+            Log.e(TAG, "Database cannot be decrypted; discarding it", e)
+            LocalKeystore.discardDatabase(appContext, storageName, dbName)
+            sessionStorage.clear()
+            openDatabase(storageName, dbName)
+        }
+        return ObscuraClient(
+            ObscuraConfig(apiUrl = API_URL, deviceName = android.os.Build.MODEL),
+            driver = driver,
+            sessionStorage = sessionStorage,
+        ).also {
+            it.logger = logger
+            client = it
+            startCollectors(it)
+        }
+    }
+
     private fun openDatabase(username: String, dbName: String): AndroidSqliteDriver {
-        val key = LocalKeystore.databaseKey(appContext, username)
         val driver = AndroidSqliteDriver(
             ObscuraDatabase.Schema, appContext, dbName,
-            factory = SupportOpenHelperFactory(key),
+            factory = SupportOpenHelperFactory(LocalKeystore.databaseKey(appContext, username)),
         )
         try {
             driver.executeQuery(null, "SELECT count(*) FROM sqlite_master", { it.next(); QueryResult.Unit }, 0)
@@ -206,7 +161,6 @@ object ObscuraSession {
         return driver
     }
 
-    /** A lost key or a file SQLCipher cannot read. Transient errors (full disk, lock) are not. */
     private fun isUndecryptable(e: Throwable): Boolean =
         generateSequence(e) { it.cause }.any {
             it is LocalKeystore.SecretUnavailableException ||
@@ -214,150 +168,81 @@ object ObscuraSession {
                 it.message?.contains("file is not a database") == true
         }
 
-    fun clearSession() = sessionStorage.clear()
-
-    /** Build a fresh client for a username (register / login entry point). */
-    fun createClient(username: String): ObscuraClient = buildClient(username)
-
-    /** Tear down the current client, cancel collectors. */
     fun destroyClient() {
         collectorJobs.forEach { it.cancel() }
         collectorJobs.clear()
-        try { client?.disconnect() } catch (_: Exception) {}
+        client?.disconnect()
         client = null
     }
 
-    /**
-     * Restore a client from persisted session on cold start. The app reads only
-     * the persisted username (to name the per-user DB); the kit then re-reads the
-     * blob to do the restore → refresh-token → define-cached-models → connect flow
-     * via [ObscuraClient.restorePersistedSession].
-     *
-     * Returns the client (existing or freshly built), or null if no session is
-     * persisted. Idempotent — calling twice returns the same instance.
-     */
+    suspend fun waitForRestore() {
+        restoreJob?.join()
+    }
+
     @Synchronized
     fun tryRestore(): ObscuraClient? {
         client?.let { return it }
         val saved = sessionStorage.load() ?: return null
-        val username = saved["username"] as? String ?: return null
-        val token = saved["token"] as? String ?: return null
-        if (token.isBlank()) return null
-
-        Log.d(TAG, "Restoring session: user=$username")
+        val username = saved["username"] ?: return null
         val c = buildClient(username)
-        // buildClient clears the session when it discards an undecryptable database.
-        if (sessionStorage.load() == null) {
-            destroyClient()
-            return null
-        }
-
-        // Kit restores tokens/deviceId, refreshes, defines cached models, connects,
-        // and re-persists rotated tokens. Clears storage if the refresh token is dead.
-        scope.launch {
-            try {
-                if (!c.restorePersistedSession()) {
-                    Log.w(TAG, "restore: no valid session or connect failed")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "restore failed: ${e.message}")
-            }
+        restoreJob = scope.launch {
+            if (!c.restorePersistedSession()) Log.w(TAG, "No usable stored session")
         }
         return c
     }
 
-    // ─── Collectors (single source of truth) ────────────────────────────────
-
     private fun startCollectors(c: ObscuraClient) {
+        collectorJobs += scope.launch { c.connectionState.collect { sink?.onConnectionChanged(it) } }
+        collectorJobs += scope.launch { c.authState.collect { sink?.onAuthStateChanged(it) } }
         collectorJobs += scope.launch {
-            c.connectionState.collectLatest { state ->
-                Log.d(TAG, "Connection: $state")
-                sink?.onConnectionChanged(state)
-            }
-        }
-        collectorJobs += scope.launch {
-            c.authState.collectLatest { state ->
-                Log.d(TAG, "AuthState: $state")
-                sink?.onAuthStateChanged(state)
-            }
-        }
-        collectorJobs += scope.launch {
-            c.friendsChanged.collectLatest {
+            var previousPending: Set<String>? = null
+            c.friendsChanged.collect {
                 sink?.onFriendsChanged()
+                try {
+                    val pending = c.getFriends().filter { it.status == FriendStatus.PENDING_RECEIVED }
+                        .map { it.userId }.toSet()
+                    if (!appInForeground && previousPending?.let { (pending - it).isNotEmpty() } == true) {
+                        NotificationHelper.postGeneric(appContext, "New friend request")
+                    }
+                    previousPending = pending
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.databaseError("friends", "notification", e.message ?: e.javaClass.simpleName)
+                }
             }
         }
-        // THE single consumer of incomingMessages. Fans out to sink + notification.
         collectorJobs += scope.launch {
-            for (msg in c.incomingMessages) {
-                Log.d(TAG, "Incoming: ${msg.type}")
-                val modelName = msg.model
-                sink?.onMessageReceived(msg.type, modelName)
-
+            for (model in c.messageReceived) {
+                sink?.onMessageReceived(model)
                 if (!appInForeground) {
-                    val notifText = classifyForNotification(msg.type, modelName)
-                    if (notifText != null) {
-                        NotificationHelper.postGeneric(appContext, notifText)
-                    }
+                    notificationText(model)?.let { NotificationHelper.postGeneric(appContext, it) }
                 }
             }
         }
     }
 
-    /**
-     * Generic notification copy for an incoming message, or null for anything that must not notify.
-     *
-     * These model names are `src/models/schema.ts`'s, hardcoded here because a notification has to be
-     * postable with no JS runtime. That makes them a copy, so **every declared model is listed** and
-     * an unrecognised one falls through to a generic notification rather than to silence: a model
-     * renamed in `schema.ts` would otherwise stop notifying with nothing to notice it — no type
-     * error, no failing test, just a user who stops hearing about their messages.
-     *
-     * Over-notifying once is recoverable. Silently not notifying is what this shape is guarding.
-     */
-    private fun classifyForNotification(type: String, modelName: String?): String? {
-        if (type == "FRIEND_REQUEST") return "New friend request"
-        if (type != "APP_ENTRY") return null
-        if (modelName == null) {
-            Log.e(TAG, "Notification suppressed: APP_ENTRY missing model")
-            return null
-        }
-
-        return when (modelName) {
-            "pix" -> "New pix"
-            "directMessage" -> "New message"
-            // Declared, and deliberately silent.
-            "story", "profile", "seen" -> null
-            else -> {
-                Log.w(TAG, "Notification: unrecognised model '$modelName' — is it renamed in schema.ts?")
-                "New message"
-            }
+    private fun notificationText(model: String): String? = when (model) {
+        "pix" -> "New pix"
+        "directMessage" -> "New message"
+        "story", "profile", "seen" -> null
+        else -> {
+            Log.w(TAG, "Unknown notification model: $model")
+            "New message"
         }
     }
 
-    // ─── FCM cold-start path ────────────────────────────────────────────────
-
-    /**
-     * Called by [ObscuraMessagingService.onMessageReceived]. Restores the
-     * session if needed, ensures the client is connected, then waits briefly
-     * for the incoming-message collector to drain whatever the server has
-     * queued. The collector itself is the one posting notifications — this
-     * just guarantees it gets a chance to run.
-     */
     suspend fun onPushWake(timeoutMs: Long = 25_000L) {
-        val c = tryRestore() ?: run {
-            Log.w(TAG, "onPushWake: no persisted session, ignoring")
-            return
-        }
         try {
-            // Ensure connected; processPendingMessages handles both cases.
-            c.processPendingMessages(timeoutMs)
+            val c = tryRestore() ?: return
+            restoreJob?.join()
+            if (c.authState.value == AuthState.AUTHENTICATED) c.processPendingMessages(timeoutMs)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Log.e(TAG, "onPushWake drain failed: ${e.message}")
+            Log.e(TAG, "Push drain failed", e)
         }
-        // We intentionally do NOT disconnect — if the user opens the app
-        // moments later, the live WebSocket is already up.
     }
 
-    /** Bridge surface: deliver a fresh FCM token to JS. */
     fun deliverPushToken(token: String) { sink?.onPushToken(token) }
 }

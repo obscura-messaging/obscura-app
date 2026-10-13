@@ -74,12 +74,13 @@ export type LoginScenario =
 /** The `code` of a kit rejection, mirroring `ObscuraError.kt`. Other failures use a per-method code. */
 export type ObscuraErrorCode =
   | 'NOT_AUTHENTICATED'
-  | 'NOT_PROVISIONED'
-  | 'NOT_FRIENDS'
-  | 'NO_DEVICES'
-  | 'NO_MESSENGER'
-  | 'TIMEOUT'
-  | 'SEND_FAILED';
+  | 'INVALID_ARGUMENT'
+  | 'INVALID_FRIEND_CODE'
+  | 'HTTP_ERROR'
+  | 'CONNECTION_FAILED'
+  | 'SEND_FAILED'
+  | 'PROTOCOL_VIOLATION'
+  | 'STORAGE_ERROR';
 
 /** The native `ObscuraBridge` module. Behaviour beyond these types is in `docs/BRIDGE.md`. */
 export interface ObscuraBridge {

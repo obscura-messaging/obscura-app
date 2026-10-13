@@ -20,8 +20,6 @@
 
 ## Gaps
 
-- Device-linking UI. Both bridges expose `generateLinkCode` and
-  `validateAndApproveLink`, but no screen uses them.
 - iOS push and production readiness ([`IOS_PARITY.md`](docs/IOS_PARITY.md)).
 
 ## Next
@@ -35,5 +33,5 @@
 
 ## Not planned
 
-AR lenses, drawing on photos, video calls, maps or location, saved memories,
+Device linking or history/key transfer, AR lenses, drawing on photos, video calls, maps or location, saved memories,
 Bitmoji, snap score, chat wallpapers.

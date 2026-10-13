@@ -36,7 +36,6 @@ Never move application semantics into native code. Contracts:
 | Session, events and reactive state | `src/state/store.ts` |
 | Bridge facade | `src/native/ObscuraModule.ts` |
 | Native hosts | `android/app/src/main/java/dev/barrelmaker/obscura/`, `ios/Obscura/` |
-| Push test sender | [`tools/push-sender/`](tools/push-sender/README.md) |
 
 ## Docs
 

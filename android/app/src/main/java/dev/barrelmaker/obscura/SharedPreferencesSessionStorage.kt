@@ -13,24 +13,16 @@ class SharedPreferencesSessionStorage(
     private val prefs: SharedPreferences
 ) : SessionStorage {
 
-    override fun save(data: Map<String, Any?>) {
-        val json = JSONObject()
-        for ((key, value) in data) {
-            when (value) {
-                null -> { /* omit — replace semantics: absent key = not stored */ }
-                is Number -> json.put(key, value.toInt())
-                is Boolean -> json.put(key, value)
-                else -> json.put(key, value.toString())
-            }
-        }
+    override fun save(data: Map<String, String>) {
+        val json = JSONObject(data)
         // Synchronous: refresh tokens are single-use, so losing a write to process death means a 401.
-        prefs.edit()
+        check(prefs.edit()
             .clear()
             .putString(BLOB, LocalKeystore.wrap(json.toString().toByteArray(Charsets.UTF_8)))
-            .commit()
+            .commit()) { "Could not persist the session" }
     }
 
-    override fun load(): Map<String, Any?>? {
+    override fun load(): Map<String, String>? {
         val wrapped = prefs.getString(BLOB, null) ?: return null
         val plaintext = try {
             LocalKeystore.unwrap(wrapped)
@@ -40,11 +32,15 @@ class SharedPreferencesSessionStorage(
             return null
         }
         val json = JSONObject(String(plaintext, Charsets.UTF_8))
-        return json.keys().asSequence().associateWith { json.get(it) }
+        return json.keys().asSequence().associateWith { key ->
+            val value = json.get(key)
+            require(value is String) { "Session field $key is not a string" }
+            value
+        }
     }
 
     override fun clear() {
-        prefs.edit().clear().commit()
+        check(prefs.edit().clear().commit()) { "Could not clear the session" }
     }
 
     private companion object {
