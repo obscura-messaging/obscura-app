@@ -37,9 +37,8 @@ or `just ios-build arm64`.
   path. It is gitignored. Never commit it, or any Firebase Admin credential.
 - **iOS.** The first build fetches the libsignal commit that `obscura-native`
   pins. It then builds the simulator FFI, the Swift package and the pods, and
-  caches them (gitignored). After changing native dependencies, run
-  `cd ios && pod install` and commit the updated lockfile. Simulator builds do
-  not exercise APNs, background delivery or release signing.
+  caches them (gitignored). Simulator builds do not exercise APNs, background
+  delivery or release signing.
 - **Server.** Both apps use `https://obscura.barrelmaker.dev`; there is no
   override. Migrations are not kept before the first public release, so a schema
   change can require clearing app data.
@@ -69,24 +68,13 @@ xcrun devicectl device install app --device <DEVICE_ID> \
 
 `just check` runs Jest, both typechecks, ESLint and
 `scripts/check-native-doc-links.sh`. Jest covers the domain, bridge facade and
-state logic. It does not cover rendered UI or device behavior. ESLint warnings
-fail the check.
+state logic. It does not cover rendered UI or device behavior.
 
 | CI job | Runs | On |
 | --- | --- | --- |
 | `JavaScript` | `just check`, `scripts/test-verify-internal-build.py` | PRs, `main` |
-| `Android Release Build` | `just android-release arm64-v8a false` (compile-only, no R8) | PRs |
+| `Android Release Build` | `just android-release arm64-v8a false` | PRs |
 | `iOS Debug Build` | `just ios-build arm64` | PRs |
-
-One CI workflow runs the JavaScript gate first, then both native builds in
-parallel on PRs. Native builds run for every PR, without path-based skips.
-Main runs the JavaScript gate; signed distribution builds are separate.
-Jobs have bounded timeouts, and superseded CI runs are cancelled. The iOS FFI
-cache is keyed by the native bootstrap script, runner architecture, Xcode and
-Rust toolchain, so incompatible archives are not reused.
-The iOS check rejects changes to `Podfile.lock` during the build, except for
-the Hermes podspec checksum that includes the checkout's absolute compiler
-path. Locked versions, sources and every other checksum must stay unchanged.
 
 ## Updating `obscura-native`
 

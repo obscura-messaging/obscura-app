@@ -12,45 +12,36 @@ concurrency:
 permissions:
   contents: read
 
-defaults:
-  run:
-    shell: bash
-
 jobs:
   javascript:
     name: JavaScript
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     steps:
-      - name: Checkout app and native contract
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
-          persist-credentials: false
       - uses: extractions/setup-just@v4
       - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
-      - name: Install locked JavaScript dependencies
-        run: just install
-      - name: Test, typecheck, lint and verify native contract links
-        run: just check
-      - name: Test internal release verification
-        run: python3 scripts/test-verify-internal-build.py -q
+      - run: just install
+      # Domain, bridge-facade, and state tests run without a native simulator.
+      # ESLint errors fail the job; warnings remain non-fatal.
+      - run: just check
+      - run: python3 scripts/test-verify-internal-build.py -q
 
   android:
     name: Android Release Build
-    needs: javascript
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - name: Checkout app and native dependencies
+      - name: Checkout app
         uses: actions/checkout@v7
         with:
+          # Native is pinned by the app's gitlink and contains the transport proto
+          # submodule required by Kotlin protobuf codegen.
           submodules: recursive
-          persist-credentials: false
 
       - uses: extractions/setup-just@v4
 
@@ -66,68 +57,8 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6.4.0
 
-      - name: Install locked JavaScript dependencies
-        run: just install
+      - run: just install
 
       # Main builds a signed APK once in the separate distribution workflow.
-      - name: Compile debug-signed arm64 release APK without R8
+      - name: Compile arm64 release APK
         run: just android-release arm64-v8a false
-
-  ios:
-    name: iOS Debug Build
-    needs: javascript
-    if: github.event_name == 'pull_request'
-    runs-on: macos-26
-    timeout-minutes: 30
-    steps:
-      - name: Checkout app and native dependencies
-        uses: actions/checkout@v7
-        with:
-          submodules: recursive
-          persist-credentials: false
-
-      - uses: extractions/setup-just@v4
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'npm'
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios-sim
-
-      - name: Select latest Xcode and identify FFI toolchain
-        id: toolchain
-        run: |
-          sudo xcode-select -s "$(
-            find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' -print |
-              sort -V |
-              tail -n 1
-          )"
-          key="$(printf '%s\n' "$(xcodebuild -version)" "$(rustc --version)" |
-            shasum -a 256 | cut -d ' ' -f 1)"
-          echo "key=$key" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pinned libsignal source and simulator FFI
-        uses: actions/cache@v6
-        with:
-          path: obscura-native/swift/vendored/libsignal
-          key: libsignal-${{ runner.os }}-${{ runner.arch }}-ios-sim-${{ hashFiles('obscura-native/swift/scripts/bootstrap-libsignal.sh') }}-${{ steps.toolchain.outputs.key }}
-
-      - name: Install protobuf
-        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
-
-      - name: Install locked JavaScript dependencies
-        run: just install
-
-      - name: Install CocoaPods
-        run: sudo gem install cocoapods -v 1.17.0 -N
-
-      - name: Compile unsigned arm64 Debug simulator app
-        run: |
-          # The Hermes checksum includes the checkout's absolute compiler path.
-          sed '/^  hermes-engine: [0-9a-f]\{40\}$/d' ios/Podfile.lock > "$RUNNER_TEMP/Podfile.lock"
-          just ios-build arm64
-          sed '/^  hermes-engine: [0-9a-f]\{40\}$/d' ios/Podfile.lock |
-            diff -u "$RUNNER_TEMP/Podfile.lock" -

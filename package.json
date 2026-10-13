@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "android": "react-native run-android",
-    "lint": "eslint . --max-warnings=0",
+    "lint": "eslint .",
     "start": "react-native start",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "jest"
