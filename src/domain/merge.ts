@@ -15,6 +15,8 @@ export interface Entry<D = Record<string, unknown>> {
   id: string;
   /** When the author wrote it (ms). Clamped to `now + 60s` on receipt. */
   sentAt: number;
+  /** The authenticated user who wrote it: the transport sender, or this user for a local write. */
+  authorUserId: string;
   /**
    * The device whose Signal session decrypted it, or this device for a local write. The REPLACE
    * tie-break, so never taken from the payload.

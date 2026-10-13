@@ -1,4 +1,4 @@
-import { obscuraSchema, audienceFor, modelRules } from '../schema';
+import { audienceFor, modelRules } from '../schema';
 import { DirectRoutingUnresolved } from '../../domain/audience';
 
 /**
@@ -68,12 +68,5 @@ describe('what each model means', () => {
     // One character off `directMessage`.
     expect(() => audienceFor('directMessages')).toThrow(DirectRoutingUnresolved);
     expect(() => audienceFor('__proto__')).toThrow(DirectRoutingUnresolved);
-  });
-
-  /** `fields` is documentation, so the only thing worth pinning is that it stays that way. */
-  it('lists the attribution field on every model, because the screens key on it', () => {
-    for (const model of Object.values(obscuraSchema)) {
-      expect(model.fields).toHaveProperty('_authorUserId');
-    }
   });
 });

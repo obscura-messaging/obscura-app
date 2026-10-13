@@ -20,9 +20,3 @@ export function displayNameFor(userId: string, id: Identity): string | null {
   if (userId === id.myUserId) return id.myUsername;
   return id.friends.find((f) => f.userId === userId && f.status === 'accepted')?.username ?? null;
 }
-
-/** The authenticated author of an entry, or `''` when it carries none. */
-export function authorOf(data: Record<string, unknown>, key: string): string {
-  const author = data[key];
-  return typeof author === 'string' ? author : '';
-}

@@ -2,18 +2,15 @@
  * The app's model declarations and their accessors (`docs/DOMAIN_CONTRACT.md`). The kit never
  * reads them.
  *
- * No model has a sender or author name field: a payload-supplied name is attacker-chosen.
- * `_authorUserId` is stamped by the drain or `writeEntry` from the authenticated sender, and
- * display names come from the friend graph at render time.
+ * No model has a sender or author field: a payload-supplied name is attacker-chosen. An entry's
+ * author is `Entry.authorUserId`, the authenticated sender, and display names come from the friend
+ * graph at render time.
  */
 
 import { DirectRoutingUnresolved, type AudienceConfig } from '../domain/audience';
 import type { ModelRules } from '../domain/drain';
 import type { FieldType, FieldValue } from '../domain/fields';
 import type { MergeRule } from '../domain/merge';
-
-/** App-owned metadata on every stored entry: the authenticated userId of whoever created it. */
-export const AUTHOR_USER_ID = '_authorUserId';
 
 /**
  * A `profile` entry's id is derived from its owner, which is what makes the entry authorizable:
@@ -49,7 +46,7 @@ export type ModelSchema = Record<string, ModelDeclaration>;
  */
 export const obscuraSchema = {
   directMessage: {
-    fields: { conversationId: 'string', content: 'string', _authorUserId: 'string' },
+    fields: { conversationId: 'string', content: 'string' },
     merge: 'APPEND',
     // 1:1 — deliver to both conversation participants; never broadcast.
     audience: { kind: 'conversation', field: 'conversationId' },
@@ -57,7 +54,6 @@ export const obscuraSchema = {
   story: {
     fields: {
       content: 'string',
-      _authorUserId: 'string',
       // Attachment fields — present iff the story has a photo (text-only stories
       // omit all three). Same shape as pix so a single viewer can render both.
       mediaRef: 'string?',
@@ -73,7 +69,7 @@ export const obscuraSchema = {
     // Erased 24 hours after posting (`domain/expiry.ts`).
   },
   profile: {
-    fields: { displayName: 'string', bio: 'string?', avatarUrl: 'string?', _authorUserId: 'string' },
+    fields: { displayName: 'string', bio: 'string?', avatarUrl: 'string?' },
     merge: 'REPLACE',
     // The id binds the entry to its owner: only `<userId>` may write
     // `profile_<userId>`.
@@ -82,7 +78,6 @@ export const obscuraSchema = {
   pix: {
     fields: {
       conversationId: 'string',
-      _authorUserId: 'string',
       mediaRef: 'string',
       contentKey: 'string',
       nonce: 'string',
@@ -99,7 +94,7 @@ export const obscuraSchema = {
   },
   seen: {
     // A seen receipt for a `directMessage` or `pix` (`domain/seen.ts`). Its id names the entry.
-    fields: { conversationId: 'string', viewedAt: 'number', _authorUserId: 'string' },
+    fields: { conversationId: 'string', viewedAt: 'number' },
     merge: 'APPEND',
     audience: { kind: 'conversation', field: 'conversationId' },
   },

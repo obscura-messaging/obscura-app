@@ -53,8 +53,9 @@ describe('the happy path', () => {
       {
         id: 'dm_1',
         sentAt: 1_000,
+        authorUserId: PEER,
         authorDeviceId: 'device_peer',
-        data: { content: 'hi', conversationId: CONV, _authorUserId: PEER },
+        data: { content: 'hi', conversationId: CONV },
       },
     ]);
   });
@@ -85,14 +86,14 @@ describe('attribution — who an entry is from', () => {
 
     const plan = planDrain([r], models, empty, SELF);
 
-    expect(plan.writes.get('story')?.[0].data._authorUserId).toBe(STRANGER);
+    expect(plan.writes.get('story')?.[0].authorUserId).toBe(STRANGER);
   });
 
   /** A pix is append-only: the other participant cannot change one this device already holds. */
   it('ignores a second write to a stored entry by the other participant', () => {
     const mine: Entry = {
-      id: 'p', sentAt: 1_000, authorDeviceId: 'device_mine',
-      data: { conversationId: CONV, caption: 'mine', _authorUserId: SELF },
+      id: 'p', sentAt: 1_000, authorUserId: SELF, authorDeviceId: 'device_mine',
+      data: { conversationId: CONV, caption: 'mine' },
     };
     const state = new Map([['pix', new Map([['p', mine]])]]);
     const rewrite = row({
@@ -194,7 +195,7 @@ describe('authorization — who may write what', () => {
     const plan = planDrain([r], models, empty, SELF);
 
     expect(plan.consume).toEqual([r.id]);
-    expect(plan.writes.get('directMessage')?.[0].data._authorUserId).toBe(SELF);
+    expect(plan.writes.get('directMessage')?.[0].authorUserId).toBe(SELF);
   });
 
   /**
@@ -212,7 +213,7 @@ describe('authorization — who may write what', () => {
     const plan = planDrain([r], models, empty, SELF);
 
     expect(plan.consume).toEqual([r.id]);
-    expect(plan.writes.get('story')?.[0].data._authorUserId).toBe(STRANGER);
+    expect(plan.writes.get('story')?.[0].authorUserId).toBe(STRANGER);
   });
 });
 
@@ -316,7 +317,7 @@ describe('merging within a batch', () => {
    */
   it('consumes but does not write a row that loses the merge', () => {
     const stored: Entry = {
-      id: 'p', sentAt: 9_000, authorDeviceId: 'device_x',
+      id: 'p', sentAt: 9_000, authorUserId: PEER, authorDeviceId: 'device_x',
       data: { v: 'stored', conversationId: CONV },
     };
     const state = new Map([['note', new Map([['p', stored]])]]);
@@ -334,7 +335,7 @@ describe('merging within a batch', () => {
   /** APPEND is first-write-wins, so a redelivered duplicate must not overwrite the original. */
   it('keeps the first write for an APPEND model', () => {
     const first: Entry = {
-      id: 'dm', sentAt: 1_000, authorDeviceId: 'd',
+      id: 'dm', sentAt: 1_000, authorUserId: PEER, authorDeviceId: 'd',
       data: { content: 'first', conversationId: CONV },
     };
     const state = new Map([['directMessage', new Map([['dm', first]])]]);

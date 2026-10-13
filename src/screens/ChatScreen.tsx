@@ -11,8 +11,7 @@ import { conversationId } from '../domain/conversation';
 import { useSession, useModelEntries, saveEntry, markSeen, type ScreenEntry } from '../state/store';
 import { useAppActive } from '../hooks/useAppActive';
 import { logError } from '../utils/log';
-import { AUTHOR_USER_ID, type ModelData } from '../models/schema';
-import { authorOf } from '../utils/identity';
+import { type ModelData } from '../models/schema';
 import { toast } from '../components/Toast';
 import { SendIcon } from '../components/icons';
 import type { RootStackScreenProps, RootStackParamList } from '../navigation/types';
@@ -100,7 +99,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
     if (!isFocused || !appActive) return;
     for (const m of messages) {
       if (!visibleIds.has(m.id) || m.viewedAt !== null || markedRef.current.has(m.id)) continue;
-      if (authorOf(m.data, AUTHOR_USER_ID) === myUserId) continue;
+      if (m.authorUserId === myUserId) continue;
       markedRef.current.add(m.id);
       markSeen('directMessage', m).catch((e) => logError('seen.message:' + m.id, e));
     }
@@ -152,7 +151,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const renderItem = ({ item }: { item: TimelineItem }) => {
     // ─── Chat message
     if (item._kind === 'message') {
-      const isMine = authorOf(item.data, AUTHOR_USER_ID) === myUserId;
+      const isMine = item.authorUserId === myUserId;
       return (
         <View style={[cs.msgRow, isMine ? cs.msgRowRight : cs.msgRowLeft]}>
           <View style={[cs.msgBubble, isMine ? cs.myBubble : cs.theirBubble]}>
@@ -163,7 +162,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
     }
 
     // ─── Pix entry
-    const iSent = authorOf(item.data, AUTHOR_USER_ID) === myUserId;
+    const iSent = item.authorUserId === myUserId;
     const viewed = !!item.viewedAt;
 
     if (!iSent && !viewed) {

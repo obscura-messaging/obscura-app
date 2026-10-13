@@ -14,6 +14,7 @@ import { mergeAll, merge, type Entry } from '../merge';
 
 const entry = (over: Partial<Entry> & { id: string }): Entry => ({
   sentAt: 1,
+  authorUserId: 'uA',
   authorDeviceId: 'devA',
   data: {},
   ...over,

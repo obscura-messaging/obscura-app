@@ -5,7 +5,6 @@
  */
 
 import type { Entry } from './merge';
-import { AUTHOR_USER_ID } from '../models/schema';
 
 export const SEEN_MODEL = 'seen';
 
@@ -28,7 +27,7 @@ export function indexReceipts(receipts: readonly Entry[]): Receipts {
 export function viewedAtFor(model: string, entry: Entry, receipts: Receipts): number | null {
   const receipt = receipts.get(seenEntryId(model, entry.id));
   if (receipt === undefined) return null;
-  if (receipt.data[AUTHOR_USER_ID] === entry.data[AUTHOR_USER_ID]) return null;
+  if (receipt.authorUserId === entry.authorUserId) return null;
   if (receipt.data.conversationId !== entry.data.conversationId) return null;
   const viewedAt = receipt.data.viewedAt;
   return typeof viewedAt === 'number' ? Math.min(viewedAt, receipt.sentAt) : null;

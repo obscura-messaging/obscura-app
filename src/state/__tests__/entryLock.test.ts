@@ -1,3 +1,4 @@
+import { putEntry } from '../entryStore';
 import { PIX_MEDIA } from '../../native/__fixtures__/payloads';
 import { drainInbox } from '../drainInbox';
 import { writeEntry } from '../writeEntry';
@@ -78,7 +79,7 @@ describe('a local write racing an incoming drain', () => {
    */
   it('wins against a stored entry whose timestamp is in the future', async () => {
     const future = Date.now() + 45_000;
-    await Obscura.entryPut('pix', 'p1', JSON.stringify({ viewedAt: 0 }), future, BOB);
+    await putEntry('pix', { id: 'p1', sentAt: future, authorUserId: BOB, authorDeviceId: BOB, data: { viewedAt: 0 } });
 
     await writeEntry({
       model: 'pix', id: 'p1', data: { ...PIX_MEDIA, conversationId: CONV, viewedAt: 42 },

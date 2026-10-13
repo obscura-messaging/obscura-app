@@ -21,10 +21,12 @@ the `obscura-app` repository name.
 `fieldsFor` for local writes, `modelRules` for the drain. Screen entry types
 derive from it. Field types are `string`, `string?`, `number` and `number?`
 (`?` means optional). A local write with a bad field throws, and a received
-entry with one is discarded as `invalid-fields`. Fields prefixed `_` are not
-checked, and undeclared fields are allowed. `_authorUserId` is local-only. It is
-stripped before sending, and it is never read from a payload. A local write sets
-it to this user, and the drain sets it to the transport sender.
+entry with one is discarded as `invalid-fields`. Undeclared fields are allowed.
+
+An entry's author is `Entry.authorUserId`, never a payload field: a local write
+sets it to this user, and the drain sets it to the transport sender.
+`src/state/entryStore.ts` is the only code that reads or writes the kit's entry
+store for app models, and the only code that knows how the author is stored.
 
 ## Audience
 

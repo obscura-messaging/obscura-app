@@ -15,7 +15,6 @@
 
 import { parseConversationId } from './conversation';
 import { merge, type Entry, type MergeRule } from './merge';
-import { AUTHOR_USER_ID } from '../models/schema';
 import { invalidFields, type FieldType } from './fields';
 import { erasedKey } from './expiry';
 
@@ -202,8 +201,9 @@ export function planDrain(
     const entry: Entry = {
       id: row.entryId,
       sentAt: row.sentAt,
+      authorUserId: row.senderUserId,
       authorDeviceId: row.senderDeviceId,
-      data: { ...data, [AUTHOR_USER_ID]: row.senderUserId },
+      data,
     };
 
     const next = merge(rules.merge, current, [entry]);

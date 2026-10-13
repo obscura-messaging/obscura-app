@@ -1,3 +1,4 @@
+import { putEntry } from '../entryStore';
 import {
   useStore, loadEntries, drainAndRefresh, saveEntry, markSeen,
   applyObscuraEvent, loadSession, refreshFriendGraph,
@@ -93,20 +94,20 @@ describe('seen receipts', () => {
 
 describe('loadEntries', () => {
   it('parses the stored JSON into the cache', async () => {
-    await Obscura.entryPut('story', 's1', JSON.stringify({ content: 'hi' }), 1_000, 'd');
+    const entry = { id: 's1', sentAt: 1_000, authorUserId: BOB, authorDeviceId: 'd', data: { content: 'hi' } };
+    await putEntry('story', entry);
 
     await loadEntries('story');
 
-    expect(useStore.getState().entries.story).toEqual([
-      { id: 's1', data: { content: 'hi' }, sentAt: 1_000, authorDeviceId: 'd', viewedAt: null },
-    ]);
+    expect(useStore.getState().entries.story).toEqual([{ ...entry, viewedAt: null }]);
   });
 
   /** One unreadable row is a bug to fix, not a reason to show the user nothing. */
-  it('skips a row it cannot parse and keeps the rest', async () => {
+  it('skips a row it cannot decode and keeps the rest', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     await Obscura.entryPut('story', 'bad', 'not json', 1, 'd');
-    await Obscura.entryPut('story', 'good', JSON.stringify({ content: 'ok' }), 2, 'd');
+    await Obscura.entryPut('story', 'anonymous', JSON.stringify({ content: 'no author' }), 1, 'd');
+    await putEntry('story', { id: 'good', sentAt: 2, authorUserId: BOB, authorDeviceId: 'd', data: { content: 'ok' } });
 
     await loadEntries('story');
 

@@ -7,8 +7,8 @@ import { Obscura } from '../native/ObscuraModule';
 import { logError, getJsLog } from '../utils/log';
 import { toast } from '../components/Toast';
 import { useSession, useModelEntries, saveEntry } from '../state/store';
-import { AUTHOR_USER_ID, profileEntryId } from '../models/schema';
-import { authorOf, displayNameFor } from '../utils/identity';
+import { profileEntryId } from '../models/schema';
+import { displayNameFor } from '../utils/identity';
 import { s, colors } from '../styles';
 import type { ConnectionState } from '../native/ObscuraModule';
 
@@ -95,7 +95,7 @@ export function ProfileScreen() {
   // other device saved it. The heading is the friend-graph username (an identity the kit proved);
   // `displayName` below it is the profile's content, which its owner is entitled to choose.
   const friendProfiles = profiles
-    .map(p => ({ entry: p, name: displayNameFor(authorOf(p.data, AUTHOR_USER_ID), identity) }))
+    .map(p => ({ entry: p, name: displayNameFor(p.authorUserId, identity) }))
     .filter((p): p is { entry: typeof p.entry; name: string } =>
       p.name !== null && p.entry.id !== profileEntryId(myUserId));
 

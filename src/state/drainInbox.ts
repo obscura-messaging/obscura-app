@@ -4,7 +4,7 @@ import { ERASED_MODEL, erasedKey } from '../domain/expiry';
 import type { Entry } from '../domain/merge';
 import { modelRules } from '../models/schema';
 import { withEntryLock } from './entryLock';
-import { readEntriesById } from './readEntries';
+import { putEntry, readEntriesById } from './entryStore';
 import { logError } from '../utils/log';
 
 /**
@@ -100,13 +100,7 @@ async function drainInboxUnlocked(limit: number): Promise<DrainResult> {
   const touched: string[] = [];
   for (const [model, entries] of plan.writes) {
     for (const entry of entries) {
-      await Obscura.entryPut(
-        model,
-        entry.id,
-        JSON.stringify(entry.data),
-        entry.sentAt,
-        entry.authorDeviceId,
-      );
+      await putEntry(model, entry);
       written += 1;
     }
     if (entries.length > 0) touched.push(model);

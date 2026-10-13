@@ -13,7 +13,7 @@ import type { Entry } from '../domain/merge';
 import type { ModelData, ModelName } from '../models/schema';
 import { EPHEMERAL_MODELS } from '../domain/expiry';
 import { SEEN_MODEL, indexReceipts, seenEntryId, viewedAtFor } from '../domain/seen';
-import { readEntries } from './readEntries';
+import { readEntries } from './entryStore';
 import { sweepExpired } from './expiry';
 
 /** An entry as screens see it: `data` as sent, plus when its recipient saw it (ephemeral models). */
@@ -142,10 +142,9 @@ export async function loadEntries(model: string): Promise<void> {
   try {
     const rows = await readEntries(model);
     const receipts = indexReceipts(isEphemeral(model) ? await readEntries(SEEN_MODEL) : []);
-    useStore.getState()._setEntries(model, rows.map(({ id, sentAt, authorDeviceId, data }) => {
-      const entry = { id, sentAt, authorDeviceId, data };
-      return { ...entry, viewedAt: viewedAtFor(model, entry, receipts) };
-    }));
+    useStore.getState()._setEntries(model, rows.map(({ localMetadata: _metadata, ...entry }) => (
+      { ...entry, viewedAt: viewedAtFor(model, entry, receipts) }
+    )));
   } catch (e) {
     logError('entries.load:' + model, e);
   }

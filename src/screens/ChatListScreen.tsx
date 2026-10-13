@@ -8,8 +8,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Obscura, type Friend } from '../native/ObscuraModule';
 import { conversationId } from '../domain/conversation';
 import { useSession, useModelEntries, refreshFriendGraph, type ScreenEntry } from '../state/store';
-import { AUTHOR_USER_ID } from '../models/schema';
-import { authorOf } from '../utils/identity';
 import { StoriesRow } from './StoriesScreen';
 import { Avatar } from '../components/Avatar';
 import { toast } from '../components/Toast';
@@ -59,12 +57,12 @@ export function ChatListScreen() {
   // Membership is the CONVERSATION id and direction is the AUTHENTICATED author — never
   // `senderUsername` / `recipientUsername`, which are names the sender chose. The conversation id is
   // checked on the way in (`drain.ts`) to name this user and the actual sender, so a stranger cannot
-  // put an entry into a conversation with a friend, and `_authorUserId` is stamped from the envelope
-  // rather than the payload. `includes(f.userId)` was also a substring test on an id, which a
+  // put an entry into a conversation with a friend, and `authorUserId` is the envelope's sender, never
+  // the payload's. `includes(f.userId)` was also a substring test on an id, which a
   // prefix-sharing id would have satisfied.
   const activities: FriendActivity[] = useMemo(() => friends.map(f => {
     const convId = conversationId(myUserId, f.userId);
-    const isMine = (e: ScreenEntry) => authorOf(e.data, AUTHOR_USER_ID) === myUserId;
+    const isMine = (e: ScreenEntry) => e.authorUserId === myUserId;
     const inConversation = (e: ScreenEntry) => e.data.conversationId === convId;
 
     const friendMessages = messages.filter(inConversation);
@@ -149,7 +147,7 @@ export function ChatListScreen() {
         renderItem={({ item }) => {
           const hasPix = item.unopenedPix.length > 0;
           const mine = item.lastMessage !== undefined
-            && authorOf(item.lastMessage.data, AUTHOR_USER_ID) === myUserId;
+            && item.lastMessage.authorUserId === myUserId;
           const preview = item.lastMessage?.data.content
             ? `${mine ? 'You: ' : ''}${item.lastMessage.data.content}`
             : 'Tap to chat';

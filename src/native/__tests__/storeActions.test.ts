@@ -26,7 +26,7 @@ describe('logout', () => {
     s.setAuthed(true);
     s._setUserId('user_self');
     s._setFriendsAndPending([{ userId: 'u', username: 'u', status: 'accepted' }], []);
-    s._setEntries('story', [{ id: 'e', data: {}, sentAt: 1, authorDeviceId: 'd', viewedAt: null }]);
+    s._setEntries('story', [{ id: 'e', data: {}, sentAt: 1, authorUserId: 'u', authorDeviceId: 'd', viewedAt: null }]);
 
     await useStore.getState().logout();
 
@@ -74,7 +74,7 @@ describe('entry cache', () => {
   });
 
   it('keeps models independent', () => {
-    useStore.getState()._setEntries('story', [{ id: 'a', data: {}, sentAt: 1, authorDeviceId: 'd', viewedAt: null }]);
+    useStore.getState()._setEntries('story', [{ id: 'a', data: {}, sentAt: 1, authorUserId: 'u', authorDeviceId: 'd', viewedAt: null }]);
     useStore.getState()._setEntries('pix', []);
 
     expect(useStore.getState().entries.story).toHaveLength(1);

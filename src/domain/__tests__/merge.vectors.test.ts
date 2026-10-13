@@ -38,6 +38,7 @@ const RULE: Record<string, MergeRule> = { gset: 'APPEND', lww: 'REPLACE' };
 const toEntry = (vector: VectorOp): Entry => ({
   id: vector.id,
   sentAt: vector.ts,
+  authorUserId: 'u',
   authorDeviceId: vector.authorDeviceId,
   data: vector.data,
 });

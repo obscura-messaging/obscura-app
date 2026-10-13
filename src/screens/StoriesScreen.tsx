@@ -14,9 +14,8 @@ import { Obscura } from '../native/ObscuraModule';
 import { logError } from '../utils/log';
 import { timeAgo as fmtTimeAgo } from '../utils/format';
 import { useSession, useModelEntries, markSeen, type ScreenEntry } from '../state/store';
-import { AUTHOR_USER_ID } from '../models/schema';
 import { storyExpiresAt } from '../domain/expiry';
-import { authorOf, displayNameFor } from '../utils/identity';
+import { displayNameFor } from '../utils/identity';
 import type { RootStackParamList, RootStackScreenProps, StoryGroup } from '../navigation/types';
 import { colors } from '../styles';
 
@@ -270,7 +269,7 @@ export function StoriesRow() {
     const map = new Map<string, ScreenEntry[]>();
     for (const s of stories) {
       if (storyExpiresAt(s.sentAt) <= now) continue;
-      const author = authorOf(s.data, AUTHOR_USER_ID);
+      const author = s.authorUserId;
       if (displayNameFor(author, identity) === null) continue;
       if (!map.has(author)) map.set(author, []);
       map.get(author)!.push(s);

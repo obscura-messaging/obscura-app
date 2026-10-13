@@ -1,3 +1,4 @@
+import { putEntry } from '../entryStore';
 import { PIX_MEDIA } from '../../native/__fixtures__/payloads';
 import { drainInbox, drainInboxFully } from '../drainInbox';
 import { Obscura } from '../../native/ObscuraModule';
@@ -223,7 +224,9 @@ describe('rows the app cannot process', () => {
 
 describe('merging against what is already stored', () => {
   it('does not overwrite a newer entry with an older redelivered one', async () => {
-    await Obscura.entryPut('pix', 'p', JSON.stringify({ conversationId: CONV, v: 'newer' }), 9_000, 'device_a');
+    await putEntry('pix', {
+      id: 'p', sentAt: 9_000, authorUserId: PEER, authorDeviceId: 'device_a', data: { conversationId: CONV, v: 'newer' },
+    });
     deliver({
       modelKey: 'pix', entryId: 'p', sentAt: 1_000,
       payload: JSON.stringify({ ...PIX_MEDIA, conversationId: CONV, v: 'older' }),
@@ -237,9 +240,9 @@ describe('merging against what is already stored', () => {
   });
 
   it('keeps the first write for an APPEND model when a duplicate arrives', async () => {
-    await Obscura.entryPut(
-      'directMessage', 'dm', JSON.stringify({ conversationId: CONV, content: 'first' }), 1_000, 'd',
-    );
+    await putEntry('directMessage', {
+      id: 'dm', sentAt: 1_000, authorUserId: PEER, authorDeviceId: 'd', data: { conversationId: CONV, content: 'first' },
+    });
     deliver({
       entryId: 'dm', sentAt: 9_000,
       payload: JSON.stringify({ conversationId: CONV, content: 'second' }),

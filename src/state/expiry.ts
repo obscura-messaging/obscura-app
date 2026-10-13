@@ -5,7 +5,7 @@ import {
 import { SEEN_MODEL, indexReceipts, seenEntryId, viewedAtFor } from '../domain/seen';
 import type { Entry } from '../domain/merge';
 import { withEntryLock } from './entryLock';
-import { readEntries } from './readEntries';
+import { readEntries } from './entryStore';
 import { logError } from '../utils/log';
 
 /**
