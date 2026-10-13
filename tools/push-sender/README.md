@@ -32,14 +32,16 @@ targets `OBSCURA_API_URL`, which defaults to `https://obscura.barrelmaker.dev`.
 4. Press Home or swipe the app out of recents. Do not force-stop it: Android
    withholds FCM from a force-stopped app until it is opened again.
 5. Run `push-sender send <username> "hello"` or
-   `push-sender ping <username> [count]`.
+   `push-sender ping <username> [count]`. Each send prints every target
+   device's outcome and exits non-zero when none accepted. `accepted` means
+   the server queued it, not that it was delivered.
 6. Check for a generic `New message` notification. Follow
    `adb logcat -s ObscuraSession ObscuraMessagingService ObscuraBridge`.
    `NotificationHelper` logs as `ObscuraBridge`. `./logcat.sh` (`-c` clears,
    `--dump` prints once) omits `ObscuraSession`.
 
-Other commands: `whoami`, `accept-pending`, `friends`, and `devices <username>`
-(the devices a send would target). Run the tool with no arguments for usage.
+Other commands: `whoami`, `accept-pending` and `friends`. Run the tool with no
+arguments for usage.
 
 ## Notes
 

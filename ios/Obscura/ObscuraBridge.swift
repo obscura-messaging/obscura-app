@@ -65,7 +65,7 @@ final class ObscuraBridge: RCTEventEmitter {
     /// `ObscuraEvent` stream. Mirrors `BridgeEvent` in Android's ObscuraBridgeModule.kt
     /// and `OBSCURA_EVENT_TYPES` in src/native/ObscuraModule.ts — the raw values MUST match.
     private enum BridgeEvent: String {
-        case connectionChanged, authStateChanged, authFailed, appStateChanged
+        case connectionChanged, authStateChanged, appStateChanged
         case launchedFrom, friendsChanged, messageReceived
         case typingChanged, pushTokenReceived
     }
@@ -99,15 +99,11 @@ final class ObscuraBridge: RCTEventEmitter {
                     self.emit(.connectionChanged, ["state": state.rawValue])
                 case .authChanged(let state):
                     self.emit(.authStateChanged, ["state": state.rawValue])
-                case .authFailed(let reason):
-                    self.emit(.authFailed, ["reason": reason])
                 case .friendsChanged:
                     self.emit(.friendsChanged)
                 case .messageReceived(let model):
                     // Minimal payload — JS re-queries the entry store. Don't synthesize an id.
                     self.emit(.messageReceived, ["model": model])
-                case .typingChanged(let conversationId, let typers):
-                    self.emit(.typingChanged, ["conversationId": conversationId, "typers": typers])
                 }
             }
         }

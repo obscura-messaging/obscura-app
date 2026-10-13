@@ -327,9 +327,6 @@ export function applyObscuraEvent(event: ObscuraEvent): void {
       // is suspended, so foregrounding must drain again.
       if (event.state === 'active') syncBothWays('foreground');
       return;
-    case 'authFailed':
-      s.reset();
-      return;
     case 'pushTokenReceived': {
       if (!event.token) return;
       const preview = event.token.slice(0, 8) + '...';

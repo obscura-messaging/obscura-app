@@ -32,7 +32,6 @@ private const val TAG = "ObscuraBridge"
 private enum class BridgeEvent(val type: String) {
     CONNECTION_CHANGED("connectionChanged"),
     AUTH_STATE_CHANGED("authStateChanged"),
-    AUTH_FAILED("authFailed"),
     APP_STATE_CHANGED("appStateChanged"),
     LAUNCHED_FROM("launchedFrom"),
     FRIENDS_CHANGED("friendsChanged"),
@@ -465,10 +464,10 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
 
         typingJobs[conversationId] = scope.launch {
-            c.observeTyping(conversationId).collectLatest { typers ->
+            c.observeTyping(conversationId).collectLatest { userIds ->
                 emit(BridgeEvent.TYPING_CHANGED) {
                     putString("conversationId", conversationId)
-                    putArray("userIds", Arguments.createArray().apply { typers.forEach(::pushString) })
+                    putArray("userIds", Arguments.createArray().apply { userIds.forEach(::pushString) })
                 }
             }
         }

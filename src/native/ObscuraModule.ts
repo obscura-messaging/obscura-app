@@ -309,7 +309,6 @@ export const Obscura = {
 export const OBSCURA_EVENT_TYPES = [
   'connectionChanged',
   'authStateChanged',
-  'authFailed',
   'appStateChanged',
   'launchedFrom',
   'friendsChanged',
@@ -323,7 +322,6 @@ export type ObscuraEventType = (typeof OBSCURA_EVENT_TYPES)[number];
 export type ObscuraEvent =
   | { type: 'connectionChanged'; state: ConnectionState }
   | { type: 'authStateChanged'; state: AuthState }
-  | { type: 'authFailed'; reason: string }
   | { type: 'appStateChanged'; state: AppLifecycleState }
   | { type: 'launchedFrom'; screen: string }
   | { type: 'friendsChanged' }

@@ -55,6 +55,21 @@ describe('sweepExpired', () => {
     ].sort());
   });
 
+  it('erases each model in one call, after every erased marker is written', async () => {
+    for (const id of ['a', 'b', 'c']) {
+      await putMessage(id);
+      await seenByPeer('directMessage', id, LONG_AGO);
+    }
+    const start = bridge.__calls.length;
+
+    await sweepExpired(NOW);
+
+    const calls = bridge.__calls.slice(start).filter((c) => c === 'entryPut' || c === 'entryErase');
+    expect(calls).toEqual([...Array(6).fill('entryPut'), 'entryErase', 'entryErase']);
+    expect(await ids('directMessage')).toEqual([]);
+    expect(await ids(SEEN_MODEL)).toEqual([]);
+  });
+
   it('erases an unseen entry once it is MAX_AGE_MS old', async () => {
     await putMessage('dm_old', NOW - MAX_AGE_MS);
     await putMessage('dm_new', NOW - MAX_AGE_MS + 1);

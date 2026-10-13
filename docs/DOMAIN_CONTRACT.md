@@ -2,7 +2,7 @@
 
 These are the semantics the app owns in `src/models/`, `src/domain/` and
 `src/state/`. The kit only stores and sends opaque bytes
-([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/be2b96538647164c9ba60675f3836b063b4fcf80/docs/KIT_API.md)).
+([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md)).
 
 ## Models
 
@@ -87,8 +87,10 @@ device for a local write.
 `src/state/writeEntry.ts` resolves the audience and validates fields first;
 either may throw before anything is stored. It then writes locally, then sends.
 A local write's `sentAt` is at least 1 ms after the stored copy's, so it wins
-even when a peer's clock is ahead. When a send reaches nobody, the error is
-rethrown. The entry is kept and marked undelivered in `localMetadata`, then
+even when a peer's clock is ahead. A send fails when it names recipients and
+none of their devices accepted it (`src/domain/delivery.ts`); the author's own
+devices do not count, and reaching some recipients is a success. A failed send
+is rethrown. The entry is kept and marked undelivered in `localMetadata`, then
 retried on cold start, reconnect and foreground.
 
 ## Disappearing messages
