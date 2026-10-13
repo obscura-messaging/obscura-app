@@ -1,4 +1,5 @@
-import { planDrain, type DrainRow, type ModelRules } from '../drain';
+import { planDrain, type ModelRules } from '../drain';
+import type { InboxRow } from '../../native/ObscuraModule';
 import type { Entry } from '../merge';
 
 /**
@@ -21,7 +22,7 @@ const models = new Map<string, ModelRules>([
 ]);
 
 let nextId = 1;
-function row(over: Partial<DrainRow> = {}): DrainRow {
+function row(over: Partial<InboxRow> = {}): InboxRow {
   return {
     id: nextId++,
     kind: 'APP_ENTRY',

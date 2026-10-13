@@ -11,7 +11,7 @@ import { requestStartupPermissions } from '../application/requestStartupPermissi
 import { logError } from '../utils/log';
 import type { Entry } from '../domain/merge';
 import type { ModelData, ModelName } from '../models/schema';
-import { EPHEMERAL_MODELS } from '../domain/expiry';
+import { EPHEMERAL_MODELS, isEphemeral } from '../domain/expiry';
 import { SEEN_MODEL, indexReceipts, seenEntryId, viewedAtFor } from '../domain/seen';
 import { readEntries } from './entryStore';
 import { sweepExpired } from './expiry';
@@ -19,7 +19,7 @@ import { sweepExpired } from './expiry';
 /** An entry as screens see it: `data` as sent, plus when its recipient saw it (ephemeral models). */
 export type ScreenEntry<D = Record<string, unknown>> = Entry<D> & { viewedAt: number | null };
 
-const isEphemeral = (model: string) => (EPHEMERAL_MODELS as readonly string[]).includes(model);
+
 
 /**
  * Process-wide store for session state and application entry caches.
@@ -142,7 +142,7 @@ export async function loadEntries(model: string): Promise<void> {
   try {
     const rows = await readEntries(model);
     const receipts = indexReceipts(isEphemeral(model) ? await readEntries(SEEN_MODEL) : []);
-    useStore.getState()._setEntries(model, rows.map(({ localMetadata: _metadata, ...entry }) => (
+    useStore.getState()._setEntries(model, rows.map(({ undelivered: _undelivered, ...entry }) => (
       { ...entry, viewedAt: viewedAtFor(model, entry, receipts) }
     )));
   } catch (e) {
