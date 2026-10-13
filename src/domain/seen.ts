@@ -7,6 +7,9 @@ import type { Entry } from './merge';
 
 export const SEEN_MODEL = 'seen';
 
+/** An entry as screens see it: `data` as sent, plus when its recipient saw it (ephemeral models). */
+export type ScreenEntry<D = Record<string, unknown>> = Entry<D> & { viewedAt: number | null };
+
 export function seenEntryId(model: string, entryId: string): string {
   return `seen_${model}_${entryId}`;
 }

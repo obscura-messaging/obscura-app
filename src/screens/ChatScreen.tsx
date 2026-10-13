@@ -7,58 +7,47 @@ import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Obscura, onObscuraEvent } from '../native/ObscuraModule';
+import { conversationEntries } from '../domain/chats';
 import { conversationId } from '../domain/conversation';
-import { useSession, useModelEntries, saveEntry, markSeen, type ScreenEntry } from '../state/store';
+import { pixStatus } from '../domain/pix';
+import type { ScreenEntry } from '../domain/seen';
+import { useSession, useModelEntries, saveEntry, markSeen } from '../state/store';
 import { useAppActive } from '../hooks/useAppActive';
-import { logError } from '../utils/log';
-import { type ModelData } from '../models/schema';
+import { errorMessage, logError } from '../utils/log';
+import type { ModelData } from '../models/schema';
 import { toast } from '../components/Toast';
 import { SendIcon } from '../components/icons';
 import type { RootStackScreenProps, RootStackParamList } from '../navigation/types';
 import { openPixViewer } from '../navigation/openPixViewer';
 import { s, colors } from '../styles';
 
-// ─── Typing Bubble ──────────────────────────────────────
+const DOT_STEP_MS = 200;
 
 function TypingBubble() {
-  const dot1 = useRef(new Animated.Value(0.3)).current;
-  const dot2 = useRef(new Animated.Value(0.3)).current;
-  const dot3 = useRef(new Animated.Value(0.3)).current;
+  const dots = useRef([0, 1, 2].map(() => new Animated.Value(0.3))).current;
 
   useEffect(() => {
-    const animate = (dot: Animated.Value, delay: number) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(dot, { toValue: 1, duration: 400, useNativeDriver: true }),
-          Animated.timing(dot, { toValue: 0.3, duration: 400, useNativeDriver: true }),
-        ])
-      );
-    const a1 = animate(dot1, 0);
-    const a2 = animate(dot2, 200);
-    const a3 = animate(dot3, 400);
-    a1.start(); a2.start(); a3.start();
-    return () => { a1.stop(); a2.stop(); a3.stop(); };
-  }, [dot1, dot2, dot3]);
+    const loops = dots.map((dot, i) => Animated.loop(Animated.sequence([
+      Animated.delay(i * DOT_STEP_MS),
+      Animated.timing(dot, { toValue: 1, duration: 2 * DOT_STEP_MS, useNativeDriver: true }),
+      Animated.timing(dot, { toValue: 0.3, duration: 2 * DOT_STEP_MS, useNativeDriver: true }),
+    ])));
+    loops.forEach((l) => l.start());
+    return () => loops.forEach((l) => l.stop());
+  }, [dots]);
 
   return (
     <View style={cs.typingBubble}>
-      {[dot1, dot2, dot3].map((opacity, i) => (
-        <Animated.View key={i} style={[cs.typingDot, { opacity }]} />
-      ))}
+      {dots.map((opacity, i) => <Animated.View key={i} style={[cs.typingDot, { opacity }]} />)}
     </View>
   );
 }
 
-// ─── Timeline item types ────────────────────────────────
-
 type TimelineItem =
-  | (ScreenEntry<ModelData<'directMessage'>> & { _kind: 'message' })
-  | (ScreenEntry<ModelData<'pix'>> & { _kind: 'pix' });
+  | (ScreenEntry<ModelData<'directMessage'>> & { kind: 'message' })
+  | (ScreenEntry<ModelData<'pix'>> & { kind: 'pix' });
 
 const VIEWABILITY = { itemVisiblePercentThreshold: 50 };
-
-// ─── Chat Screen ────────────────────────────────────────
 
 export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const { friend } = route.params;
@@ -71,21 +60,11 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const [peerTyping, setPeerTyping] = useState(false);
   const convId = conversationId(myUserId, friend.userId);
 
-  // Per-conversation slice of the global cache.
-  const messages = useMemo(
-    () => allMessages.filter(m => m.data.conversationId === convId),
-    [allMessages, convId],
-  );
-  // Pix between me and this friend (sent or received). The conversation id is the membership test:
-  // `drain.ts` will only store a pix whose conversation names this user AND its authenticated
-  // sender, so a row that reaches this filter is genuinely between the two of us. The old test
-  // paired `senderUsername` with `recipientUsername`, two names the sender chose.
-  const pixEntries = useMemo(
-    () => allPix.filter(p => p.data.conversationId === convId),
-    [allPix, convId],
-  );
-
-  const onViewPix = (entry: ScreenEntry<ModelData<'pix'>>) => openPixViewer(nav, friend, [entry]);
+  const messages = useMemo(() => conversationEntries(allMessages, convId), [allMessages, convId]);
+  const timeline: TimelineItem[] = useMemo(() => [
+    ...messages.map((m) => ({ ...m, kind: 'message' as const })),
+    ...conversationEntries(allPix, convId).map((p) => ({ ...p, kind: 'pix' as const })),
+  ].sort((a, b) => a.sentAt - b.sentAt), [messages, allPix, convId]);
 
   // A received message is seen once it is on screen in the focused chat with the app foregrounded.
   const isFocused = useIsFocused();
@@ -94,114 +73,81 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
     setVisibleIds(new Set(viewableItems.map((v) => (v.item as TimelineItem).id)));
   }).current;
-  const markedRef = useRef(new Set<string>());
+  const marked = useRef(new Set<string>());
   useEffect(() => {
     if (!isFocused || !appActive) return;
     for (const m of messages) {
-      if (!visibleIds.has(m.id) || m.viewedAt !== null || markedRef.current.has(m.id)) continue;
-      if (m.authorUserId === myUserId) continue;
-      markedRef.current.add(m.id);
+      if (!visibleIds.has(m.id) || m.viewedAt !== null || m.authorUserId === myUserId) continue;
+      if (marked.current.has(m.id)) continue;
+      marked.current.add(m.id);
       markSeen('directMessage', m).catch((e) => logError('seen.message:' + m.id, e));
     }
   }, [isFocused, appActive, visibleIds, messages, myUserId]);
 
-  // Typing observer + bubble — separate from entry-cache subscriptions since
-  // typing isn't backed by entries.
   useEffect(() => {
-    const unsub = onObscuraEvent((event) => {
+    const unsubscribe = onObscuraEvent((event) => {
       if (event.type === 'messageReceived' && event.model === 'directMessage') {
-        setPeerTyping(false); // clear typing bubble when a real message arrives
+        setPeerTyping(false);
       } else if (event.type === 'typingChanged' && event.conversationId === convId) {
-        // Anyone can signal under this context id; only this conversation's friend counts.
+        // Anyone can signal under this id; only this conversation's friend counts.
         setPeerTyping(event.userIds.includes(friend.userId));
       }
     });
-    Obscura.observeTyping(convId);
+    Obscura.observeTyping(convId).catch((e) => logError('typing.observe', e));
     return () => {
-      unsub();
-      Obscura.stopObservingTyping(convId);
+      unsubscribe();
+      Obscura.stopObservingTyping(convId).catch((e) => logError('typing.unobserve', e));
     };
   }, [convId, friend.userId]);
 
-  // Build unified timeline sorted by timestamp.
-  const timeline: TimelineItem[] = useMemo(() => [
-    ...messages.map(m => ({ ...m, _kind: 'message' as const })),
-    ...pixEntries.map(p => ({ ...p, _kind: 'pix' as const })),
-  ].sort((a, b) => a.sentAt - b.sentAt), [messages, pixEntries]);
-
   const send = async () => {
     if (!text.trim()) return;
-    const msg = text;
+    const content = text;
     setText('');
     try {
       await Obscura.stopTyping([friend.userId], convId);
-      // No `senderUsername`: `saveEntry` stamps the authenticated author, and every reader resolves
-      // the name from the friend graph rather than believing what the payload says.
-      await saveEntry('directMessage', { conversationId: convId, content: msg });
-    } catch (e: any) {
-      toast.error(e.message);
+      await saveEntry('directMessage', { conversationId: convId, content });
+    } catch (e) {
+      toast.error(errorMessage(e));
     }
   };
 
   const onChangeText = (t: string) => {
     setText(t);
-    if (t.length > 0) Obscura.sendTyping([friend.userId], convId);
+    if (t.length > 0) Obscura.sendTyping([friend.userId], convId).catch((e) => logError('typing.send', e));
   };
 
   const renderItem = ({ item }: { item: TimelineItem }) => {
-    // ─── Chat message
-    if (item._kind === 'message') {
-      const isMine = item.authorUserId === myUserId;
+    if (item.kind === 'message') {
+      const mine = item.authorUserId === myUserId;
       return (
-        <View style={[cs.msgRow, isMine ? cs.msgRowRight : cs.msgRowLeft]}>
-          <View style={[cs.msgBubble, isMine ? cs.myBubble : cs.theirBubble]}>
-            <Text style={isMine ? cs.myBubbleText : cs.theirBubbleText}>{item.data.content}</Text>
+        <View style={[cs.msgRow, mine ? cs.msgRowRight : cs.msgRowLeft]}>
+          <View style={[cs.msgBubble, mine ? cs.myBubble : cs.theirBubble]}>
+            <Text style={mine ? cs.myBubbleText : cs.theirBubbleText}>{item.data.content}</Text>
           </View>
         </View>
       );
     }
-
-    // ─── Pix entry
-    const iSent = item.authorUserId === myUserId;
-    const viewed = !!item.viewedAt;
-
-    if (!iSent && !viewed) {
-      // Received, unviewed — yellow "Tap to view" bar
-      return (
-        <TouchableOpacity style={cs.pixBarFilled} onPress={() => onViewPix(item)}>
-          <Text style={cs.pixBarFilledText}>
-            {item.data.caption ? `Tap to view: ${item.data.caption}` : 'Tap to view'}
-          </Text>
-        </TouchableOpacity>
-      );
+    switch (pixStatus(item, myUserId)) {
+      case 'received_new':
+        return (
+          <TouchableOpacity style={cs.pixBarFilled} onPress={() => openPixViewer(nav, friend, [item])}>
+            <Text style={cs.pixBarFilledText}>
+              {item.data.caption ? `Tap to view: ${item.data.caption}` : 'Tap to view'}
+            </Text>
+          </TouchableOpacity>
+        );
+      case 'received_viewed':
+        return (
+          <View style={cs.pixBarViewed}>
+            <Text style={cs.pixBarViewedText}>{item.data.caption || 'Viewed'}</Text>
+          </View>
+        );
+      case 'sent_pending':
+        return <Text style={cs.pixStatus}>You sent a pix</Text>;
+      case 'sent_opened':
+        return <Text style={cs.pixStatus}>{friend.username} viewed your pix</Text>;
     }
-
-    if (!iSent && viewed) {
-      // Received, viewed — dashed outline bar
-      return (
-        <View style={cs.pixBarViewed}>
-          <Text style={cs.pixBarViewedText}>
-            {item.data.caption || 'Viewed'}
-          </Text>
-        </View>
-      );
-    }
-
-    if (iSent && !viewed) {
-      // Sent, not opened — centered gray text
-      return (
-        <View style={cs.pixStatus}>
-          <Text style={cs.pixStatusText}>You sent a pix</Text>
-        </View>
-      );
-    }
-
-    // Sent, they opened — centered gray text
-    return (
-      <View style={cs.pixStatus}>
-        <Text style={cs.pixStatusText}>{friend.username} viewed your pix</Text>
-      </View>
-    );
   };
 
   return (
@@ -213,7 +159,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
       >
         <FlatList
           data={timeline}
-          keyExtractor={(item, i) => item.id || `${i}`}
+          keyExtractor={(item) => item.id}
           style={cs.messageList}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
@@ -263,12 +209,11 @@ const cs = StyleSheet.create({
     backgroundColor: colors.accent, borderRadius: 12, padding: 14,
     marginVertical: 4, marginHorizontal: 12, alignItems: 'center',
   },
-  pixBarFilledText: { color: '#000', fontWeight: '700', fontSize: 15 },
+  pixBarFilledText: { color: colors.onAccent, fontWeight: '700', fontSize: 15 },
   pixBarViewed: {
     borderWidth: 2, borderColor: colors.accent, borderStyle: 'dashed', borderRadius: 12,
     padding: 14, marginVertical: 4, marginHorizontal: 12, alignItems: 'center',
   },
   pixBarViewedText: { color: colors.accent, fontWeight: '600', fontSize: 14 },
-  pixStatus: { paddingVertical: 12, alignItems: 'center' },
-  pixStatusText: { color: colors.textDim, fontSize: 13 },
+  pixStatus: { paddingVertical: 12, textAlign: 'center', color: colors.textDim, fontSize: 13 },
 });

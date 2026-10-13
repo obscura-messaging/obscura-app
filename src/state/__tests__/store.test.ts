@@ -1,7 +1,7 @@
 import { putEntry } from '../entryStore';
 import {
   useStore, loadEntries, drainAndRefresh, saveEntry, markSeen,
-  applyObscuraEvent, loadSession, refreshFriendGraph,
+  applyObscuraEvent, loadSession, refreshFriends, resetSession, logout,
 } from '../store';
 import { SEEN_MODEL, seenEntryId } from '../../domain/seen';
 import { Obscura } from '../../native/ObscuraModule';
@@ -29,31 +29,51 @@ async function flush(): Promise<void> {
 }
 
 function session() {
-  const s = useStore.getState();
-  s.setAuthed(true);
-  s._setUserId(SELF);
-  s._setUsername('me');
-  s._setDeviceId(DEVICE);
-  s._setFriendsAndPending([{ userId: BOB, username: 'bob', status: 'accepted' }], []);
+  useStore.setState({
+    authed: true, myUserId: SELF, myUsername: 'me', myDeviceId: DEVICE,
+    friends: [{ userId: BOB, username: 'bob', status: 'accepted' }],
+  });
 }
 
 beforeEach(() => {
-  useStore.getState().reset();
+  resetSession();
   bridge.__authenticate({ userId: SELF, deviceId: DEVICE });
 });
 
-describe('refreshFriendGraph', () => {
-  it('pulls accepted and pending status after an imperative friend action', async () => {
+describe('refreshFriends', () => {
+  it('pulls every relationship, whatever its status', async () => {
     bridge.__setFriends([
       { userId: BOB, username: 'bob', status: 'accepted' },
       { userId: 'carol', username: 'carol', status: 'pending_received' },
     ]);
-    useStore.getState()._setFriendsAndPending([], []);
 
-    await refreshFriendGraph();
+    await refreshFriends();
 
-    expect(useStore.getState().friends.map((f) => f.username)).toEqual(['bob']);
-    expect(useStore.getState().pending.map((f) => f.username)).toEqual(['carol']);
+    expect(useStore.getState().friends.map((f) => f.username)).toEqual(['bob', 'carol']);
+  });
+});
+
+describe('logout', () => {
+  it('clears the session and tells the kit', async () => {
+    session();
+    useStore.setState({ entries: { story: [] } });
+
+    await logout();
+
+    expect(useStore.getState()).toMatchObject({ authed: false, myUserId: '', friends: [], entries: {} });
+    expect(bridge.__calls).toContain('logout');
+  });
+
+  /** A user who taps logout must not stay signed in because the network was down. */
+  it('clears the session even when the kit call fails', async () => {
+    session();
+    bridge.__failNext('logout', 'SEND_FAILED', 'network down');
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await logout();
+
+    expect(useStore.getState().authed).toBe(false);
+    warn.mockRestore();
   });
 });
 
@@ -179,7 +199,7 @@ describe('saveEntry', () => {
   });
 
   it('refuses when the device id is missing even though the user id is not', async () => {
-    useStore.getState()._setUserId(SELF);
+    useStore.setState({ myUserId: SELF });
 
     await expect(saveEntry('story', { content: 'x' })).rejects.toThrow();
   });
@@ -309,17 +329,13 @@ describe('the drain triggers', () => {
   });
 
   it('refreshes the friend graph after friendsChanged', async () => {
-    bridge.__setFriends([
-      { userId: BOB, username: 'bob', status: 'accepted' },
-      { userId: 'c', username: 'carol', status: 'pending_received' },
-    ]);
-    useStore.getState()._setFriendsAndPending([], []);
+    bridge.__setFriends([{ userId: BOB, username: 'bob', status: 'accepted' }]);
+    useStore.setState({ friends: [] });
 
     applyObscuraEvent({ type: 'friendsChanged' });
     await flush();
 
     expect(useStore.getState().friends.map((f) => f.username)).toEqual(['bob']);
-    expect(useStore.getState().pending.map((f) => f.username)).toEqual(['carol']);
   });
 
   it('registers a push token when one arrives', async () => {

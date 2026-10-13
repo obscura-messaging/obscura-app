@@ -1,10 +1,9 @@
 import React, { type ReactNode, useCallback, useEffect, useState } from 'react';
-import {
-  AppState, Linking, Platform, StyleSheet, Text, TouchableOpacity, View,
-} from 'react-native';
+import { AppState, Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import {
   Camera, type CameraPermissionStatus, useCameraPermission,
 } from 'react-native-vision-camera';
+import { canPromptFor } from '../application/requestStartupPermissions';
 import { colors } from '../styles';
 
 interface CameraPermissionGateProps {
@@ -35,8 +34,7 @@ export function CameraPermissionGate({ children, message }: CameraPermissionGate
 
   if (hasPermission || status === 'granted') return children;
 
-  const canRequest = status === 'not-determined'
-    || (Platform.OS === 'android' && status === 'denied');
+  const canRequest = status !== null && canPromptFor(status);
   return (
     <View style={s.container}>
       <Text style={s.message}>{message}</Text>
@@ -77,6 +75,6 @@ const s = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 12,
   },
-  buttonText: { color: '#000', fontWeight: '700', fontSize: 16 },
+  buttonText: { color: colors.onAccent, fontWeight: '700', fontSize: 16 },
   hint: { color: '#aaa', fontSize: 14, marginTop: 12, textAlign: 'center' },
 });
