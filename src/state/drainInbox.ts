@@ -2,7 +2,7 @@ import { Obscura } from '../native/ObscuraModule';
 import { planDrain } from '../domain/drain';
 import { erasedKey } from '../domain/expiry';
 import type { Entry } from '../domain/merge';
-import { modelRules } from '../models/schema';
+import { MODELS } from '../models/schema';
 import { groupBy } from '../utils/collections';
 import { withEntryLock } from './entryLock';
 import { putEntry, readEntriesById, readErasedKeys } from './entryStore';
@@ -39,9 +39,8 @@ async function drainBatch(limit: number): Promise<DrainResult> {
     return nothingDrained();
   }
 
-  const rules = modelRules();
   const named = groupBy(rows.flatMap((r) =>
-    r.modelKey !== null && r.entryId !== null && rules.has(r.modelKey)
+    r.modelKey !== null && r.entryId !== null && MODELS.has(r.modelKey)
       ? [[r.modelKey, r.entryId] as const]
       : []));
   const state = new Map<string, Map<string, Entry>>();
@@ -50,7 +49,7 @@ async function drainBatch(limit: number): Promise<DrainResult> {
   }
   const erased = await readErasedKeys([...named].flatMap(([model, ids]) => ids.map((id) => erasedKey(model, id))));
 
-  const plan = planDrain(rows, rules, state, selfUserId, erased);
+  const plan = planDrain(rows, MODELS, state, selfUserId, erased);
 
   let written = 0;
   for (const [model, entries] of plan.writes) {

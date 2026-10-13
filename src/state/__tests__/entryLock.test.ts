@@ -2,7 +2,7 @@ import { putEntry } from '../entryStore';
 import { PIX_MEDIA } from '../../native/__fixtures__/payloads';
 import { drainInbox } from '../drainInbox';
 import { writeEntry } from '../writeEntry';
-import { Obscura } from '../../native/ObscuraModule';
+import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 import { withEntryLock } from '../entryLock';
 
@@ -22,7 +22,7 @@ const bridge = getFakeBridge();
 const SELF = '11111111-1111-4111-8111-111111111111';
 const DEVICE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const BOB = '22222222-2222-4222-8222-222222222222';
-const FRIENDS = [{ userId: BOB, username: 'bob', status: 'accepted' }];
+const FRIENDS: Friend[] = [{ userId: BOB, username: 'bob', status: 'accepted' }];
 const CONV = [SELF, BOB].sort().join('_');
 
 describe('a local write racing an incoming drain', () => {

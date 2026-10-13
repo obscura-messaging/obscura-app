@@ -8,7 +8,7 @@ import { logError, getJsLog } from '../utils/log';
 import { toast } from '../components/Toast';
 import { useSession, useModelEntries, saveEntry } from '../state/store';
 import { profileEntryId } from '../models/schema';
-import { displayNameFor } from '../utils/identity';
+import { displayNameFor } from '../domain/friends';
 import { s, colors } from '../styles';
 import type { ConnectionState } from '../native/ObscuraModule';
 

@@ -1,4 +1,5 @@
-import { planDrain, type ModelRules } from '../drain';
+import { planDrain } from '../drain';
+import type { ModelDeclaration } from '../model';
 import type { InboxRow } from '../../native/ObscuraModule';
 import type { Entry } from '../merge';
 
@@ -12,13 +13,13 @@ const PEER = 'uPeer';
 const STRANGER = 'uStranger';
 const CONV = [SELF, PEER].sort().join('_');
 
-const models = new Map<string, ModelRules>([
-  ['directMessage', { merge: 'APPEND', fields: { content: 'string' }, conversationField: 'conversationId' }],
-  ['story', { merge: 'APPEND', fields: {} }],
-  ['pix', { merge: 'APPEND', fields: {}, conversationField: 'conversationId' }],
-  ['profile', { merge: 'REPLACE', fields: {}, ownerIdPrefix: 'profile_' }],
+const models = new Map<string, ModelDeclaration>([
+  ['directMessage', { merge: 'APPEND', fields: { content: 'string' }, audience: 'conversation' }],
+  ['story', { merge: 'APPEND', fields: {}, audience: 'friends' }],
+  ['pix', { merge: 'APPEND', fields: {}, audience: 'conversation' }],
+  ['profile', { merge: 'REPLACE', fields: {}, audience: 'friends', ownerIdPrefix: 'profile_' }],
   // A conversation-scoped REPLACE model, for the merge mechanics below.
-  ['note', { merge: 'REPLACE', fields: {}, conversationField: 'conversationId' }],
+  ['note', { merge: 'REPLACE', fields: {}, audience: 'conversation' }],
 ]);
 
 let nextId = 1;

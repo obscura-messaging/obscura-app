@@ -15,7 +15,7 @@ import { logError } from '../utils/log';
 import { timeAgo as fmtTimeAgo } from '../utils/format';
 import { useSession, useModelEntries, markSeen, type ScreenEntry } from '../state/store';
 import { storyExpiresAt } from '../domain/expiry';
-import { displayNameFor } from '../utils/identity';
+import { displayNameFor } from '../domain/friends';
 import type { RootStackParamList, RootStackScreenProps, StoryGroup } from '../navigation/types';
 import { colors } from '../styles';
 

@@ -5,9 +5,10 @@
 
 import type { InboxRow } from '../native/ObscuraModule';
 import { parseConversationId } from './conversation';
-import { merge, type Entry, type MergeRule } from './merge';
-import { invalidFields, type FieldType } from './fields';
+import { merge, type Entry } from './merge';
+import { invalidFields } from './fields';
 import { erasedKey } from './expiry';
+import type { ModelDeclaration } from './model';
 
 /** Why a row could not be processed. Carried into `inboxDiscard` and the log. */
 export type DiscardReason =
@@ -18,31 +19,21 @@ export type DiscardReason =
   | 'unparsable-payload'
   | 'unauthorized-sender';
 
-/** What the drain needs to know about a model. */
-export interface ModelRules {
-  merge: MergeRule;
-  fields: Readonly<Record<string, FieldType>>;
-  /** The field naming a canonical conversation that must contain this user and the sender. */
-  conversationField?: string;
-  /** The entry id must be `${ownerIdPrefix}${senderUserId}`. */
-  ownerIdPrefix?: string;
-}
-
 /**
  * May this authenticated sender write this entry? Friendship is not required: gating a permanent
  * discard on the friend graph would drop real mail when an accept races the first message.
  */
 function authorize(
   row: InboxRow,
-  rules: ModelRules,
+  rules: ModelDeclaration,
   data: Record<string, unknown>,
   selfUserId: string,
 ): DiscardReason | null {
   if (rules.ownerIdPrefix !== undefined && row.entryId !== rules.ownerIdPrefix + row.senderUserId) {
     return 'unauthorized-sender';
   }
-  if (rules.conversationField !== undefined) {
-    const raw = data[rules.conversationField];
+  if (rules.audience === 'conversation') {
+    const raw = data.conversationId;
     const participants = typeof raw === 'string' ? parseConversationId(raw) : null;
     if (
       participants === null ||
@@ -83,7 +74,7 @@ export interface DrainPlan {
  */
 export function planDrain(
   rows: readonly InboxRow[],
-  knownModels: ReadonlyMap<string, ModelRules>,
+  knownModels: ReadonlyMap<string, ModelDeclaration>,
   state: ReadonlyMap<string, ReadonlyMap<string, Entry>>,
   selfUserId: string,
   erased: ReadonlySet<string> = new Set(),

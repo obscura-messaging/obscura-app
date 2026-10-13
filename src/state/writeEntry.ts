@@ -1,6 +1,6 @@
-import { Obscura } from '../native/ObscuraModule';
-import { resolveAudience, type AudienceFriend } from '../domain/audience';
-import { obscuraSchema, audienceFor, fieldsFor } from '../models/schema';
+import { Obscura, type Friend } from '../native/ObscuraModule';
+import { resolveAudience } from '../domain/audience';
+import { MODELS, declarationOf } from '../models/schema';
 import { invalidFields } from '../domain/fields';
 import { reachedRecipients, SendFailed } from '../domain/delivery';
 import { withEntryLock } from './entryLock';
@@ -31,7 +31,7 @@ export interface WriteEntryArgs {
   data: Record<string, unknown>;
   selfUserId: string;
   myDeviceId: string;
-  friends: readonly AudienceFriend[];
+  friends: readonly Friend[];
 }
 
 /**
@@ -44,8 +44,9 @@ export interface WriteEntryArgs {
 export async function writeEntry(args: WriteEntryArgs): Promise<string> {
   const { model, data, selfUserId, myDeviceId, friends } = args;
 
-  const recipients = resolveAudience(audienceFor(model), data, selfUserId, friends);
-  const invalid = invalidFields(fieldsFor(model), data);
+  const { audience, fields } = declarationOf(model);
+  const recipients = resolveAudience(audience, data, selfUserId, friends);
+  const invalid = invalidFields(fields, data);
   if (invalid.length > 0) throw new Error(`${model}: invalid fields ${invalid.join(', ')}`);
 
   const id = args.id ?? newEntryId(model);
@@ -93,7 +94,7 @@ async function setUndelivered(model: string, version: Entry, undelivered: boolea
 
 export interface FlushOutboxArgs {
   selfUserId: string;
-  friends: readonly AudienceFriend[];
+  friends: readonly Friend[];
 }
 
 /**
@@ -104,11 +105,11 @@ export interface FlushOutboxArgs {
  */
 export async function flushOutbox({ selfUserId, friends }: FlushOutboxArgs): Promise<number> {
   let delivered = 0;
-  for (const model of Object.keys(obscuraSchema)) {
+  for (const [model, { audience }] of MODELS) {
     for (const row of await readEntries(model)) {
       if (!row.undelivered) continue;
       try {
-        await send(model, row, resolveAudience(audienceFor(model), row.data, selfUserId, friends));
+        await send(model, row, resolveAudience(audience, row.data, selfUserId, friends));
       } catch (e) {
         logError('flushOutbox.send:' + model, e);
         continue;

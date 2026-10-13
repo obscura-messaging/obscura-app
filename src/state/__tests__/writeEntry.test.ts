@@ -1,7 +1,7 @@
 import { PIX_MEDIA } from '../../native/__fixtures__/payloads';
 import { writeEntry, newEntryId, flushOutbox } from '../writeEntry';
 import { DirectRoutingUnresolved } from '../../domain/audience';
-import { Obscura } from '../../native/ObscuraModule';
+import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
 /**
@@ -18,7 +18,7 @@ const SELF = '11111111-1111-4111-8111-111111111111';
 const DEVICE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const BOB = '22222222-2222-4222-8222-222222222222';
 const STRANGER = '33333333-3333-4333-8333-333333333333';
-const FRIENDS = [
+const FRIENDS: Friend[] = [
   { userId: BOB, username: 'bob', status: 'accepted' },
   { userId: '44444444-4444-4444-8444-444444444444', username: 'carol', status: 'accepted' },
 ];
