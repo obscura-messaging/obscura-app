@@ -13,6 +13,7 @@ interface NativeObscuraBridge {
   getUsername(): Promise<string | null>;
   getDeviceId(): Promise<string | null>;
   acceptFriend(userId: string): Promise<void>;
+  removeFriend(userId: string): Promise<void>;
   getFriendCode(): Promise<string>;
   addFriendByCode(code: string): Promise<void>;
   getFriends(): Promise<Friend[]>;
@@ -26,12 +27,13 @@ interface NativeObscuraBridge {
     model: string, id: string, dataJson: string, sentAt: number, authorDeviceId: string,
     localMetadataJson: string | null,
   ): Promise<void>;
+  entryGet(model: string, ids: string[]): Promise<StoredEntry[]>;
   entryAll(model: string): Promise<StoredEntry[]>;
-  entryErase(model: string, id: string): Promise<void>;
+  entryErase(model: string, ids: string[]): Promise<void>;
   sendEntry(
     recipientUserIds: string[], modelKey: string, entryId: string,
     sentAt: number, payloadJson: string,
-  ): Promise<void>;
+  ): Promise<SendReport>;
   sendTyping(recipientUserIds: string[], conversationId: string): Promise<void>;
   stopTyping(recipientUserIds: string[], conversationId: string): Promise<void>;
   observeTyping(conversationId: string): Promise<void>;
@@ -101,6 +103,23 @@ export interface StoredEntry {
   localMetadata: string | null;
 }
 
+/**
+ * One device's submission outcome. `accepted` means queued by the server, not delivered or seen. A
+ * null `deviceId` is a user-level result (for example, the user has no devices).
+ */
+export interface SubmissionResult {
+  userId: string;
+  deviceId: string | null;
+  status: 'accepted' | 'rejected' | 'unknown';
+  error: string | null;
+}
+
+/** A send's per-device outcomes; the author's own other devices are reported apart. */
+export interface SendReport {
+  recipients: SubmissionResult[];
+  selfSync: SubmissionResult[];
+}
+
 export type ConnectionState = 'disconnected' | 'connecting' | 'reconnecting' | 'connected';
 export type AuthState = 'loggedOut' | 'authenticated' | 'pendingApproval';
 export type AppLifecycleState = 'active' | 'background';
@@ -162,6 +181,9 @@ export const Obscura = {
   acceptFriend: (userId: string): Promise<void> =>
     Bridge.acceptFriend(userId),
 
+  /** Forget a friend locally: the friendship and their devices. Nothing is sent to them. */
+  removeFriend: (userId: string): Promise<void> => Bridge.removeFriend(userId),
+
   getFriendCode: (): Promise<string> => Bridge.getFriendCode(),
   addFriendByCode: (code: string): Promise<void> => Bridge.addFriendByCode(code),
   getFriends: (): Promise<Friend[]> => Bridge.getFriends(),
@@ -200,16 +222,19 @@ export const Obscura = {
   ): Promise<void> =>
     Bridge.entryPut(model, id, dataJson, sentAt, authorDeviceId, localMetadataJson),
 
+  /** The named entries that exist. */
+  entryGet: (model: string, ids: string[]): Promise<StoredEntry[]> => Bridge.entryGet(model, ids),
+
   entryAll: (model: string): Promise<StoredEntry[]> => Bridge.entryAll(model),
 
-  /** Securely remove one local entry. The app decides when; not synced to peers. */
-  entryErase: (model: string, id: string): Promise<void> => Bridge.entryErase(model, id),
+  /** Securely remove local entries, with one WAL checkpoint per call. Not synced to peers. */
+  entryErase: (model: string, ids: string[]): Promise<void> => Bridge.entryErase(model, ids),
 
   /** The caller names recipients; the kit resolves no audience. */
   sendEntry: (
     recipientUserIds: string[], modelKey: string, entryId: string,
     sentAt: number, payloadJson: string,
-  ): Promise<void> =>
+  ): Promise<SendReport> =>
     Bridge.sendEntry(recipientUserIds, modelKey, entryId, sentAt, payloadJson),
 
   // Signals (typing)
@@ -284,7 +309,6 @@ export const Obscura = {
 export const OBSCURA_EVENT_TYPES = [
   'connectionChanged',
   'authStateChanged',
-  'authFailed',
   'appStateChanged',
   'launchedFrom',
   'friendsChanged',
@@ -298,12 +322,11 @@ export type ObscuraEventType = (typeof OBSCURA_EVENT_TYPES)[number];
 export type ObscuraEvent =
   | { type: 'connectionChanged'; state: ConnectionState }
   | { type: 'authStateChanged'; state: AuthState }
-  | { type: 'authFailed'; reason: string }
   | { type: 'appStateChanged'; state: AppLifecycleState }
   | { type: 'launchedFrom'; screen: string }
   | { type: 'friendsChanged' }
   | { type: 'messageReceived'; model: string }
-  | { type: 'typingChanged'; conversationId: string; typers: string[] }
+  | { type: 'typingChanged'; conversationId: string; userIds: string[] }
   | { type: 'pushTokenReceived'; token: string };
 
 // Compile-time guarantee that the name list and the payload union agree in both

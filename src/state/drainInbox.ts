@@ -1,10 +1,10 @@
 import { Obscura, type InboxRow } from '../native/ObscuraModule';
 import { planDrain, type DrainRow } from '../domain/drain';
-import { ERASED_MODEL } from '../domain/expiry';
+import { ERASED_MODEL, erasedKey } from '../domain/expiry';
 import type { Entry } from '../domain/merge';
 import { modelRules } from '../models/schema';
 import { withEntryLock } from './entryLock';
-import { readEntries } from './readEntries';
+import { readEntriesById } from './readEntries';
 import { logError } from '../utils/log';
 
 /**
@@ -32,10 +32,13 @@ function toDrainRow(row: InboxRow): DrainRow {
   };
 }
 
-async function currentState(models: Iterable<string>): Promise<Map<string, Map<string, Entry>>> {
+/** The stored entries a batch names, per model. Merge is per entry id, so nothing else is needed. */
+async function currentState(
+  idsByModel: ReadonlyMap<string, readonly string[]>,
+): Promise<Map<string, Map<string, Entry>>> {
   const state = new Map<string, Map<string, Entry>>();
-  for (const model of models) {
-    state.set(model, new Map((await readEntries(model)).map((e) => [e.id, e])));
+  for (const [model, ids] of idsByModel) {
+    state.set(model, new Map((await readEntriesById(model, ids)).map((e) => [e.id, e])));
   }
   return state;
 }
@@ -78,14 +81,18 @@ async function drainInboxUnlocked(limit: number): Promise<DrainResult> {
   }
 
   const rules = modelRules();
-  // Only the models this batch mentions need loading. Loading all of them would make every drain
-  // proportional to the whole store rather than to the batch.
-  const mentioned = new Set(
-    rows.map((r) => r.modelKey).filter((m): m is string => m !== null && rules.has(m)),
-  );
-  const state = await currentState(mentioned);
+  // Only the entries this batch names are loaded, so a drain costs the batch, not the whole store.
+  const idsByModel = new Map<string, string[]>();
+  for (const r of rows) {
+    if (r.modelKey === null || r.entryId === null || !rules.has(r.modelKey)) continue;
+    idsByModel.set(r.modelKey, [...(idsByModel.get(r.modelKey) ?? []), r.entryId]);
+  }
+  const state = await currentState(idsByModel);
 
-  const erased = new Set((await Obscura.entryAll(ERASED_MODEL)).map((e) => e.id));
+  const erasedKeys = [...idsByModel].flatMap(([model, ids]) => ids.map((id) => erasedKey(model, id)));
+  const erased = new Set(
+    erasedKeys.length === 0 ? [] : (await Obscura.entryGet(ERASED_MODEL, erasedKeys)).map((e) => e.id),
+  );
   const plan = planDrain(rows.map(toDrainRow), rules, state, selfUserId, erased);
 
   // 1. WRITE FIRST. A row is only safe to consume once its entry is durably stored.

@@ -16,7 +16,7 @@
  * (the app decides who wins), and `sendEntry` produces no local row — the sender writes its own copy.
  */
 
-import type { Friend, InboxRow, LoginScenario, StoredEntry } from '../ObscuraModule';
+import type { Friend, InboxRow, LoginScenario, SendReport, StoredEntry, SubmissionResult } from '../ObscuraModule';
 
 type FakeInboxRow = InboxRow & { envelopeId: string };
 
@@ -156,22 +156,44 @@ export class FakeObscuraBridge {
     return [...this.entryTable(model).values()].map((e) => ({ ...e }));
   }
 
-  async entryErase(model: string, id: string): Promise<void> {
+  async entryGet(model: string, ids: string[]): Promise<StoredEntry[]> {
+    this.record('entryGet');
+    this.checkFailure('entryGet');
+    const table = this.entryTable(model);
+    return ids.flatMap((id) => {
+      const e = table.get(id);
+      return e === undefined ? [] : [{ ...e }];
+    });
+  }
+
+  async entryErase(model: string, ids: string[]): Promise<void> {
     this.record('entryErase');
     this.checkFailure('entryErase');
     // Missing ids are a no-op, like the kits.
-    this.entryTable(model).delete(id);
+    for (const id of ids) this.entryTable(model).delete(id);
+  }
+
+  /** Users whose sends the kit reports rejected, as it does for a user with no devices. */
+  private unreachable = new Set<string>();
+  __setUnreachable(userIds: string[]): void {
+    this.unreachable = new Set(userIds);
   }
 
   async sendEntry(
     recipientUserIds: string[], modelKey: string, entryId: string,
     sentAt: number, payloadJson: string,
-  ): Promise<void> {
+  ): Promise<SendReport> {
     this.record('sendEntry');
     this.checkFailure('sendEntry');
     // No local row and no inbox row: the sender writes its own copy, so a test that forgets to sees
     // an empty store.
     this.__sent.push({ recipientUserIds, modelKey, entryId, sentAt, payloadJson });
+    return {
+      recipients: recipientUserIds.map((userId): SubmissionResult => this.unreachable.has(userId)
+        ? { userId, deviceId: null, status: 'rejected', error: 'No devices found' }
+        : { userId, deviceId: `${userId}-device`, status: 'accepted', error: null }),
+      selfSync: [],
+    };
   }
 
   // ─── Test controls (`__` prefix — NOT part of the native surface) ───
@@ -270,6 +292,7 @@ export class FakeObscuraBridge {
     this.listeners.clear();
     this.debugLog.length = 0;
     this.failures.clear();
+    this.unreachable.clear();
     this.__calls.length = 0;
     this.pushToken = null;
     this.loginScenario = 'existingDevice';
@@ -400,6 +423,12 @@ export class FakeObscuraBridge {
   }
 
   // ─── Friends ───────────────────────────────────────────
+
+  async removeFriend(userId: string): Promise<void> {
+    this.record('removeFriend');
+    this.checkFailure('removeFriend');
+    this.__setFriends(this.friends.filter((f) => f.userId !== userId));
+  }
 
   async acceptFriend(userId: string): Promise<void> {
     this.record('acceptFriend');

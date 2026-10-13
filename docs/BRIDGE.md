@@ -35,6 +35,9 @@ All methods exist on both platforms. Behavior beyond the types:
 | `login` | Returns one of the four outcomes in [Login][kit-login]. Persists the session only for `existingDevice`. The app handles the other outcomes in `src/state/login.ts`: `deviceMismatch` calls `wipeDevice` then `loginAndProvision`. |
 | `wipeDevice` | Runs the kit wipe, then clears the persisted session that the kit leaves behind. |
 | `entryPut` | A blind upsert: the app merges first. It emits no event, so the app refreshes itself. |
+| `entryGet`, `entryErase` | Take a list of IDs; missing IDs are skipped. Each `entryErase` call checkpoints the WAL, so erase in batches. |
+| `sendEntry` | Resolves to a `SendReport` of per-device outcomes ([Send][kit-send]) and does not reject because nobody accepted. `src/domain/delivery.ts` decides whether the send failed. |
+| `removeFriend` | Forgets the friend and their devices locally. Nothing is sent to them. |
 | `observeTyping` | Emits `typingChanged` until `stopObservingTyping`. Observing the same conversation twice still leaves one observation. |
 | `uploadAttachment` | Leaves the source file alone. `contentKey` and `nonce` are base64. |
 | `purgeAttachment` | Deletes the cached `jpg`, `mp4` and `mov` files for the id and their `.tmp` files. The expiry sweep calls it before erasing an entry with media. |
@@ -64,13 +67,12 @@ All events share one stream, `ObscuraEvent`, keyed by `type`. The
 | Event | Emitted when | JS reaction (`src/state/store.ts`) |
 | --- | --- | --- |
 | `connectionChanged` | The WebSocket state changes | On `connected`: drain, flush the outbox, sweep expiry |
-| `authStateChanged` | Login, logout or a pending-approval transition | `loggedOut` resets the session. `authenticated` loads it and runs the cold-start sync. |
-| `authFailed` | Token refresh exhausted its retries | Reset the session |
+| `authStateChanged` | Login, logout, a rejected refresh token or a pending-approval transition | `loggedOut` resets the session. `authenticated` loads it and runs the cold-start sync. |
 | `appStateChanged` | The process moves to foreground or background | On `active`: drain, flush, sweep |
 | `launchedFrom` | A notification is tapped while the app runs (Android only) | Navigate |
 | `friendsChanged` | The friend graph changes | Call `getFriends()` |
 | `messageReceived` | An `APP_ENTRY` row is persisted | Drain |
-| `typingChanged` | An observed conversation's typer set changes | Show `typers`, which are display names |
+| `typingChanged` | An observed conversation's typing set changes | Show the bubble only if `userIds` contains the conversation's friend |
 | `pushTokenReceived` | A push token arrives or rotates (Android only) | Call `registerPushToken` |
 
 `messageReceived` is a wake-up, not a delivery, and it may be dropped. That is
@@ -93,7 +95,8 @@ emitted before JS subscribes are dropped.
 5. Emit events only through each bridge's `emit` helper.
 6. If the types do not capture its behavior, add a row here.
 
-[kit]: https://github.com/obscura-messaging/obscura-native/blob/be2b96538647164c9ba60675f3836b063b4fcf80/docs/KIT_API.md
-[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/be2b96538647164c9ba60675f3836b063b4fcf80/docs/KIT_API.md#envelope-identity
-[kit-login]: https://github.com/obscura-messaging/obscura-native/blob/be2b96538647164c9ba60675f3836b063b4fcf80/docs/KIT_API.md#login
-[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/be2b96538647164c9ba60675f3836b063b4fcf80/docs/KIT_API.md#inbox
+[kit]: https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md
+[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md#envelope-identity
+[kit-login]: https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md#login
+[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md#inbox
+[kit-send]: https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md#send

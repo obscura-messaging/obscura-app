@@ -8,17 +8,34 @@ import { withEntryLock } from './entryLock';
 import { readEntries } from './readEntries';
 import { logError } from '../utils/log';
 
-/** The marker goes first, so a crash between the two never leaves an erased entry unmarked. */
-async function eraseWithMarker(model: string, id: string, now: number): Promise<void> {
-  await Obscura.entryPut(ERASED_MODEL, erasedKey(model, id), '{}', now, '');
-  await Obscura.entryErase(model, id);
-}
+/**
+ * Erasures gathered during one sweep. Each erase checkpoints the WAL, so a sweep erases each model
+ * once, after every marker is written: a crash in between never leaves an erased entry unmarked.
+ */
+class Erasures {
+  private readonly ids = new Map<string, string[]>();
 
-/** Erase an entry and its decrypted media. */
-async function eraseEntry(model: string, entry: Entry, now: number): Promise<void> {
-  // Media first: once the entry is gone, nothing records which attachment it used.
-  if (typeof entry.data.mediaRef === 'string') await Obscura.purgeAttachment(entry.data.mediaRef);
-  await eraseWithMarker(model, entry.id, now);
+  /** Erase an entry and its decrypted media, and record it so a replay stays gone. */
+  async entry(model: string, entry: Entry, now: number): Promise<void> {
+    // Media first: once the entry is gone, nothing records which attachment it used.
+    if (typeof entry.data.mediaRef === 'string') await Obscura.purgeAttachment(entry.data.mediaRef);
+    await this.marked(model, entry.id, now);
+  }
+
+  async marked(model: string, id: string, now: number): Promise<void> {
+    await Obscura.entryPut(ERASED_MODEL, erasedKey(model, id), '{}', now, '');
+    this.unmarked(model, id);
+  }
+
+  unmarked(model: string, id: string): void {
+    const ids = this.ids.get(model);
+    if (ids === undefined) this.ids.set(model, [id]);
+    else ids.push(id);
+  }
+
+  async commit(): Promise<void> {
+    for (const [model, ids] of this.ids) await Obscura.entryErase(model, ids);
+  }
 }
 
 /**
@@ -29,6 +46,7 @@ async function eraseEntry(model: string, entry: Entry, now: number): Promise<voi
 export async function sweepExpired(now: number = Date.now()): Promise<string[]> {
   return withEntryLock(async () => {
     const touched = new Set<string>();
+    const erase = new Erasures();
     const receiptRows = await readEntries(SEEN_MODEL);
     const receipts = indexReceipts(receiptRows);
     const live = new Set<string>();
@@ -38,27 +56,27 @@ export async function sweepExpired(now: number = Date.now()): Promise<string[]> 
         const receiptId = seenEntryId(model, entry.id);
         live.add(receiptId);
         if (expiresAt(entry.sentAt, viewedAtFor(model, entry, receipts)) > now) continue;
-        await eraseEntry(model, entry, now);
-        if (receipts.has(receiptId)) await eraseWithMarker(SEEN_MODEL, receiptId, now);
+        await erase.entry(model, entry, now);
+        if (receipts.has(receiptId)) await erase.marked(SEEN_MODEL, receiptId, now);
         touched.add(model);
       }
     }
 
     for (const entry of await readEntries(STORY_MODEL)) {
       if (storyExpiresAt(entry.sentAt) > now) continue;
-      await eraseEntry(STORY_MODEL, entry, now);
+      await erase.entry(STORY_MODEL, entry, now);
       touched.add(STORY_MODEL);
     }
 
     for (const receipt of receiptRows) {
-      if (!live.has(receipt.id) && receipt.sentAt + MAX_AGE_MS <= now) {
-        await Obscura.entryErase(SEEN_MODEL, receipt.id);
-      }
+      if (!live.has(receipt.id) && receipt.sentAt + MAX_AGE_MS <= now) erase.unmarked(SEEN_MODEL, receipt.id);
     }
 
     for (const marker of await Obscura.entryAll(ERASED_MODEL)) {
-      if (marker.sentAt + MAX_AGE_MS <= now) await Obscura.entryErase(ERASED_MODEL, marker.id);
+      if (marker.sentAt + MAX_AGE_MS <= now) erase.unmarked(ERASED_MODEL, marker.id);
     }
+
+    await erase.commit();
     return [...touched];
   }).catch((e) => {
     logError('expiry.sweep', e);

@@ -1,7 +1,8 @@
-import { Obscura } from '../native/ObscuraModule';
+import { Obscura, type StoredEntry } from '../native/ObscuraModule';
 import { resolveAudience, type AudienceFriend } from '../domain/audience';
 import { obscuraSchema, audienceFor, fieldsFor, AUTHOR_USER_ID } from '../models/schema';
 import { invalidFields } from '../domain/fields';
+import { reachedRecipients, SendFailed } from '../domain/delivery';
 import { withEntryLock } from './entryLock';
 import { readEntries } from './readEntries';
 import { logError } from '../utils/log';
@@ -40,6 +41,11 @@ export function newEntryId(model: string): string {
   return `${model}_${Date.now()}_${random}`;
 }
 
+/** The stored row for one entry, if any. */
+async function storedEntry(model: string, id: string): Promise<StoredEntry | undefined> {
+  return (await Obscura.entryGet(model, [id]))[0];
+}
+
 /**
  * A timestamp that is guaranteed to win against what is already stored for this entry.
  *
@@ -51,7 +57,7 @@ export function newEntryId(model: string): string {
 async function nextSentAt(model: string, id: string): Promise<number> {
   const now = Date.now();
   try {
-    const existing = (await Obscura.entryAll(model)).find((e) => e.id === id);
+    const existing = await storedEntry(model, id);
     return existing === undefined ? now : Math.max(now, existing.sentAt + 1);
   } catch {
     // If we cannot read, do not block the write — `now` is right in every case except the skew one.
@@ -87,9 +93,6 @@ export async function writeEntry(args: WriteEntryArgs): Promise<string> {
 
   // `_authorUserId` is local-only: this device wrote it, so this user is the author.
   const stored: Record<string, unknown> = { ...data, [AUTHOR_USER_ID]: selfUserId };
-  const wireData = { ...stored };
-  delete wireData[AUTHOR_USER_ID];
-  const payload = JSON.stringify(wireData);
 
   // `sentAt` must beat whatever is already stored, or a local write can lose to it.
   //
@@ -109,13 +112,13 @@ export async function writeEntry(args: WriteEntryArgs): Promise<string> {
   });
 
   try {
-    await Obscura.sendEntry(recipients, model, id, sentAt, payload);
+    await send(model, id, sentAt, stored, recipients);
   } catch (e) {
     // The local write already succeeded and STAYS — the user's content is theirs whether or not the
     // network cooperated, and undoing it would be the worse failure.
     //
-    // But the error is re-thrown rather than only logged, because the kit throws here **only when a
-    // send reached NOBODY** (a partial failure is best-effort and silent by design). Swallowing that
+    // But the error is re-thrown rather than only logged, because it means the send reached
+    // NOBODY (a partial delivery is a success; see `domain/delivery.ts`). Swallowing that
     // would leave the user looking at an entry in their own timeline, with no indication it got
     // nowhere, forever. An earlier version justified swallowing with "the kit queues and retries" —
     // that is not true in the sense required: the retry queue is in-memory, flushed on the next
@@ -125,7 +128,10 @@ export async function writeEntry(args: WriteEntryArgs): Promise<string> {
     // an undelivered entry sitting in their timeline looking sent, forever, with no trigger that
     // would ever retry it — the receive side has four (reconnect, foreground, cold start, wake) and
     // the send side had none. See `flushOutbox`.
-    await markUndelivered(model, id, sentAt);
+    await setDeliveryMark(model, id, sentAt, UNDELIVERED_METADATA).catch((markError: unknown) => {
+      // Best effort: failing to record the retry must not replace the send error.
+      logError('writeEntry.mark:' + model, markError);
+    });
     logError('writeEntry.send:' + model, e);
     throw e;
   }
@@ -146,35 +152,35 @@ function isUndelivered(localMetadata: string | null): boolean {
   }
 }
 
+/** What peers receive: the stored data without the local-only `_authorUserId`. */
+function wirePayload(data: Record<string, unknown>): string {
+  return JSON.stringify(Object.fromEntries(Object.entries(data).filter(([key]) => key !== AUTHOR_USER_ID)));
+}
+
+/** Send one stored version of an entry. Throws `SendFailed` when it reached none of its recipients. */
+async function send(
+  model: string, id: string, sentAt: number, data: Record<string, unknown>, recipients: string[],
+): Promise<void> {
+  const report = await Obscura.sendEntry(recipients, model, id, sentAt, wirePayload(data));
+  if (!reachedRecipients(recipients, report)) throw new SendFailed(model, report);
+}
+
 /**
- * Record that this entry did not reach anybody, without disturbing a newer write.
+ * Set the delivery mark on the version of an entry written at `sentAt`.
  *
  * The read-then-write under the lock is not decoration: `entryPut` is blind, so re-putting our own
  * `sentAt` after a concurrent drain stored a NEWER version of the same id would roll that version
- * back. If we have been superseded there is also nothing to retry — the newer write is what the
- * peers should get, and it has its own delivery outcome.
+ * back. A superseded version is left alone: the newer write has its own delivery outcome. The row's
+ * `(sentAt, authorDeviceId)` is kept exactly, so the mark never shifts a REPLACE comparison.
  */
-async function markUndelivered(
-  model: string, id: string, sentAt: number,
+async function setDeliveryMark(
+  model: string, id: string, sentAt: number, localMetadata: string | null,
 ): Promise<void> {
-  try {
-    await withEntryLock(async () => {
-      const existing = (await Obscura.entryAll(model)).find((e) => e.id === id);
-      if (existing === undefined || existing.sentAt !== sentAt) return;
-      await Obscura.entryPut(
-        model,
-        id,
-        existing.data,
-        sentAt,
-        existing.authorDeviceId,
-        UNDELIVERED_METADATA,
-      );
-    });
-  } catch (e) {
-    // Best effort. The caller is already throwing about the send; failing to record the retry must
-    // not replace that error with a less useful one.
-    logError('writeEntry.mark:' + model, e);
-  }
+  await withEntryLock(async () => {
+    const current = await storedEntry(model, id);
+    if (current === undefined || current.sentAt !== sentAt) return;
+    await Obscura.entryPut(model, id, current.data, sentAt, current.authorDeviceId, localMetadata);
+  });
 }
 
 export interface FlushOutboxArgs {
@@ -207,11 +213,9 @@ export async function flushOutbox(args: FlushOutboxArgs): Promise<number> {
     for (const row of stored) {
       if (!isUndelivered(row.localMetadata)) continue;
 
-      const payload = { ...row.data };
-      delete payload[AUTHOR_USER_ID];
       try {
-        const recipients = resolveAudience(audienceFor(model), payload, selfUserId, friends);
-        await Obscura.sendEntry(recipients, model, row.id, row.sentAt, JSON.stringify(payload));
+        const recipients = resolveAudience(audienceFor(model), row.data, selfUserId, friends);
+        await send(model, row.id, row.sentAt, row.data, recipients);
       } catch (e) {
         // Still undelivered, or now unroutable (a friend removed since). Either way the mark stays
         // and the next trigger tries again — dropping it silently is the behaviour being fixed.
@@ -219,20 +223,7 @@ export async function flushOutbox(args: FlushOutboxArgs): Promise<number> {
         continue;
       }
 
-      // Clearing the mark keeps the row's `(sentAt, authorDeviceId)` exactly as it was: this is
-      // bookkeeping, and it must not shift the entry's position in a REPLACE comparison.
-      await withEntryLock(async () => {
-        const current = (await Obscura.entryAll(model)).find((e) => e.id === row.id);
-        if (current === undefined || current.sentAt !== row.sentAt) return; // superseded
-        await Obscura.entryPut(
-          model,
-          row.id,
-          current.data,
-          row.sentAt,
-          current.authorDeviceId,
-          null,
-        );
-      });
+      await setDeliveryMark(model, row.id, row.sentAt, null);
       delivered += 1;
     }
   }

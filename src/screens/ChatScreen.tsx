@@ -69,7 +69,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const allMessages = useModelEntries('directMessage');
   const allPix = useModelEntries('pix');
   const [text, setText] = useState('');
-  const [typers, setTypers] = useState<string[]>([]);
+  const [peerTyping, setPeerTyping] = useState(false);
   const convId = conversationId(myUserId, friend.userId);
 
   // Per-conversation slice of the global cache.
@@ -111,9 +111,10 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   useEffect(() => {
     const unsub = onObscuraEvent((event) => {
       if (event.type === 'messageReceived' && event.model === 'directMessage') {
-        setTypers([]); // clear typing bubble when a real message arrives
+        setPeerTyping(false); // clear typing bubble when a real message arrives
       } else if (event.type === 'typingChanged' && event.conversationId === convId) {
-        setTypers(event.typers || []);
+        // Anyone can signal under this context id; only this conversation's friend counts.
+        setPeerTyping(event.userIds.includes(friend.userId));
       }
     });
     Obscura.observeTyping(convId);
@@ -121,7 +122,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
       unsub();
       Obscura.stopObservingTyping(convId);
     };
-  }, [convId]);
+  }, [convId, friend.userId]);
 
   // Build unified timeline sorted by timestamp.
   const timeline: TimelineItem[] = useMemo(() => [
@@ -220,7 +221,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
           renderItem={renderItem}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={VIEWABILITY}
-          ListFooterComponent={typers.length > 0 ? (
+          ListFooterComponent={peerTyping ? (
             <View style={[cs.msgRow, cs.msgRowLeft]}>
               <TypingBubble />
             </View>

@@ -38,6 +38,17 @@ function deliver(over: Partial<Parameters<typeof bridge.__deliverInbox>[0]> = {}
 }
 
 describe('draining', () => {
+  it('reads only the entries its batch names, never a whole model', async () => {
+    await Obscura.entryPut('directMessage', 'dm_old', '{}', 1, 'd');
+    deliver({ modelKey: 'directMessage', entryId: 'dm_1' });
+    const start = bridge.__calls.length;
+
+    await drainInbox();
+
+    expect(bridge.__calls.slice(start)).not.toContain('entryAll');
+    expect(bridge.__calls.slice(start)).toContain('entryGet');
+  });
+
   it('writes the entry and consumes the row', async () => {
     deliver({ modelKey: 'directMessage', entryId: 'dm_1' });
 

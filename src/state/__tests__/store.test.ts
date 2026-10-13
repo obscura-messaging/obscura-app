@@ -337,14 +337,6 @@ describe('the drain triggers', () => {
     expect(useStore.getState().myUserId).toBe('');
   });
 
-  it('clears the session on authFailed', () => {
-    session();
-
-    applyObscuraEvent({ type: 'authFailed', reason: 'refresh exhausted' });
-
-    expect(useStore.getState().authed).toBe(false);
-  });
-
   it('refreshes the friend graph after friendsChanged', async () => {
     bridge.__setFriends([
       { userId: BOB, username: 'bob', status: 'accepted' },

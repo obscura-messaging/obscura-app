@@ -2,6 +2,7 @@ import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.ConnectionState
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraConfig
+import dev.barrelmaker.obscura.kit.SubmissionStatus
 import dev.barrelmaker.obscura.kit.stores.FriendData
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import kotlinx.coroutines.delay
@@ -65,13 +66,13 @@ private fun conversationId(myUserId: String, friendUserId: String): String =
  * Send a `directMessage` entry the Obscura app will actually render.
  *
  * Uses the kit's `send(recipientUserIds, …)` — the caller names the recipients and hands over an
- * opaque payload.
+ * opaque payload. Prints the per-device outcome and returns whether any recipient device accepted.
  *
  * Fields must match `src/models/schema.ts` → `directMessage`: `conversationId` and `content`.
  * `_authorUserId` is NOT sent — the app's drain stamps it from the envelope, which is the only
  * unforgeable source of who sent this.
  */
-private suspend fun sendDirectMessage(c: ObscuraClient, friend: FriendData, text: String) {
+private suspend fun sendDirectMessage(c: ObscuraClient, friend: FriendData, text: String): Boolean {
     val myUserId = c.userId ?: error("No userId — not authenticated")
     val payload = JSONObject()
         .put("conversationId", conversationId(myUserId, friend.userId))
@@ -79,24 +80,38 @@ private suspend fun sendDirectMessage(c: ObscuraClient, friend: FriendData, text
         .toString()
         .toByteArray()
 
-    c.send(
+    val report = c.send(
         recipientUserIds = listOf(friend.userId),
         modelKey = "directMessage",
         entryId = java.util.UUID.randomUUID().toString(),
         sentAt = System.currentTimeMillis(),
         payload = payload,
     )
+    // `accepted` means queued by the server, not delivered.
+    for (r in report.recipients) {
+        println("  ${r.deviceId ?: "(no device)"}  ${r.status}${r.error?.let { "  $it" } ?: ""}")
+    }
+    return report.recipients.any { it.status == SubmissionStatus.ACCEPTED }
 }
 
-/** Resolve an ACCEPTED friend by username, or exit with a usable message. */
-private suspend fun requireFriend(c: ObscuraClient, username: String): FriendData =
-    c.getFriends().find { it.username == username && it.status == FriendStatus.ACCEPTED }
-        ?: run {
+/**
+ * Resolve an ACCEPTED friend by username, or exit with a usable message. The kit loads friends from
+ * its database asynchronously after start, so wait briefly for the row to appear.
+ */
+private suspend fun requireFriend(c: ObscuraClient, username: String): FriendData {
+    val deadline = System.currentTimeMillis() + 5_000
+    while (true) {
+        c.getFriends().find { it.username == username && it.status == FriendStatus.ACCEPTED }?.let { return it }
+        if (System.currentTimeMillis() >= deadline) break
+        delay(100)
+    }
+    return run {
             System.err.println("Not friends with $username (or request not accepted yet).")
             System.err.println("Run `befriend`, then accept it on the phone, then `friends` to confirm.")
             c.disconnect()
             kotlin.system.exitProcess(1)
         }
+}
 
 private fun usage(): Nothing {
     System.err.println(
@@ -109,7 +124,6 @@ private fun usage(): Nothing {
           befriend <userId> <username>      Send a friend request to the recipient.
           accept-pending                    Accept all pending friend requests (drains for 5s).
           friends                           List friends and their status.
-          devices <recipientUsername>       Show which of the recipient's devices a send would target.
           send <recipientUsername> <text>   Send a TEXT message to a friend.
           ping <recipientUsername> [count]  Send "ping N <ts>" N times (default 1) with 500ms gaps.
         """.trimIndent()
@@ -182,23 +196,6 @@ private suspend fun run(args: Array<String>) {
             list.forEach { println("  ${it.username}  ${it.userId}  ${it.status}") }
             c.disconnect()
         }
-        "devices" -> {
-            // Diagnostic for "the send succeeded but nothing arrived". `sendToAllDevices` fans out
-            // to the device ids cached in the friend record (restored by rebuildDeviceMap on
-            // connect) and only re-fetches prekey bundles when that cache is EMPTY — so a stale
-            // record silently addresses a device the recipient no longer has.
-            if (args.size < 2) usage()
-            val recipientUsername = args[1]
-            val c = client()
-            loginOrRegister(c)
-            connect(c)
-            delay(800)
-            val friend = requireFriend(c, recipientUsername)
-            println("friend:  ${friend.username} (${friend.userId})")
-            println("cached devices (what a send targets): ${friend.devices.size}")
-            friend.devices.forEach { println("  - ${it.id}  ${it.name}") }
-            c.disconnect()
-        }
         "send" -> {
             if (args.size < 3) usage()
             val recipientUsername = args[1]
@@ -206,14 +203,14 @@ private suspend fun run(args: Array<String>) {
             val c = client()
             loginOrRegister(c)
             connect(c)
-            // Ensure friend list is hydrated (rebuildDeviceMap runs on connect)
-            delay(800)
             val friend = requireFriend(c, recipientUsername)
             println("Sending to ${friend.username} (${friend.userId}): \"$text\"")
-            sendDirectMessage(c, friend, text)
-            delay(1500) // let it flush
-            println("Sent.")
+            val accepted = sendDirectMessage(c, friend, text)
             c.disconnect()
+            if (!accepted) {
+                System.err.println("No device of ${friend.username} accepted the message.")
+                kotlin.system.exitProcess(1)
+            }
         }
         "ping" -> {
             if (args.size < 2) usage()
@@ -222,16 +219,19 @@ private suspend fun run(args: Array<String>) {
             val c = client()
             loginOrRegister(c)
             connect(c)
-            delay(800)
             val friend = requireFriend(c, recipientUsername)
+            var failed = 0
             repeat(count) { i ->
                 val text = "ping ${i + 1}/$count @ ${System.currentTimeMillis()}"
                 println("→ $text")
-                sendDirectMessage(c, friend, text)
+                if (!sendDirectMessage(c, friend, text)) failed++
                 delay(500)
             }
-            delay(1500)
             c.disconnect()
+            if (failed > 0) {
+                System.err.println("$failed of $count pings reached no device of ${friend.username}.")
+                kotlin.system.exitProcess(1)
+            }
         }
         else -> usage()
     }
