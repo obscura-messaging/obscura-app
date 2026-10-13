@@ -2,7 +2,7 @@
 
 These are the semantics the app owns in `src/models/`, `src/domain/` and
 `src/state/`. The kit only stores and sends opaque bytes
-([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md)).
+([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md)).
 
 ## Models
 
@@ -17,14 +17,16 @@ These are the semantics the app owns in `src/models/`, `src/domain/` and
 A `pix` is a direct photo or video message. The model key is independent of
 the `obscura-app` repository name.
 
-`src/models/schema.ts` is the executable source: `audienceFor` for sends,
-`fieldsFor` for local writes, `modelRules` for the drain. Screen entry types
-derive from it. Field types are `string`, `string?`, `number` and `number?`
+`src/models/schema.ts` is the executable source: sends, local writes and the
+drain all read a model's declaration through `declarationOf` or `MODELS`, and
+an undeclared model throws. Screen entry types derive from it. Field types are `string`, `string?`, `number` and `number?`
 (`?` means optional). A local write with a bad field throws, and a received
-entry with one is discarded as `invalid-fields`. Fields prefixed `_` are not
-checked, and undeclared fields are allowed. `_authorUserId` is local-only. It is
-stripped before sending, and it is never read from a payload. A local write sets
-it to this user, and the drain sets it to the transport sender.
+entry with one is discarded as `invalid-fields`. Undeclared fields are allowed.
+
+An entry's author is `Entry.authorUserId`, never a payload field: a local write
+sets it to this user, and the drain sets it to the transport sender.
+`src/state/entryStore.ts` is the only code that reads or writes the kit's entry
+store for app models, and the only code that knows how the author is stored.
 
 ## Audience
 
@@ -32,12 +34,9 @@ it to this user, and the drain sets it to the transport sender.
 `sendEntry`. When a required value is missing or malformed, it throws
 `DIRECT_ROUTING_UNRESOLVED` and sends nothing. It never widens to a broadcast.
 
-- **None declared:** every accepted friend.
-- **`self`:** an empty list, which reaches only the author's other devices.
-- **`recipient`:** a username looked up among accepted friends. An unknown name
-  reaches nobody else.
-- **`conversation`:** a canonical conversation ID that must name the local
-  user, intersected with accepted friends.
+- **`friends`:** every accepted friend.
+- **`conversation`:** the entry's `conversationId`, a canonical conversation ID
+  that must name the local user, intersected with accepted friends.
 
 ### Canonical conversation ID
 
@@ -52,7 +51,8 @@ Any authenticated account can deliver to any device. The drain therefore
 authorizes against the inbox row's `senderUserId`, never a payload field.
 Friendship is not required; names come from the friend graph at render time.
 
-- A conversation entry must name both the local user and the sender. In a
+- A `conversation` entry's `conversationId` must name both the local user and
+  the sender. In a
   self-sync, the sender is the local user.
 - A profile entry ID must equal `profile_<senderUserId>`.
 - A story has no binding field. Its sender is its author.

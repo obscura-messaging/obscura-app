@@ -7,22 +7,14 @@ import ImageIO
 import UniformTypeIdentifiers
 import UserNotifications
 
-/// Thin React Native bridge — the iOS analog of `ObscuraBridgeModule.kt`.
-/// Owns NO Obscura state: client lifecycle / persistence / app-state live in
-/// `ObscuraSession`. This class:
-///
-///   - Relays the kit's unified `observeEvents()` stream to JS as the single
-///     `ObscuraEvent` stream (discriminated by `type`, per docs/BRIDGE.md).
-///   - Translates `@objc` RPC methods into `ObscuraSession.client` calls and
-///     marshals between JS and Swift types.
-///
-/// Registered with React via `ObscuraBridge.m` (`RCT_EXTERN_MODULE`).
+@MainActor
 @objc(ObscuraBridge)
 final class ObscuraBridge: RCTEventEmitter {
     private static weak var shared: ObscuraBridge?
 
     private var hasListeners = false
-    private var eventTask: Task<Void, Never>?
+    private var authenticating = false
+    private var eventTasks: [Task<Void, Never>] = []
     /// Active typing observations, keyed by conversationId.
     private var typingTasks: [String: Task<Void, Never>] = [:]
 
@@ -37,6 +29,9 @@ final class ObscuraBridge: RCTEventEmitter {
         ObscuraSession.shared.onAppStateChanged = { [weak self] active in
             self?.emit(.appStateChanged, ["state": active ? "active" : "background"])
         }
+        ObscuraSession.shared.onMessageReceived = { [weak self] model in
+            self?.emit(.messageReceived, ["model": model])
+        }
         // Re-subscribe when the live client is swapped (login/register/restore).
         ObscuraSession.shared.onClientReplaced = { [weak self] client in
             self?.bindEvents(client)
@@ -45,13 +40,12 @@ final class ObscuraBridge: RCTEventEmitter {
     }
 
     deinit {
-        eventTask?.cancel()
-        if ObscuraBridge.shared === self {
-            ObscuraBridge.shared = nil
-        }
+        eventTasks.forEach { $0.cancel() }
+        typingTasks.values.forEach { $0.cancel() }
     }
 
-    @objc override static func requiresMainQueueSetup() -> Bool { false }
+    @objc nonisolated override static func requiresMainQueueSetup() -> Bool { true }
+    @objc override var methodQueue: DispatchQueue! { .main }
 
     /// Single named stream; payloads are discriminated by `type`.
     override func supportedEvents() -> [String]! { ["ObscuraEvent"] }
@@ -61,9 +55,7 @@ final class ObscuraBridge: RCTEventEmitter {
 
     // MARK: - Emission
 
-    /// The single source of truth for the event *types* this bridge may emit on the
-    /// `ObscuraEvent` stream. Mirrors `BridgeEvent` in Android's ObscuraBridgeModule.kt
-    /// and `OBSCURA_EVENT_TYPES` in src/native/ObscuraModule.ts — the raw values MUST match.
+    /// Matches the event union in `src/native/ObscuraModule.ts`.
     private enum BridgeEvent: String {
         case connectionChanged, authStateChanged, appStateChanged
         case launchedFrom, friendsChanged, messageReceived
@@ -82,31 +74,38 @@ final class ObscuraBridge: RCTEventEmitter {
     /// Reject a promise, preferring a kit `ObscuraError`'s stable `code` over the
     /// per-method `fallbackCode` so JS can branch on *what* failed (e.g. "NOT_FRIENDS")
     /// rather than parse a message. Mirrors Android's `Promise.rejectKit`.
-    func rejectKit(_ reject: @escaping RCTPromiseRejectBlock, _ fallbackCode: String, _ error: Error) {
-        let code = (error as? ObscuraClient.ObscuraError)?.code ?? fallbackCode
+    nonisolated func rejectKit(_ reject: @escaping RCTPromiseRejectBlock, _ fallbackCode: String, _ error: Error) {
+        let code = (error as? ObscuraError)?.code ?? fallbackCode
         reject(code, error.localizedDescription, error)
     }
 
     // MARK: - Kit event stream -> JS
 
-    private func bindEvents(_ client: ObscuraClient) {
-        eventTask?.cancel()
-        eventTask = Task { [weak self] in
-            for await event in client.observeEvents() {
-                guard let self = self else { return }
-                switch event {
-                case .connectionChanged(let state):
-                    self.emit(.connectionChanged, ["state": state.rawValue])
-                case .authChanged(let state):
-                    self.emit(.authStateChanged, ["state": state.rawValue])
-                case .friendsChanged:
-                    self.emit(.friendsChanged)
-                case .messageReceived(let model):
-                    // Minimal payload — JS re-queries the entry store. Don't synthesize an id.
-                    self.emit(.messageReceived, ["model": model])
-                }
-            }
+    private func bindEvents(_ client: ObscuraClient?) {
+        eventTasks.forEach { $0.cancel() }
+        eventTasks = []
+        typingTasks.values.forEach { $0.cancel() }
+        typingTasks = [:]
+        guard let client else {
+            emit(.authStateChanged, ["state": "loggedOut"])
+            emit(.connectionChanged, ["state": "disconnected"])
+            return
         }
+        eventTasks = [
+            Task { [weak self] in
+                for await state in client.observeConnectionState() {
+                    self?.emit(.connectionChanged, ["state": state.rawValue])
+                }
+            },
+            Task { [weak self] in
+                for await state in client.observeAuthState() {
+                    self?.emit(.authStateChanged, ["state": state.rawValue])
+                }
+            },
+            Task { [weak self] in
+                for await _ in client.observeFriendsChanged() { self?.emit(.friendsChanged) }
+            },
+        ]
     }
 
     /// `Friend` -> the `{ userId, username, status }` shape JS expects.
@@ -114,8 +113,24 @@ final class ObscuraBridge: RCTEventEmitter {
         ["userId": f.userId, "username": f.username, "status": f.status.rawValue]
     }
 
-    // Convenience: the live client (always non-nil — placeholder until login).
-    var client: ObscuraClient { ObscuraSession.shared.client }
+    var client: ObscuraClient {
+        get async throws { try await ObscuraSession.shared.readyClient() }
+    }
+
+    private func authenticate(_ resolve: @escaping RCTPromiseResolveBlock,
+                              _ reject: @escaping RCTPromiseRejectBlock,
+                              _ code: String, _ operation: @escaping () async throws -> Any?) {
+        guard !authenticating else {
+            rejectKit(reject, code, ObscuraError.invalidArgument("Authentication already in progress"))
+            return
+        }
+        authenticating = true
+        Task {
+            defer { authenticating = false }
+            do { resolve(try await operation()) }
+            catch { rejectKit(reject, code, error) }
+        }
+    }
 }
 
 // MARK: - Auth + state reads
@@ -126,20 +141,11 @@ extension ObscuraBridge {
     func registerUser(_ username: String, password: String,
                       resolver resolve: @escaping RCTPromiseResolveBlock,
                       rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do {
-                // Register the account, build a username-keyed encrypted DB, provision this device.
-                let creds = try await ObscuraClient.registerAccount(username, password)
-                let c = try ObscuraSession.shared.makeUserClient(username: username, freshDirectory: true)
-                await c.restoreSession(token: creds.token, refreshToken: creds.refreshToken,
-                                       userId: creds.userId, deviceId: nil, username: username)
-                try await c.provisionCurrentDevice()
-                ObscuraSession.shared.replaceClient(c)
-                ObscuraSession.shared.saveSession()
-                resolve(nil)
-            } catch {
-                rejectKit(reject, "REGISTER_ERROR", error)
-            }
+        authenticate(resolve, reject, "REGISTER_ERROR") {
+            let c = try ObscuraSession.shared.makeUserClient(username: username)
+            try await ObscuraSession.shared.replaceClient(c)
+            try await c.register(username, password)
+            return nil
         }
     }
 
@@ -147,23 +153,14 @@ extension ObscuraBridge {
     func login(_ username: String, password: String,
                resolver resolve: @escaping RCTPromiseResolveBlock,
                rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do {
-                // The database is keyed by username, so the client is built before login.
-                let c = try ObscuraSession.shared.makeUserClient(username: username)
-                ObscuraSession.shared.replaceClient(c)
-                let scenario = try await c.login(username, password)
-                let mapped: String
-                switch scenario {
-                case .existingDevice:     mapped = "existingDevice"
-                case .newDevice:          mapped = "newDevice"
-                case .deviceMismatch:     mapped = "deviceMismatch"
-                case .invalidCredentials: mapped = "invalidCredentials"
-                }
-                if scenario == .existingDevice { ObscuraSession.shared.saveSession() }
-                resolve(mapped)
-            } catch {
-                rejectKit(reject, "LOGIN_ERROR", error)
+        authenticate(resolve, reject, "LOGIN_ERROR") {
+            let c = try ObscuraSession.shared.makeUserClient(username: username)
+            try await ObscuraSession.shared.replaceClient(c)
+            switch try await c.login(username, password) {
+            case .existingDevice: return "existingDevice"
+            case .newDevice: return "newDevice"
+            case .deviceMismatch: return "deviceMismatch"
+            case .invalidCredentials: return "invalidCredentials"
             }
         }
     }
@@ -172,14 +169,11 @@ extension ObscuraBridge {
     func loginAndProvision(_ username: String, password: String,
                            resolver resolve: @escaping RCTPromiseResolveBlock,
                            rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do {
-                try await ObscuraSession.shared.client.loginAndProvision(username, password)
-                ObscuraSession.shared.saveSession()
-                resolve(nil)
-            } catch {
-                rejectKit(reject, "PROVISION_ERROR", error)
-            }
+        authenticate(resolve, reject, "PROVISION_ERROR") {
+            let c = try ObscuraSession.shared.makeUserClient(username: username)
+            try await ObscuraSession.shared.replaceClient(c)
+            try await c.loginAndProvision(username, password)
+            return nil
         }
     }
 
@@ -188,10 +182,7 @@ extension ObscuraBridge {
                  rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let c = ObscuraSession.shared.client
-                _ = await c.ensureFreshToken()
-                try await c.connect()
-                ObscuraSession.shared.saveSession()
+                try await client.connect()
                 resolve(nil)
             } catch {
                 rejectKit(reject, "CONNECT_ERROR", error)
@@ -202,56 +193,66 @@ extension ObscuraBridge {
     @objc(logout:rejecter:)
     func logout(_ resolve: @escaping RCTPromiseResolveBlock,
                 rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do { try await ObscuraSession.shared.client.logout() }
-            catch { ObscuraSession.shared.logger.log("logout: \(error)") }
-            ObscuraSession.shared.clearSession()
-            resolve(nil)
+        authenticate(resolve, reject, "LOGOUT_ERROR") {
+            await ObscuraSession.shared.waitForRestore()
+            if let c = ObscuraSession.shared.client { try await c.logout() }
+            ObscuraSession.shared.discardClient()
+            return nil
         }
     }
 
     @objc(wipeDevice:rejecter:)
     func wipeDevice(_ resolve: @escaping RCTPromiseResolveBlock,
                     rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do {
-                try await ObscuraSession.shared.client.wipeDevice()
-                // The kit's wipeDevice() leaves the Keychain session; a stale one would restore the wiped device.
-                ObscuraSession.shared.clearSession()
-                resolve(nil)
-            } catch {
-                rejectKit(reject, "WIPE_ERROR", error)
-            }
+        authenticate(resolve, reject, "WIPE_ERROR") {
+            try await self.client.wipeDevice()
+            ObscuraSession.shared.discardClient()
+            return nil
         }
     }
 
     @objc(getConnectionState:rejecter:)
-    func getConnectionState(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-        resolve(client.connectionState.rawValue)
+    func getConnectionState(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            await ObscuraSession.shared.waitForRestore()
+            resolve(ObscuraSession.shared.client?.connectionState.rawValue ?? "disconnected")
+        }
     }
 
     @objc(getAuthState:rejecter:)
-    func getAuthState(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-        resolve(client.authState.rawValue)
+    func getAuthState(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            await ObscuraSession.shared.waitForRestore()
+            resolve(ObscuraSession.shared.client?.authState.rawValue ?? "loggedOut")
+        }
     }
 
     @objc(getUserId:rejecter:)
-    func getUserId(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-        resolve(client.userId)
+    func getUserId(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            await ObscuraSession.shared.waitForRestore()
+            resolve(await ObscuraSession.shared.client?.userId)
+        }
     }
 
     @objc(getUsername:rejecter:)
-    func getUsername(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-        resolve(client.username)
+    func getUsername(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            await ObscuraSession.shared.waitForRestore()
+            resolve(await ObscuraSession.shared.client?.username)
+        }
     }
 
     @objc(getDeviceId:rejecter:)
-    func getDeviceId(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-        resolve(client.deviceId)
+    func getDeviceId(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            await ObscuraSession.shared.waitForRestore()
+            resolve(await ObscuraSession.shared.client?.deviceId)
+        }
     }
 }
 
-// MARK: - Friends + device linking
+// MARK: - Friends
 
 extension ObscuraBridge {
 
@@ -274,25 +275,22 @@ extension ObscuraBridge {
     func acceptFriend(_ userId: String,
                       resolver resolve: @escaping RCTPromiseResolveBlock,
                       rejecter reject: @escaping RCTPromiseRejectBlock) {
-        NSLog("[ObscuraBridge] acceptFriend started user=%@", userId)
         Task {
             do {
                 try await client.acceptFriend(userId)
-                NSLog("[ObscuraBridge] acceptFriend succeeded user=%@", userId)
                 resolve(nil)
             } catch {
-                NSLog("[ObscuraBridge] acceptFriend failed user=%@ error=%@", userId, "\(error)")
                 rejectKit(reject, "ACCEPT_ERROR", error)
             }
         }
     }
 
     @objc(getFriendCode:rejecter:)
-    func getFriendCode(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-        guard let code = client.friendCode() else {
-            reject("FRIEND_CODE_ERROR", "no friend code available (not authenticated?)", nil); return
+    func getFriendCode(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            do { resolve(try await client.friendCode()) }
+            catch { rejectKit(reject, "FRIEND_CODE_ERROR", error) }
         }
-        resolve(code)
     }
 
     @objc(addFriendByCode:resolver:rejecter:)
@@ -309,26 +307,12 @@ extension ObscuraBridge {
     func getFriends(_ resolve: @escaping RCTPromiseResolveBlock,
                     rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
-            let all = await client.getFriends()
-            resolve(all.map { ObscuraBridge.friendDict($0) })
-        }
-    }
-
-    @objc(generateLinkCode:rejecter:)
-    func generateLinkCode(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-        guard let code = client.generateLinkCode() else {
-            reject("LINK_CODE_ERROR", "could not generate link code", nil); return
-        }
-        resolve(code)
-    }
-
-    @objc(validateAndApproveLink:resolver:rejecter:)
-    func validateAndApproveLink(_ code: String,
-                                resolver resolve: @escaping RCTPromiseResolveBlock,
-                                rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do { try await client.validateAndApproveLink(code); resolve(nil) }
-            catch { rejectKit(reject, "LINK_APPROVE_ERROR", error) }
+            do {
+                let all = try await ObscuraSession.shared.client?.getFriends() ?? []
+                resolve(all.map { ObscuraBridge.friendDict($0) })
+            } catch {
+                rejectKit(reject, "GET_FRIENDS_ERROR", error)
+            }
         }
     }
 }
@@ -484,7 +468,7 @@ extension ObscuraBridge {
             do {
                 let report = try await client.send(
                     to: recipientUserIds, modelKey: modelKey, entryId: entryId,
-                    sentAt: sentAt.uint64Value, payload: Data(payloadJson.utf8)
+                    sentAt: sentAt.uint64Value, payload: Data(payloadJson.utf8), acceptedDeviceIds: []
                 )
                 resolve(ObscuraBridge.sendReportDict(report))
             } catch {
@@ -519,8 +503,12 @@ extension ObscuraBridge {
                     resolver resolve: @escaping RCTPromiseResolveBlock,
                     rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
-            await client.sendTyping(to: recipientUserIds, contextId: conversationId, state: .started)
-            resolve(nil)
+            do {
+                try await client.sendTyping(to: recipientUserIds, contextId: conversationId, state: .started)
+                resolve(nil)
+            } catch {
+                rejectKit(reject, "TYPING_ERROR", error)
+            }
         }
     }
 
@@ -529,8 +517,12 @@ extension ObscuraBridge {
                     resolver resolve: @escaping RCTPromiseResolveBlock,
                     rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
-            await client.sendTyping(to: recipientUserIds, contextId: conversationId, state: .stopped)
-            resolve(nil)
+            do {
+                try await client.sendTyping(to: recipientUserIds, contextId: conversationId, state: .stopped)
+                resolve(nil)
+            } catch {
+                rejectKit(reject, "STOP_TYPING_ERROR", error)
+            }
         }
     }
 
@@ -538,14 +530,20 @@ extension ObscuraBridge {
     func observeTyping(_ conversationId: String,
                        resolver resolve: @escaping RCTPromiseResolveBlock,
                        rejecter reject: @escaping RCTPromiseRejectBlock) {
-        typingTasks[conversationId]?.cancel()
-        let observation = client.observeTyping(contextId: conversationId)
-        typingTasks[conversationId] = Task { [weak self] in
-            for await userIds in observation.values {
-                self?.emit(.typingChanged, ["conversationId": conversationId, "userIds": userIds])
+        Task {
+            do {
+                let observation = try await client.observeTyping(contextId: conversationId)
+                typingTasks[conversationId]?.cancel()
+                typingTasks[conversationId] = Task { [weak self] in
+                    for await userIds in observation {
+                        self?.emit(.typingChanged, ["conversationId": conversationId, "userIds": userIds])
+                    }
+                }
+                resolve(nil)
+            } catch {
+                rejectKit(reject, "OBSERVE_TYPING_ERROR", error)
             }
         }
-        resolve(nil)
     }
 
     @objc(stopObservingTyping:resolver:rejecter:)
@@ -668,7 +666,7 @@ extension ObscuraBridge {
 
 extension ObscuraBridge {
 
-    private static func outputImageURL() -> URL {
+    nonisolated private static func outputImageURL() -> URL {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("processed")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -839,7 +837,7 @@ extension ObscuraBridge {
 
     @objc(getDebugLog:rejecter:)
     func getDebugLog(_ resolve: RCTPromiseResolveBlock, rejecter reject: RCTPromiseRejectBlock) {
-        resolve(client.getDebugLog())
+        resolve(ObscuraSession.shared.client?.getDebugLog() ?? [])
     }
 
     /// Called from AppDelegate when a warm-start deep link arrives (notification

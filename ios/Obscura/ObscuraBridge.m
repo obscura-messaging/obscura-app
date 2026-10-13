@@ -22,7 +22,7 @@ RCT_EXTERN_METHOD(getUserId:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromise
 RCT_EXTERN_METHOD(getUsername:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(getDeviceId:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 
-// ── Friends + device linking ──────────────────────────────────────────────
+// ── Friends ───────────────────────────────────────────────────────────────
 RCT_EXTERN_METHOD(acceptFriend:(NSString *)userId
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(removeFriend:(NSString *)userId
@@ -31,9 +31,6 @@ RCT_EXTERN_METHOD(getFriendCode:(RCTPromiseResolveBlock)resolve rejecter:(RCTPro
 RCT_EXTERN_METHOD(addFriendByCode:(NSString *)code
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(getFriends:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(generateLinkCode:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(validateAndApproveLink:(NSString *)code
-                  resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 
 // ── Typing signals ────────────────────────────────────────────────────────
 RCT_EXTERN_METHOD(sendTyping:(NSArray *)recipientUserIds conversationId:(NSString *)conversationId

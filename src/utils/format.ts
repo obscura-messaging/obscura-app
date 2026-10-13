@@ -1,9 +1,4 @@
-/** Formatting helpers shared across screens. */
-
-/**
- * Compact relative time: `now`, `5m`, `3h`, `2d`. Single source of truth for
- * the chat list, story headers, and anywhere else that shows "time since".
- */
+/** Compact time since `ts`: `now`, `5m`, `3h`, `2d`. */
 export function timeAgo(ts: number): string {
   const secs = Math.floor((Date.now() - ts) / 1000);
   if (secs < 60) return 'now';

@@ -1,13 +1,5 @@
 import { conversationId, parseConversationId } from '../conversation';
 
-/**
- * The canonical two-party conversation id (`DOMAIN_CONTRACT.md`).
- *
- * The format is load-bearing in both directions: it is the audience key on the way out and the
- * authorization key on the way in, and it is the REPLACE grouping for `pix`. So the constructor and
- * the parser are pinned against each other here rather than at either call site.
- */
-
 describe('the constructor', () => {
   /**
    * The id must be identical computed from either side, or one participant would address the
@@ -30,11 +22,6 @@ describe('the parser', () => {
     expect(parseConversationId('aaa_bbb')).toEqual(['aaa', 'bbb']);
   });
 
-  /**
-   * **The rule the contract states and no implementation enforced.** `conversationId` sorts, so a
-   * reversed id was not built by this app — accepting one means accepting an id whose provenance is
-   * unknown, and interpreting it is guessing an audience.
-   */
   it('REFUSES a reversed id rather than sorting it', () => {
     expect(parseConversationId('bbb_aaa')).toBeNull();
   });

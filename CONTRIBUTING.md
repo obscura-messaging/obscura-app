@@ -73,8 +73,11 @@ state logic. It does not cover rendered UI or device behavior.
 | CI job | Runs | On |
 | --- | --- | --- |
 | `JavaScript` | `just check`, `scripts/test-verify-internal-build.py` | PRs, `main` |
-| `Android + push sender` | `just android-release arm64-v8a false`, `just push-sender-build` | PRs |
+| `Android + push sender` | `just android-release arm64-v8a false` | PRs |
 | `iOS Debug Build` | `just ios-build arm64` | PRs |
+
+The Android job retains its required GitHub status name; the push-sender
+tool and build step have been removed.
 
 ## Updating `obscura-native`
 

@@ -1,22 +1,10 @@
 /**
- * An in-memory stand-in for the native `ObscuraBridge`.
- *
- * Jest has no native module or event emitter, so tests install this fake before
- * importing `ObscuraModule`. It persists entries and inbox rows and emits events,
- * allowing tests to exercise the real TypeScript bridge facade.
- *
- * It deliberately does not model kit internals:
- *
- *   - no crypto, no Signal sessions, no network, no persistence across instances;
- *   - `userId` / `deviceId` are whatever you set, with no authentication of any kind;
- *   - it models the **bridge contract**, not the kit's internals.
- *
- * The properties that matter are modelled faithfully because the app's correctness depends on them:
- * `inboxPeek` is side-effect free, ids are monotonic and never reused, `entryPut` is a BLIND upsert
- * (the app decides who wins), and `sendEntry` produces no local row — the sender writes its own copy.
+ * An in-memory `ObscuraBridge` for Jest. It models the bridge contract, not the kit: no crypto,
+ * network or authentication. What the app relies on is faithful: `inboxPeek` has no side effects,
+ * inbox ids are never reused, `entryPut` is a blind upsert, and `sendEntry` stores no local row.
  */
 
-import type { Friend, InboxRow, LoginScenario, SendReport, StoredEntry, SubmissionResult } from '../ObscuraModule';
+import type { AuthState, ConnectionState, Friend, ObscuraBridge, InboxRow, LoginScenario, SendReport, StoredEntry, SubmissionResult } from '../ObscuraModule';
 
 type FakeInboxRow = InboxRow & { envelopeId: string };
 
@@ -26,13 +14,13 @@ export interface FakeBridgeOptions {
   deviceId?: string;
 }
 
-export class FakeObscuraBridge {
+export class FakeObscuraBridge implements ObscuraBridge {
   // ─── Session ───────────────────────────────────────────
   userId: string;
   username: string;
   deviceId: string;
-  authState: 'loggedOut' | 'authenticated' | 'pendingApproval' = 'loggedOut';
-  connectionState: 'disconnected' | 'connecting' | 'reconnecting' | 'connected' = 'disconnected';
+  authState: AuthState = 'loggedOut';
+  connectionState: ConnectionState = 'disconnected';
 
   // ─── Stores ────────────────────────────────────────────
   private friends: Friend[] = [];
@@ -41,23 +29,13 @@ export class FakeObscuraBridge {
   private pushToken: string | null = null;
   private loginScenario: LoginScenario = 'existingDevice';
 
-  /**
-   * Monotonic clock. Real `Date.now()` has millisecond resolution, so two writes in the same tick
-   * collide — and an equal-timestamp collision is resolved by `authorDeviceId`, which in a
-   * single-device test is *the same value*, making the outcome arrival-order dependent. That is a
-   * flake generator. A counter makes local writes strictly ordered; tests that care about ties set
-   * timestamps explicitly through `__deliverEntry`.
-   */
+  /** Strictly increasing timestamps, so same-tick writes never tie. */
   private clock = 1_700_000_000_000;
   private nextTimestamp(): number {
     return ++this.clock;
   }
 
-  /**
-   * Every bridge call, in order, as `"methodName"`. Use it to assert what actually crossed the
-   * bridge — the one thing a fake can prove that the real kit cannot, since the boundary is the
-   * contract under test.
-   */
+  /** Every bridge call, in order. */
   readonly __calls: string[] = [];
 
   constructor(opts: FakeBridgeOptions = {}) {
@@ -77,13 +55,13 @@ export class FakeObscuraBridge {
   private nextInboxId = 1;
   private storedEntries = new Map<string, Map<string, StoredEntry>>();
 
-  /** What `sendEntry` put on the wire, in order. The app's outgoing audience decisions, observable. */
+  /** What `sendEntry` put on the wire, in order. */
   readonly __sent: Array<{
     recipientUserIds: string[]; modelKey: string; entryId: string;
     sentAt: number; payloadJson: string;
   }> = [];
 
-  /** Rows the app discarded, with the reason. Data loss must be visible in a test, not silent. */
+  /** Rows the app discarded, with the reason. */
   readonly __discarded: Array<{ ids: number[]; reason: string }> = [];
 
   private entryTable(model: string): Map<string, StoredEntry> {
@@ -98,8 +76,7 @@ export class FakeObscuraBridge {
   async inboxPeek(limit: number): Promise<InboxRow[]> {
     this.record('inboxPeek');
     this.checkFailure('inboxPeek');
-    // Side-effect free: peeking twice without consuming returns the same rows. Copies
-    // are returned so a test mutating a row cannot corrupt the store and mask a bug.
+    // Copies, so a test mutating a row cannot corrupt the inbox.
     return this.inbox.slice(0, limit).map(({ envelopeId: _envelopeId, ...row }) => ({ ...row }));
   }
 
@@ -115,10 +92,7 @@ export class FakeObscuraBridge {
     this.checkFailure('inboxDiscard');
     if (ids.length === 0) return; // an empty discard is not a data-loss event
     this.__discarded.push({ ids, reason });
-    // Deletes the rows itself rather than delegating to `inboxConsume`. Delegating pushed an extra
-    // `'inboxConsume'` onto `__calls`, so an ordering assertion of the shape
-    // `__calls.indexOf('inboxConsume')` read a DISCARD as a consume as soon as a batch contained
-    // both — and the assertion it silently weakened is the one guarding write-before-consume.
+    // Not via `inboxConsume`, which would record a consume in `__calls`.
     const drop = new Set(ids);
     this.inbox = this.inbox.filter((r) => !drop.has(r.id));
   }
@@ -142,9 +116,6 @@ export class FakeObscuraBridge {
     if (typeof dataJson !== 'string') {
       throw new Error('entryPut expects a JSON string across the bridge, got ' + typeof dataJson);
     }
-    // BLIND, exactly like the kits: an older write overwrites a newer one, because by the time a
-    // write gets here the app has already decided who wins. A double that merged would hide an app
-    // that forgot to.
     this.entryTable(model).set(id, {
       id, data: dataJson, sentAt, authorDeviceId, localMetadata,
     });
@@ -185,8 +156,6 @@ export class FakeObscuraBridge {
   ): Promise<SendReport> {
     this.record('sendEntry');
     this.checkFailure('sendEntry');
-    // No local row and no inbox row: the sender writes its own copy, so a test that forgets to sees
-    // an empty store.
     this.__sent.push({ recipientUserIds, modelKey, entryId, sentAt, payloadJson });
     return {
       recipients: recipientUserIds.map((userId): SubmissionResult => this.unreachable.has(userId)
@@ -196,22 +165,14 @@ export class FakeObscuraBridge {
     };
   }
 
-  // ─── Test controls (`__` prefix — NOT part of the native surface) ───
+  // ─── Test controls (not part of the native surface) ───
 
   /** Emit a raw event exactly as the native side would. */
   __emit(event: Record<string, unknown>): void {
     for (const l of [...this.listeners]) l(event);
   }
 
-  /**
-   * Simulate a message arriving: the kit persists an inbox row, then notifies. Merge-before-notify
-   * is the kit's order and the reason "event → drain" is safe.
-   *
-   * Defaults describe a well-formed APP_ENTRY, so a test only states what it is varying.
-   *
-   * Deduped on `envelopeId`, as in both kits: passing the same `envelopeId` again returns the
-   * existing row rather than adding one.
-   */
+  /** Persist an inbox row and notify, as the kit does. Deduped on `envelopeId`. */
   __deliverInbox(
     row: Partial<InboxRow> & { payload: string; envelopeId?: string },
   ): FakeInboxRow {
@@ -235,13 +196,7 @@ export class FakeObscuraBridge {
     return full;
   }
 
-  /**
-   * Put the double in the state every drain test needs: an authenticated session.
-   *
-   * `getUserId()` resolves `null` while logged out, and the drain refuses to authorize anything
-   * without an identity — so a test that skips this drains nothing, which is the correct behaviour
-   * and a confusing way to discover it.
-   */
+  /** An authenticated session; without one, `getUserId()` is null and the drain stores nothing. */
   __authenticate(opts: FakeBridgeOptions = {}): void {
     if (opts.userId !== undefined) this.userId = opts.userId;
     if (opts.username !== undefined) this.username = opts.username;
@@ -256,7 +211,7 @@ export class FakeObscuraBridge {
   }
 
   /** Flip auth state and emit, as login/logout does. */
-  __setAuthState(state: 'loggedOut' | 'authenticated' | 'pendingApproval'): void {
+  __setAuthState(state: AuthState): void {
     this.authState = state;
     this.__emit({ type: 'authStateChanged', state });
   }
@@ -267,20 +222,12 @@ export class FakeObscuraBridge {
   }
 
   /** Flip connection state and emit. */
-  __setConnectionState(state: 'disconnected' | 'connecting' | 'reconnecting' | 'connected'): void {
+  __setConnectionState(state: ConnectionState): void {
     this.connectionState = state;
     this.__emit({ type: 'connectionChanged', state });
   }
 
-  /** Raw entry table for a model, for assertions the public API cannot express. */
-  /**
-   * Clear all state, **in place**.
-   *
-   * In place is not a detail: `ObscuraModule.ts` captures its `Bridge` reference at import time and
-   * caches the `NativeEventEmitter` built from it, so swapping in a new instance between tests
-   * would leave the module pointing at the old one. Everything below mutates rather than reassigns
-   * for that reason. Called automatically from `beforeEach` by the jest setup.
-   */
+  /** Clear all state in place: `ObscuraModule` holds this instance from import time. */
   __reset(): void {
     this.inbox.length = 0;
     this.nextInboxId = 1;
@@ -304,17 +251,12 @@ export class FakeObscuraBridge {
     this.clock = 1_700_000_000_000;
   }
 
-  /** How many handlers are subscribed. Catches leaked subscriptions in unmount tests. */
+  /** How many handlers are subscribed. */
   __listenerCount(): number {
     return this.listeners.size;
   }
 
-  /**
-   * Make the next call to `method` reject, as a native failure would.
-   *
-   * The app's error paths are otherwise untestable: every call resolves, so `.catch(...)` branches
-   * are dead code under test. `code` mirrors `ObscuraErrorCode`.
-   */
+  /** Make the next call to `method` reject with `code`, as a native failure would. */
   private failures = new Map<string, { code: string; message: string }>();
   __failNext(method: string, code: string, message = 'fake failure'): void {
     this.failures.set(method, { code, message });
@@ -401,11 +343,11 @@ export class FakeObscuraBridge {
 
   // ─── State ─────────────────────────────────────────────
 
-  async getConnectionState(): Promise<string> {
+  async getConnectionState(): Promise<ConnectionState> {
     this.record('getConnectionState');
     return this.connectionState;
   }
-  async getAuthState(): Promise<string> {
+  async getAuthState(): Promise<AuthState> {
     this.record('getAuthState');
     return this.authState;
   }
@@ -459,17 +401,6 @@ export class FakeObscuraBridge {
     return [...this.friends];
   }
 
-  // ─── Device linking ────────────────────────────────────
-
-  async generateLinkCode(): Promise<string> {
-    this.record('generateLinkCode');
-    return 'LINK-0000';
-  }
-  async validateAndApproveLink(_code: string): Promise<void> {
-    this.record('validateAndApproveLink');
-    this.checkFailure('validateAndApproveLink');
-  }
-
   // ─── Signals ───────────────────────────────────────────
 
   async sendTyping(_recipientUserIds: string[], _conversationId: string): Promise<void> {
@@ -486,9 +417,6 @@ export class FakeObscuraBridge {
   }
 
   // ─── Attachments and media ─────────────────────────────
-  //
-  // Path-based, as the real bridge is: JS never holds the bytes. These return plausible values and
-  // touch no filesystem — a test asserting on file contents is testing the fake, not the app.
 
   async uploadAttachment(filePath: string): Promise<{ id: string; contentKey: string; nonce: string }> {
     this.record('uploadAttachment');

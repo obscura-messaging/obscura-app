@@ -21,7 +21,7 @@ repository name.
 Never move application semantics into native code. Contracts:
 [`DOMAIN_CONTRACT.md`](docs/DOMAIN_CONTRACT.md) (app),
 [`BRIDGE.md`](docs/BRIDGE.md) (React Native bridge),
-[`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md) (kit).
+[`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md) (kit).
 
 ## Where things live
 
@@ -36,7 +36,6 @@ Never move application semantics into native code. Contracts:
 | Session, events and reactive state | `src/state/store.ts` |
 | Bridge facade | `src/native/ObscuraModule.ts` |
 | Native hosts | `android/app/src/main/java/dev/barrelmaker/obscura/`, `ios/Obscura/` |
-| Push test sender | [`tools/push-sender/`](tools/push-sender/README.md) |
 
 ## Docs
 
