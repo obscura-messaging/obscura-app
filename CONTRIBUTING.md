@@ -1,6 +1,6 @@
 # Contributing
 
-Never commit to `main`. A PR merges once `JavaScript`, `Android`
+Never commit to `main`. A PR merges once `JavaScript`, `Android + push sender`
 and `iOS Debug Build` pass on a branch that is up to date with `main`.
 
 ## Prerequisites
@@ -73,8 +73,11 @@ state logic. It does not cover rendered UI or device behavior.
 | CI job | Runs | On |
 | --- | --- | --- |
 | `JavaScript` | `just check`, `scripts/test-verify-internal-build.py` | PRs, `main` |
-| `Android` | `just android-release arm64-v8a false` | PRs |
+| `Android + push sender` | `just android-release arm64-v8a false` | PRs |
 | `iOS Debug Build` | `just ios-build arm64` | PRs |
+
+The Android job retains its required GitHub status name; the push-sender
+tool and build step have been removed.
 
 ## Updating `obscura-native`
 

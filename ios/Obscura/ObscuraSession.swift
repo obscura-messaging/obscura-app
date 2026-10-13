@@ -24,7 +24,9 @@ final class ObscuraSession {
     let logger = BridgeLogger()
     private let storage = KeychainSession()
     private var restoreTask: Task<Void, Never>?
+    private var messageTask: Task<Void, Never>?
     var onClientReplaced: ((ObscuraClient?) -> Void)?
+    var onMessageReceived: ((String) -> Void)?
     var onAppStateChanged: ((Bool) -> Void)?
 
     private init() {
@@ -33,6 +35,7 @@ final class ObscuraSession {
             if let username = try storage.load()?["username"] {
                 let restored = try makeUserClient(username: username)
                 client = restored
+                observeMessages(restored)
                 restoreTask = Task {
                     if !(await restored.restorePersistedSession()) {
                         logger.log("No usable stored session")
@@ -74,6 +77,7 @@ final class ObscuraSession {
         restoreTask = nil
         if let previous = client { try await previous.logout() }
         client = next
+        observeMessages(next)
         onClientReplaced?(next)
     }
 
@@ -89,7 +93,18 @@ final class ObscuraSession {
 
     func discardClient() {
         client = nil
+        observeMessages(nil)
         onClientReplaced?(nil)
+    }
+
+    // A React Native reload must not cancel the client's single-consumer stream.
+    private func observeMessages(_ client: ObscuraClient?) {
+        messageTask?.cancel()
+        messageTask = client.map { client in
+            Task { [weak self] in
+                for await model in client.messageReceived { self?.onMessageReceived?(model) }
+            }
+        }
     }
 
     private func observeAppLifecycle() {
@@ -97,12 +112,12 @@ final class ObscuraSession {
         center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                appInForeground = true
-                onAppStateChanged?(true)
-                await restoreTask?.value
-                guard let client, client.authState == .authenticated else { return }
+                self.appInForeground = true
+                self.onAppStateChanged?(true)
+                await self.restoreTask?.value
+                guard let client = self.client, client.authState == .authenticated else { return }
                 do { try await client.connect() }
-                catch { logger.log("Foreground reconnect failed: \(error)") }
+                catch { self.logger.log("Foreground reconnect failed: \(error)") }
             }
         }
         center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in

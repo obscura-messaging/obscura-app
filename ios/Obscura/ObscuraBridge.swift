@@ -29,6 +29,9 @@ final class ObscuraBridge: RCTEventEmitter {
         ObscuraSession.shared.onAppStateChanged = { [weak self] active in
             self?.emit(.appStateChanged, ["state": active ? "active" : "background"])
         }
+        ObscuraSession.shared.onMessageReceived = { [weak self] model in
+            self?.emit(.messageReceived, ["model": model])
+        }
         // Re-subscribe when the live client is swapped (login/register/restore).
         ObscuraSession.shared.onClientReplaced = { [weak self] client in
             self?.bindEvents(client)
@@ -39,13 +42,10 @@ final class ObscuraBridge: RCTEventEmitter {
     deinit {
         eventTasks.forEach { $0.cancel() }
         typingTasks.values.forEach { $0.cancel() }
-        if ObscuraBridge.shared === self {
-            ObscuraBridge.shared = nil
-        }
     }
 
     @objc nonisolated override static func requiresMainQueueSetup() -> Bool { true }
-    @objc var methodQueue: DispatchQueue { .main }
+    @objc override var methodQueue: DispatchQueue! { .main }
 
     /// Single named stream; payloads are discriminated by `type`.
     override func supportedEvents() -> [String]! { ["ObscuraEvent"] }
@@ -104,9 +104,6 @@ final class ObscuraBridge: RCTEventEmitter {
             },
             Task { [weak self] in
                 for await _ in client.observeFriendsChanged() { self?.emit(.friendsChanged) }
-            },
-            Task { [weak self] in
-                for await model in client.messageReceived { self?.emit(.messageReceived, ["model": model]) }
             },
         ]
     }
@@ -669,7 +666,7 @@ extension ObscuraBridge {
 
 extension ObscuraBridge {
 
-    private static func outputImageURL() -> URL {
+    nonisolated private static func outputImageURL() -> URL {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("processed")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

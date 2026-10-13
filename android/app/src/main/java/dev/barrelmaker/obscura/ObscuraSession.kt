@@ -68,7 +68,6 @@ object ObscuraSession {
         override fun tokenRefreshFailed(attempt: Int, reason: String) { Log.e(TAG, "token refresh failed ($attempt): $reason") }
         override fun preKeyReplenishFailed(reason: String) { Log.w(TAG, "prekey replenish failed: $reason") }
         override fun identityChanged(address: String) { Log.w(TAG, "identity changed: $address") }
-        override fun sessionEstablishFailed(userId: String, reason: String) { Log.e(TAG, "session establish failed $userId: $reason") }
         override fun databaseError(store: String, operation: String, reason: String) { Log.e(TAG, "db error $store.$operation: $reason") }
     }
 

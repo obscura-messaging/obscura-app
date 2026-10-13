@@ -47,7 +47,7 @@ All methods exist on both platforms. Behavior beyond the types:
 | `getLaunchIntent` | Returns the cold-start notification target once, then `null`. JS calls it on mount, because the bridge does not exist yet during a cold start. Always `null` on iOS. |
 | `prewarmAudioSession` | **iOS:** activates the audio session so recording starts without a ~1.4 s delay. Idempotent. **Android:** no-op. |
 | `deleteFile` | Best-effort. Resolves even when the file is missing. |
-| `addListener`, `removeListeners` | Not in the TS interface. `NativeEventEmitter` requires them. Android defines no-op stubs, and iOS inherits them from `RCTEventEmitter`. |
+| `addListener`, `removeListeners` | Framework methods inherited by the TS interface from `NativeEventEmitter`. Android defines no-op stubs, and iOS inherits them from `RCTEventEmitter`. |
 
 `resizeImage` and `writeTestImage` never modify their source.
 
@@ -88,6 +88,10 @@ encrypted Android adapter or the iOS Keychain adapter; token rotation is not
 an application callback. Storage write/clear failures reject rather than
 reporting success.
 
+The process-scoped session, not the React Native bridge, consumes the kit's
+single `messageReceived` stream. Recreating the bridge must not cancel that
+stream or stop subsequent wake-ups.
+
 Concurrent auth operations reject with `INVALID_ARGUMENT` instead of racing
 different clients against the same session store.
 
@@ -103,8 +107,8 @@ different clients against the same session store.
 5. Emit events only through each bridge's `emit` helper.
 6. If the types do not capture its behavior, add a row here.
 
-[kit]: https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md
-[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md#envelope-identity
-[kit-login]: https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md#login
-[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md#inbox
-[kit-send]: https://github.com/obscura-messaging/obscura-native/blob/c9c2327771736a78a2115b2558be48f967538662/docs/KIT_API.md#send
+[kit]: https://github.com/obscura-messaging/obscura-native/blob/23a977a5243ed4bea133d0462b30349615bb3c0a/docs/KIT_API.md
+[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/23a977a5243ed4bea133d0462b30349615bb3c0a/docs/KIT_API.md#envelope-identity
+[kit-login]: https://github.com/obscura-messaging/obscura-native/blob/23a977a5243ed4bea133d0462b30349615bb3c0a/docs/KIT_API.md#login
+[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/23a977a5243ed4bea133d0462b30349615bb3c0a/docs/KIT_API.md#inbox
+[kit-send]: https://github.com/obscura-messaging/obscura-native/blob/23a977a5243ed4bea133d0462b30349615bb3c0a/docs/KIT_API.md#send

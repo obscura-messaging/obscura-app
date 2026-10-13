@@ -1,4 +1,4 @@
-import { NativeEventEmitter, TurboModuleRegistry } from 'react-native';
+import { NativeEventEmitter, TurboModuleRegistry, type TurboModule } from 'react-native';
 
 export interface Friend {
   userId: string;
@@ -82,8 +82,10 @@ export type ObscuraErrorCode =
   | 'PROTOCOL_VIOLATION'
   | 'STORAGE_ERROR';
 
+type EventModule = NonNullable<ConstructorParameters<typeof NativeEventEmitter>[0]>;
+
 /** The native `ObscuraBridge` module. Behaviour beyond these types is in `docs/BRIDGE.md`. */
-export interface ObscuraBridge {
+export interface ObscuraBridge extends TurboModule, EventModule {
   registerUser(username: string, password: string): Promise<void>;
   login(username: string, password: string): Promise<LoginScenario>;
   loginAndProvision(username: string, password: string): Promise<void>;
@@ -146,7 +148,7 @@ export interface ObscuraBridge {
   getLaunchIntent(): Promise<LaunchIntent | null>;
 }
 
-export const Obscura = TurboModuleRegistry.getEnforcing('ObscuraBridge') as unknown as ObscuraBridge;
+export const Obscura = TurboModuleRegistry.getEnforcing<ObscuraBridge>('ObscuraBridge');
 
 /** The payloads of the native `ObscuraEvent` stream; must match each bridge's `BridgeEvent` enum. */
 export type ObscuraEvent =
@@ -159,7 +161,7 @@ export type ObscuraEvent =
   | { type: 'typingChanged'; conversationId: string; userIds: string[] }
   | { type: 'pushTokenReceived'; token: string };
 
-const emitter = new NativeEventEmitter(Obscura as never);
+const emitter = new NativeEventEmitter(Obscura);
 
 /** Subscribe to Obscura events. Returns an unsubscribe function. */
 export function onObscuraEvent(handler: (event: ObscuraEvent) => void): () => void {

@@ -30,4 +30,22 @@ describe('native exports match the bridge contract', () => {
     expect(sorted(declared)).toEqual(sorted(methods));
     expect(sorted(implemented)).toEqual(sorted(methods));
   });
+
+  it('preserves the same deliberate error codes from both kits', () => {
+    const declaration = contract.statements.filter(ts.isTypeAliasDeclaration)
+      .find((alias) => alias.name.text === 'ObscuraErrorCode')!;
+    if (!ts.isUnionTypeNode(declaration.type)) throw new Error('Expected an error-code union');
+    const codes = declaration.type.types.map((type) => {
+      if (!ts.isLiteralTypeNode(type) || !ts.isStringLiteral(type.literal)) {
+        throw new Error('Expected a string error code');
+      }
+      return type.literal.text;
+    });
+    const kotlin = source('obscura-native/kotlin/lib/src/main/kotlin/dev/barrelmaker/obscura/kit/ObscuraError.kt');
+    const swiftErrors = source('obscura-native/swift/Sources/ObscuraKit/ObscuraError.swift');
+    expect(sorted([...kotlin.matchAll(/ObscuraError\(\s*"([A-Z_]+)"/g)].map((match) => match[1])))
+      .toEqual(sorted(codes));
+    expect(sorted([...swiftErrors.matchAll(/return "([A-Z_]+)"/g)].map((match) => match[1])))
+      .toEqual(sorted(codes));
+  });
 });
