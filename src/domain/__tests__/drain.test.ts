@@ -111,11 +111,6 @@ describe('attribution — who an entry is from', () => {
 });
 
 describe('authorization — who may write what', () => {
-  /**
-   * **Attack B.** `profile` is REPLACE and its id is `profile_<userId>`, which anybody can guess. A
-   * stranger's write with a higher `sentAt` took over the row `ProfileScreen` reads — and the save
-   * button then re-broadcast their text to all my friends under my name.
-   */
   it('refuses a profile written to somebody else\'s id', () => {
     const r = row({
       modelKey: 'profile', entryId: `profile_${SELF}`, senderUserId: STRANGER,
@@ -173,12 +168,6 @@ describe('authorization — who may write what', () => {
     ]);
   });
 
-  /**
-   * The other half of the send side's guard. DOMAIN_CONTRACT: a reversed form MUST be rejected
-   * "rather than guessing an audience" — and on this side, guessing files a peer's entry under a
-   * conversation id no participant would ever compute, so the screens never show it and the row is
-   * stored anyway.
-   */
   it('refuses a conversation-scoped entry whose id is reversed', () => {
     const r = row({
       entryId: 'dm_reversed',
@@ -200,12 +189,6 @@ describe('authorization — who may write what', () => {
     expect(plan.writes.get('directMessage')?.[0].authorUserId).toBe(SELF);
   });
 
-  /**
-   * `story` has neither rule, and that is a deliberate limit rather than an omission: a story
-   * carries nothing that binds it to an author, so there is no claim to check — only an
-   * attribution to stamp. Friendship is NOT required, because a discard is permanent and the
-   * friend graph updates over a different message than the entry does.
-   */
   it('accepts a story from anybody, attributed to them', () => {
     const r = row({
       modelKey: 'story', entryId: 's_2', senderUserId: STRANGER,
@@ -290,11 +273,6 @@ describe('rows the app cannot process', () => {
 });
 
 describe('merging within a batch', () => {
-  /**
-   * Two rows touching one entry must resolve against **each other**, not just against stored state.
-   * Otherwise the second silently wins on arrival order rather than on the merge rule — the
-   * divergence `DOMAIN_CONTRACT.md` describes, reachable inside a single `peek`.
-   */
   it('resolves two rows for the same entry by the rule, not by arrival order', () => {
     const older = row({
       modelKey: 'note', entryId: 'p', sentAt: 1_000,

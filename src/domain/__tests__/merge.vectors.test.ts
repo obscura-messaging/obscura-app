@@ -5,12 +5,6 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { merge, type Entry, type MergeRule } from '../merge';
 
-/**
- * The app-owned merge fixtures, run against this app's merge implementation.
- *
- * Four cases cover the current APPEND and REPLACE rules.
- */
-
 const VECTORS = join(__dirname, '../__fixtures__/merge.json');
 
 interface VectorOp {
@@ -59,10 +53,6 @@ describe('merge.json conformance', () => {
 
       const state = merge(rule, new Map(), applied);
 
-      // Compare exactly the fields each expectation states — the LWW cases assert the winning
-      // `authorDeviceId`, which IS the tie-break assertion, while the GSet cases assert only
-      // `id`/`data`. Projecting to a fixed shape would either fail spuriously on the former or
-      // silently skip the property the vector exists to pin.
       const expected = [...testCase.expect.entries].sort((a, b) => a.id.localeCompare(b.id));
       const byId = new Map([...state.values()].map((e) => [e.id, e]));
 

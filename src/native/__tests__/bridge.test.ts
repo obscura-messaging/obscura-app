@@ -1,23 +1,10 @@
 import { Obscura, onObscuraEvent, type ObscuraEvent } from '../ObscuraModule';
 import { getFakeBridge } from '../__fixtures__/reactNativeMock';
 
-/**
- * The bridge boundary, exercised through the real `ObscuraModule.ts` against the in-memory kit
- * double.
- *
- * The first test ensures the fake is installed; otherwise the facade's
- * no-native fallback would make bridge calls inert.
- */
-
 const bridge = getFakeBridge();
 
 describe('the double is actually installed', () => {
-  /**
-   * The regression this whole fixture exists to prevent: if `ObscuraModule` ever falls back to its
-   * noop `Proxy` again — a changed module name, a broken `jest.mock`, a renamed export — every other
-   * test in this file keeps passing while asserting nothing at all. This one fails instead.
-   */
-  it('resolves real values, not the noop Proxy that resolves null', async () => {
+  it('resolves real values', async () => {
     await Obscura.entryPut('directMessage', 'dm_1', JSON.stringify({ content: 'hi' }), 1_000, 'device_a', null);
 
     const stored = await Obscura.entryAll('directMessage');
@@ -25,7 +12,7 @@ describe('the double is actually installed', () => {
     expect(bridge.__calls).toContain('entryPut');
   });
 
-  it('delivers events, which the noop emitter never did', () => {
+  it('delivers events', () => {
     const seen: ObscuraEvent[] = [];
     const off = onObscuraEvent((e) => seen.push(e));
 
@@ -39,8 +26,7 @@ describe('the double is actually installed', () => {
     const seen: ObscuraEvent[] = [];
     const off = onObscuraEvent((e) => seen.push(e));
 
-    // Deliver one BEFORE unsubscribing. Without it this passes vacuously in a world where no event
-    // is ever delivered — which is precisely the world this fixture exists to leave behind.
+    // One delivery first, so the assertion below cannot pass vacuously.
     bridge.__setConnectionState('connecting');
     expect(seen).toHaveLength(1);
 
@@ -53,11 +39,6 @@ describe('the double is actually installed', () => {
 });
 
 describe('the JSON boundary', () => {
-  /**
-   * `data` and `payload` cross as opaque JSON **strings** in both directions. That is the whole
-     * point of the surface: the kit stores bytes it does not parse, so what comes back is what
-   * went in — byte for byte, not re-serialised.
-     */
   it('round-trips a payload the kit never parses', async () => {
     const data = { conversationId: 'a_b', content: 'hello', _authorUserId: 'u_alice' };
 

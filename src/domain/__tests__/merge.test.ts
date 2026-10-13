@@ -1,17 +1,5 @@
 import { merge, type Entry } from '../merge';
 
-/**
- * Properties the merge fixtures cannot express.
- *
- * These exist because mutation-testing the vector suite found a hole: changing APPEND from
- * "first write wins" to "last write wins" passed all 13 vector-driven tests. The vectors' GSet
- * idempotence case uses a duplicate id carrying IDENTICAL data — because `DOMAIN_CONTRACT.md` requires
- * GSet entries are immutable by construction — so the two behaviours are indistinguishable there.
- *
- * A hostile peer can replay an existing id with different content, so
- * first-wins is pinned here explicitly.
- */
-
 const entry = (over: Partial<Entry> & { id: string }): Entry => ({
   sentAt: 1,
   authorUserId: 'uA',
@@ -22,9 +10,6 @@ const entry = (over: Partial<Entry> & { id: string }): Entry => ({
 
 describe('APPEND', () => {
   it('keeps the FIRST write when a peer replays an id with different content', () => {
-    // Not covered by merge.json: its duplicate carries identical data, so first-vs-last is
-    // unobservable there. A peer that replays an established id with new content must not be able
-    // to rewrite it — the same class of defect as a peer renaming itself in the friend graph.
     const state = merge('APPEND', new Map(), [
       entry({ id: 'm1', sentAt: 1, authorDeviceId: 'devA', data: { text: 'original' } }),
       entry({ id: 'm1', sentAt: 99, authorDeviceId: 'devEvil', data: { text: 'rewritten' } }),
@@ -77,9 +62,6 @@ describe('REPLACE', () => {
 });
 
 describe('convergence', () => {
-  // The property the whole design rests on: two devices that receive the same writes in different
-  // orders must reach the same state. Single-device testing cannot see a violation, which is why
-  // DOMAIN_CONTRACT calls the tie-break mandatory.
   const ops: Entry[] = [
     entry({ id: 'p', sentAt: 5, authorDeviceId: 'devA', data: { v: 'a' } }),
     entry({ id: 'p', sentAt: 5, authorDeviceId: 'devB', data: { v: 'b' } }),
@@ -113,15 +95,7 @@ describe('convergence', () => {
   });
 
   it('APPEND is deliberately order-dependent when a peer replays an id with DIFFERENT content', () => {
-    // A DECISION, not a defect, and it is written down here so it is not "fixed" later.
-    //
-    // Only a buggy or hostile peer can produce one id with two contents. Given that, there are two
-    // options and no third: first-wins (this) keeps what we already had and may leave two devices
-    // disagreeing about the attacker's entry; last-wins would converge, at the cost of letting any
-    // peer overwrite an established entry by replaying its id.
-    //
-    // We take non-convergence over silent overwrite. Divergence about a hostile write is visible
-    // and recoverable; a rewritten message is neither.
+    // Chosen: a replayed id must not rewrite an established entry, even at the cost of convergence.
     const conflicting = [
       entry({ id: 'm1', sentAt: 1, authorDeviceId: 'devA', data: { text: 'original' } }),
       entry({ id: 'm1', sentAt: 2, authorDeviceId: 'devEvil', data: { text: 'rewritten' } }),

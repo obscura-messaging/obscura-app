@@ -7,14 +7,6 @@ import { SEEN_MODEL, seenEntryId } from '../../domain/seen';
 import { Obscura } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
-/**
- * `store.ts` without a renderer.
- *
- * Covers entry loading, drain/refresh, the application write path, and every
- * drain trigger through the plain `applyObscuraEvent` and `loadSession`
- * functions.
- */
-
 const bridge = getFakeBridge();
 
 const SELF = '11111111-1111-4111-8111-111111111111';
@@ -185,12 +177,6 @@ describe('drainAndRefresh', () => {
 });
 
 describe('saveEntry', () => {
-  /**
-   * The session loads asynchronously after `authed` flips, and a write in that window is quietly
-   * wrong rather than failing: an empty `authorDeviceId` sorts LOWEST so it loses every REPLACE
-   * tie-break on every device, and an empty `selfUserId` disables the self-filter in
-   * `resolveAudience`.
-   */
   it('refuses to write before the session identity has loaded', async () => {
     await expect(saveEntry('story', { content: 'x' }))
       .rejects.toThrow('before the session identity loaded');
@@ -215,12 +201,6 @@ describe('saveEntry', () => {
     expect(bridge.__sent).toHaveLength(1);
   });
 
-  /**
-   * **The defect.** `writeEntry` deliberately keeps the local row and rethrows when a send reaches
-   * nobody, so the throw propagated past the refresh and the entry the app had just committed never
-   * entered the cache: in `ChatScreen.send()` the user saw a toast and their own message was simply
-   * absent until an unrelated drain happened to refresh that model.
-   */
   it('refreshes the model even when the send fails', async () => {
     session();
     await loadEntries('directMessage');
@@ -291,11 +271,6 @@ describe('the drain triggers', () => {
     expect(await Obscura.entryAll('directMessage')).toHaveLength(1);
   });
 
-  /**
-   * COLD START — the trigger that matters most and the one whose absence stranded messages. The
-   * push path acks with no JS runtime running, so no `messageReceived` is ever emitted for those
-   * rows.
-   */
   it('drains on cold start, after pulling the identity it needs to authorize with', async () => {
     bridge.__setFriends([{ userId: BOB, username: 'bob', status: 'accepted' }]);
     bridge.__deliverInbox({
@@ -347,12 +322,6 @@ describe('the drain triggers', () => {
 });
 
 describe('the outbox trigger', () => {
-  /**
-   * The asymmetry this closes: the receive side had four triggers and the send side had none, so an
-   * entry whose send reached nobody sat in the user's timeline looking sent, forever. The retry is
-   * wired to the same signals as the drain, because "the network is back" is equally true of both
-   * directions.
-   */
   it('retries an undelivered entry on reconnect', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     session();
