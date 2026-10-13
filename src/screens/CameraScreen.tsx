@@ -178,36 +178,32 @@ export function CameraScreen() {
     });
   }, [nav]);
 
-  // No device available (emulator without camera)
-  if (!device) {
-    return (
-      <View style={cs.permissionContainer}>
-        <Text style={cs.permissionText}>No camera available</Text>
-        <Text style={cs.hint}>Simulator mode — tap to use test photo</Text>
-        <TouchableOpacity style={cs.permissionBtn} onPress={takeTestPhoto}>
-          <Text style={cs.permissionBtnText}>Use test photo</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  // No camera device (the iOS simulator): render the real chrome over a placeholder so the layout
+  // can be worked on, with the shutter producing the native test JPEG instead of a capture.
+  const simulator = !device;
 
-  return (
-    <CameraPermissionGate message="Camera access needed">
+  const screen = (
       <View style={cs.container}>
-        <Camera
-          ref={camera}
-          style={StyleSheet.absoluteFill}
-          device={device}
-          format={format}
-          isActive={cameraActive}
-          photo={true}
-          video={true}
-          audio={hasMic}
-          fps={30}
-          videoBitRate="low"
-          photoQualityBalance="speed"
-          zoom={zoom}
-        />
+        {device ? (
+          <Camera
+            ref={camera}
+            style={StyleSheet.absoluteFill}
+            device={device}
+            format={format}
+            isActive={cameraActive}
+            photo={true}
+            video={true}
+            audio={hasMic}
+            fps={30}
+            videoBitRate="low"
+            photoQualityBalance="speed"
+            zoom={zoom}
+          />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, cs.simPreview]}>
+            <Text style={cs.simPreviewText}>No camera on this simulator</Text>
+          </View>
+        )}
         <MainHeaderOverlay camera={true} />
 
       {/* Pinch-zoom gesture surface. Claims only on a 2-finger move, so a
@@ -229,8 +225,8 @@ export function CameraScreen() {
 
               <Animated.View style={{ transform: [{ scale: shutterScale }] }}>
                 <Pressable
-                  onPressIn={onShutterPressIn}
-                  onPressOut={onShutterPressOut}
+                  onPressIn={simulator ? () => animateShutter(0.88) : onShutterPressIn}
+                  onPressOut={simulator ? () => { animateShutter(1); takeTestPhoto(); } : onShutterPressOut}
                   style={[cs.captureBtn, recording && cs.captureBtnActive]}
                   accessibilityLabel="Capture"
                 >
@@ -245,7 +241,11 @@ export function CameraScreen() {
           </View>
         </View>
       </View>
-    </CameraPermissionGate>
+  );
+
+  // The permission gate only makes sense when there is a camera to ask for.
+  return simulator ? screen : (
+    <CameraPermissionGate message="Camera access needed">{screen}</CameraPermissionGate>
   );
 }
 
@@ -272,6 +272,8 @@ const cs = StyleSheet.create({
   captureBtnActive: { borderColor: colors.error },
   captureBtnInner: { width: 68, height: 68, borderRadius: 34, backgroundColor: '#fff' },
   captureBtnInnerActive: { width: 34, height: 34, borderRadius: 8, backgroundColor: colors.error },
+  simPreview: { backgroundColor: '#1c1c1e', justifyContent: 'center', alignItems: 'center' },
+  simPreviewText: { color: '#555', fontSize: 14 },
   permissionContainer: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', padding: 32 },
   permissionText: { color: '#fff', fontSize: 18, fontWeight: '600', marginBottom: 16 },
   permissionBtn: { backgroundColor: colors.accent, borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12, marginBottom: 12 },
