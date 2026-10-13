@@ -2,7 +2,7 @@
 
 These are the semantics the app owns in `src/models/`, `src/domain/` and
 `src/state/`. The kit only stores and sends opaque bytes
-([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/7b72b52d033f098f5444d38bf8d4608120efa8c2/docs/KIT_API.md)).
+([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/be2b96538647164c9ba60675f3836b063b4fcf80/docs/KIT_API.md)).
 
 ## Models
 
@@ -11,8 +11,11 @@ These are the semantics the app owns in `src/models/`, `src/domain/` and
 | `directMessage` | APPEND  | conversation         | conversation names self and sender       | yes            |
 | `pix`           | APPEND  | conversation         | conversation names self and sender       | yes            |
 | `seen`          | APPEND  | conversation         | conversation names self and sender       | with its entry |
-| `story`         | APPEND  | all accepted friends | none; the transport sender is the author | no             |
+| `story`         | APPEND  | all accepted friends | none; the transport sender is the author | 24 h after post |
 | `profile`       | REPLACE | all accepted friends | entry ID is `profile_<senderUserId>`     | no             |
+
+A `pix` is a direct photo or video message. The model key is independent of
+the `obscura-app` repository name.
 
 `src/models/schema.ts` is the executable source: `audienceFor` for sends,
 `fieldsFor` for local writes, `modelRules` for the drain. Screen entry types
@@ -103,9 +106,15 @@ The rules for `directMessage` and `pix` are in `src/domain/seen.ts` and
 - **Expiry.** An entry expires 15 minutes after it is seen, and no later than 30
   days after it is sent. Every device that holds it erases its own copy,
   receipt and decrypted media, including the sender's. No delete is synced.
+- **View-once is not immediate erasure.** The pix viewer disables backward
+  navigation and the chat hides received pix after they are seen. Stored
+  entries and decrypted media remain until the expiry sweep erases them.
 - **No resurrection.** Before erasing, a device records the entry in the
   local-only `_erased` model, and the drain consumes later writes for it
   without storing them. Markers are pruned after 30 days, as are receipts whose
   entry never arrived.
+- **Stories.** A story has no receipts. It expires 24 hours after it was
+  posted, on every device, with the same marker and media purge. The stories
+  row hides an expired story until the sweep erases it.
 - **Sweep.** `src/state/expiry.ts` runs on cold start, reconnect, foreground and
   every 30 s while signed in.

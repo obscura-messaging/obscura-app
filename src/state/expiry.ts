@@ -1,8 +1,9 @@
 import { Obscura } from '../native/ObscuraModule';
 import {
-  EPHEMERAL_MODELS, ERASED_MODEL, MAX_AGE_MS, erasedKey, expiresAt,
+  EPHEMERAL_MODELS, ERASED_MODEL, MAX_AGE_MS, STORY_MODEL, erasedKey, expiresAt, storyExpiresAt,
 } from '../domain/expiry';
 import { SEEN_MODEL, indexReceipts, seenEntryId, viewedAtFor } from '../domain/seen';
+import type { Entry } from '../domain/merge';
 import { withEntryLock } from './entryLock';
 import { readEntries } from './readEntries';
 import { logError } from '../utils/log';
@@ -13,9 +14,17 @@ async function eraseWithMarker(model: string, id: string, now: number): Promise<
   await Obscura.entryErase(model, id);
 }
 
+/** Erase an entry and its decrypted media. */
+async function eraseEntry(model: string, entry: Entry, now: number): Promise<void> {
+  // Media first: once the entry is gone, nothing records which attachment it used.
+  if (typeof entry.data.mediaRef === 'string') await Obscura.purgeAttachment(entry.data.mediaRef);
+  await eraseWithMarker(model, entry.id, now);
+}
+
 /**
- * Erase every expired ephemeral entry with its receipt and decrypted media, drop receipts whose
- * entry never arrived, and prune old erased markers. Returns the models it changed.
+ * Erase every expired ephemeral entry with its receipt and decrypted media, every story past its
+ * age, drop receipts whose entry never arrived, and prune old erased markers. Returns the models it
+ * changed.
  */
 export async function sweepExpired(now: number = Date.now()): Promise<string[]> {
   return withEntryLock(async () => {
@@ -29,12 +38,16 @@ export async function sweepExpired(now: number = Date.now()): Promise<string[]> 
         const receiptId = seenEntryId(model, entry.id);
         live.add(receiptId);
         if (expiresAt(entry.sentAt, viewedAtFor(model, entry, receipts)) > now) continue;
-        // Media first: once the entry is gone, nothing records which attachment it used.
-        if (typeof entry.data.mediaRef === 'string') await Obscura.purgeAttachment(entry.data.mediaRef);
-        await eraseWithMarker(model, entry.id, now);
+        await eraseEntry(model, entry, now);
         if (receipts.has(receiptId)) await eraseWithMarker(SEEN_MODEL, receiptId, now);
         touched.add(model);
       }
+    }
+
+    for (const entry of await readEntries(STORY_MODEL)) {
+      if (storyExpiresAt(entry.sentAt) > now) continue;
+      await eraseEntry(STORY_MODEL, entry, now);
+      touched.add(STORY_MODEL);
     }
 
     for (const receipt of receiptRows) {
