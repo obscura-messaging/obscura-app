@@ -23,7 +23,7 @@ class Erasures {
   }
 
   async marked(model: string, id: string, now: number): Promise<void> {
-    await Obscura.entryPut(ERASED_MODEL, erasedKey(model, id), '{}', now, '');
+    await Obscura.entryPut(ERASED_MODEL, erasedKey(model, id), '{}', now, '', null);
     this.unmarked(model, id);
   }
 

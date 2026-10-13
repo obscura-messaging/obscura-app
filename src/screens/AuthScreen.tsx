@@ -16,7 +16,7 @@ export function AuthScreen() {
     if (!username || password.length < 12) { setStatus('Password must be 12+ chars'); return; }
     setStatus('Registering...');
     try {
-      await Obscura.register(username, password);
+      await Obscura.registerUser(username, password);
       await Obscura.connect();
       setAuthed(true);
     } catch (e: any) { setStatus(e.message || 'Registration failed'); }

@@ -62,7 +62,7 @@ its media.
 ## Events
 
 All events share one stream, `ObscuraEvent`, keyed by `type`. The
-`OBSCURA_EVENT_TYPES` list must match the `BridgeEvent` enum in each bridge.
+`ObscuraEvent` union must match the `BridgeEvent` enum in each bridge.
 
 | Event | Emitted when | JS reaction (`src/state/store.ts`) |
 | --- | --- | --- |
@@ -84,14 +84,13 @@ emitted before JS subscribes are dropped.
 
 ## Adding a method or event
 
-1. Add it to `ObscuraModule.ts`. An event also goes in `OBSCURA_EVENT_TYPES`,
-   where `_AssertEventTypesMatch` turns any drift into a compile error.
+1. Add it to `ObscuraBridge` or `ObscuraEvent` in `ObscuraModule.ts`.
 2. Implement it in `android/.../ObscuraBridgeModule.kt`.
 3. Implement it in `ios/Obscura/ObscuraBridge.swift` **and declare it in
    `ObscuraBridge.m`**. Without the `.m` line it compiles but is invisible at
    runtime.
-4. Mirror it in `src/native/__fixtures__/FakeObscuraBridge.ts`. The fake models
-   this contract, not kit internals.
+4. Mirror it in `src/native/__fixtures__/FakeObscuraBridge.ts`, which
+   implements `ObscuraBridge`. The fake models this contract, not kit internals.
 5. Emit events only through each bridge's `emit` helper.
 6. If the types do not capture its behavior, add a row here.
 

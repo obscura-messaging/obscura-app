@@ -36,7 +36,7 @@ describe('a local write racing an incoming drain', () => {
    * them: a drain per incoming message, and the receipt on screen exit.
    */
   it('does not revert a viewed-receipt written while a drain is in flight', async () => {
-    await Obscura.entryPut('pix', 'p1', JSON.stringify({ conversationId: CONV, viewedAt: 0 }), 1_000, BOB);
+    await Obscura.entryPut('pix', 'p1', JSON.stringify({ conversationId: CONV, viewedAt: 0 }), 1_000, BOB, null);
     bridge.__deliverInbox({
       modelKey: 'pix', entryId: 'p1', sentAt: 3_000, senderDeviceId: 'device_peer',
       payload: JSON.stringify({ ...PIX_MEDIA, conversationId: CONV, viewedAt: 0 }),
@@ -57,7 +57,7 @@ describe('a local write racing an incoming drain', () => {
 
   /** The same, with the write starting first — the interleaving must be safe in both directions. */
   it('does not lose the write when it starts before the drain', async () => {
-    await Obscura.entryPut('pix', 'p1', JSON.stringify({ viewedAt: 0 }), 1_000, BOB);
+    await Obscura.entryPut('pix', 'p1', JSON.stringify({ viewedAt: 0 }), 1_000, BOB, null);
     bridge.__deliverInbox({
       modelKey: 'pix', entryId: 'p1', sentAt: 3_000, senderDeviceId: 'device_peer',
       payload: JSON.stringify({ ...PIX_MEDIA, conversationId: CONV, viewedAt: 0 }),

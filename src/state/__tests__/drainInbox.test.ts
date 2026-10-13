@@ -40,7 +40,7 @@ function deliver(over: Partial<Parameters<typeof bridge.__deliverInbox>[0]> = {}
 
 describe('draining', () => {
   it('reads only the entries its batch names, never a whole model', async () => {
-    await Obscura.entryPut('directMessage', 'dm_old', '{}', 1, 'd');
+    await Obscura.entryPut('directMessage', 'dm_old', '{}', 1, 'd', null);
     deliver({ modelKey: 'directMessage', entryId: 'dm_1' });
     const start = bridge.__calls.length;
 
@@ -280,11 +280,11 @@ describe('merging against what is already stored', () => {
   it('ignores the other participant rewriting a pix or message', async () => {
     await Obscura.entryPut(
       'pix', 'p', JSON.stringify({ ...PIX_MEDIA, conversationId: CONV, caption: 'mine', _authorUserId: SELF }),
-      1_000, 'device_mine',
+      1_000, 'device_mine', null,
     );
     await Obscura.entryPut(
       'directMessage', 'dm', JSON.stringify({ conversationId: CONV, content: 'what I said', _authorUserId: SELF }),
-      1_000, 'device_mine',
+      1_000, 'device_mine', null,
     );
     deliver({
       modelKey: 'pix', entryId: 'p', sentAt: 9_000,

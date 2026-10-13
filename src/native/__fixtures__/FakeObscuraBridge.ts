@@ -16,7 +16,7 @@
  * (the app decides who wins), and `sendEntry` produces no local row — the sender writes its own copy.
  */
 
-import type { AuthState, Friend, InboxRow, LoginScenario, SendReport, StoredEntry, SubmissionResult } from '../ObscuraModule';
+import type { AuthState, ConnectionState, Friend, ObscuraBridge, InboxRow, LoginScenario, SendReport, StoredEntry, SubmissionResult } from '../ObscuraModule';
 
 type FakeInboxRow = InboxRow & { envelopeId: string };
 
@@ -26,13 +26,13 @@ export interface FakeBridgeOptions {
   deviceId?: string;
 }
 
-export class FakeObscuraBridge {
+export class FakeObscuraBridge implements ObscuraBridge {
   // ─── Session ───────────────────────────────────────────
   userId: string;
   username: string;
   deviceId: string;
   authState: AuthState = 'loggedOut';
-  connectionState: 'disconnected' | 'connecting' | 'reconnecting' | 'connected' = 'disconnected';
+  connectionState: ConnectionState = 'disconnected';
 
   // ─── Stores ────────────────────────────────────────────
   private friends: Friend[] = [];
@@ -267,7 +267,7 @@ export class FakeObscuraBridge {
   }
 
   /** Flip connection state and emit. */
-  __setConnectionState(state: 'disconnected' | 'connecting' | 'reconnecting' | 'connected'): void {
+  __setConnectionState(state: ConnectionState): void {
     this.connectionState = state;
     this.__emit({ type: 'connectionChanged', state });
   }
@@ -401,11 +401,11 @@ export class FakeObscuraBridge {
 
   // ─── State ─────────────────────────────────────────────
 
-  async getConnectionState(): Promise<string> {
+  async getConnectionState(): Promise<ConnectionState> {
     this.record('getConnectionState');
     return this.connectionState;
   }
-  async getAuthState(): Promise<string> {
+  async getAuthState(): Promise<AuthState> {
     this.record('getAuthState');
     return this.authState;
   }

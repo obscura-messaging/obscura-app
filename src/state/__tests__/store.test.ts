@@ -62,7 +62,7 @@ describe('seen receipts', () => {
   it('derives viewedAt from a receipt, not from the entry payload', async () => {
     await Obscura.entryPut(
       'directMessage', 'dm_1',
-      JSON.stringify({ conversationId: CONV, content: 'hi', viewedAt: 1, _authorUserId: BOB }), 1_000, 'd',
+      JSON.stringify({ conversationId: CONV, content: 'hi', viewedAt: 1, _authorUserId: BOB }), 1_000, 'd', null,
     );
 
     await loadEntries('directMessage');
@@ -70,7 +70,7 @@ describe('seen receipts', () => {
 
     await Obscura.entryPut(
       SEEN_MODEL, seenEntryId('directMessage', 'dm_1'),
-      JSON.stringify({ conversationId: CONV, viewedAt: 2_000, _authorUserId: SELF }), 2_000, 'd',
+      JSON.stringify({ conversationId: CONV, viewedAt: 2_000, _authorUserId: SELF }), 2_000, 'd', null,
     );
     await loadEntries('directMessage');
     expect(useStore.getState().entries.directMessage?.[0].viewedAt).toBe(2_000);
@@ -79,7 +79,7 @@ describe('seen receipts', () => {
   it('markSeen sends a receipt to the conversation and leaves the message untouched', async () => {
     session();
     await Obscura.entryPut(
-      'directMessage', 'dm_1', JSON.stringify({ conversationId: CONV, content: 'hi', _authorUserId: BOB }), 1_000, 'd',
+      'directMessage', 'dm_1', JSON.stringify({ conversationId: CONV, content: 'hi', _authorUserId: BOB }), 1_000, 'd', null,
     );
     await loadEntries('directMessage');
 
@@ -105,8 +105,8 @@ describe('loadEntries', () => {
   /** One unreadable row is a bug to fix, not a reason to show the user nothing. */
   it('skips a row it cannot decode and keeps the rest', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    await Obscura.entryPut('story', 'bad', 'not json', 1, 'd');
-    await Obscura.entryPut('story', 'anonymous', JSON.stringify({ content: 'no author' }), 1, 'd');
+    await Obscura.entryPut('story', 'bad', 'not json', 1, 'd', null);
+    await Obscura.entryPut('story', 'anonymous', JSON.stringify({ content: 'no author' }), 1, 'd', null);
     await putEntry('story', { id: 'good', sentAt: 2, authorUserId: BOB, authorDeviceId: 'd', data: { content: 'ok' } });
 
     await loadEntries('story');
