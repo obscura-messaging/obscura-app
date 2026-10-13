@@ -2,6 +2,7 @@ import { Obscura } from '../native/ObscuraModule';
 import { resolveAudience, type AudienceFriend } from '../domain/audience';
 import { obscuraSchema, audienceFor, fieldsFor, AUTHOR_USER_ID } from '../models/schema';
 import { invalidFields } from '../domain/fields';
+import { reachedRecipients, SendFailed } from '../domain/delivery';
 import { withEntryLock } from './entryLock';
 import { readEntries } from './readEntries';
 import { logError } from '../utils/log';
@@ -109,13 +110,14 @@ export async function writeEntry(args: WriteEntryArgs): Promise<string> {
   });
 
   try {
-    await Obscura.sendEntry(recipients, model, id, sentAt, payload);
+    const report = await Obscura.sendEntry(recipients, model, id, sentAt, payload);
+    if (!reachedRecipients(recipients, report)) throw new SendFailed(model, report);
   } catch (e) {
     // The local write already succeeded and STAYS — the user's content is theirs whether or not the
     // network cooperated, and undoing it would be the worse failure.
     //
-    // But the error is re-thrown rather than only logged, because the kit throws here **only when a
-    // send reached NOBODY** (a partial failure is best-effort and silent by design). Swallowing that
+    // But the error is re-thrown rather than only logged, because it means the send reached
+    // NOBODY (a partial delivery is a success; see `domain/delivery.ts`). Swallowing that
     // would leave the user looking at an entry in their own timeline, with no indication it got
     // nowhere, forever. An earlier version justified swallowing with "the kit queues and retries" —
     // that is not true in the sense required: the retry queue is in-memory, flushed on the next
@@ -211,7 +213,8 @@ export async function flushOutbox(args: FlushOutboxArgs): Promise<number> {
       delete payload[AUTHOR_USER_ID];
       try {
         const recipients = resolveAudience(audienceFor(model), payload, selfUserId, friends);
-        await Obscura.sendEntry(recipients, model, row.id, row.sentAt, JSON.stringify(payload));
+        const report = await Obscura.sendEntry(recipients, model, row.id, row.sentAt, JSON.stringify(payload));
+        if (!reachedRecipients(recipients, report)) throw new SendFailed(model, report);
       } catch (e) {
         // Still undelivered, or now unroutable (a friend removed since). Either way the mark stays
         // and the next trigger tries again — dropping it silently is the behaviour being fixed.

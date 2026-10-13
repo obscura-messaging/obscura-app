@@ -57,7 +57,6 @@ object ObscuraSession {
         fun onAuthStateChanged(state: AuthState)
         fun onFriendsChanged()
         fun onMessageReceived(type: String, modelName: String?)
-        fun onAuthFailed(reason: String)
         fun onPushToken(token: String)
         fun onAppStateChanged(state: AppState)
     }
@@ -87,10 +86,8 @@ object ObscuraSession {
         override fun log(message: String) { Log.d(TAG, message) }
         override fun decryptFailed(sourceUserId: String, reason: String) { Log.w(TAG, "decrypt failed from ${sourceUserId.take(8)}: $reason") }
         override fun ackFailed(envelopeId: String, reason: String) { Log.w(TAG, "ack failed $envelopeId: $reason") }
-        override fun tokenRefreshFailed(attempt: Int, reason: String) {
-            Log.e(TAG, "token refresh failed (attempt $attempt): $reason")
-            if (attempt >= 5) sink?.onAuthFailed("Token refresh failed after $attempt attempts")
-        }
+        // A rejected refresh token signs the kit out; the auth-state collector reports that.
+        override fun tokenRefreshFailed(attempt: Int, reason: String) { Log.e(TAG, "token refresh failed (attempt $attempt): $reason") }
         override fun preKeyReplenishFailed(reason: String) { Log.w(TAG, "prekey replenish failed: $reason") }
         override fun identityChanged(address: String) { Log.w(TAG, "identity changed: $address") }
         override fun sessionEstablishFailed(userId: String, reason: String) { Log.e(TAG, "session establish failed $userId: $reason") }

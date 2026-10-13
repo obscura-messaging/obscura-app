@@ -235,6 +235,25 @@ describe('the outbox', () => {
     expect(JSON.parse((await Obscura.entryAll('story'))[0].localMetadata ?? '{}').undelivered).toBe(true);
   });
 
+  /** The kit reports per device and never throws because nobody received it; the app decides. */
+  it('treats a report in which no recipient accepted as a failed send', async () => {
+    bridge.__setUnreachable([BOB, '44444444-4444-4444-8444-444444444444']);
+    await expect(writeEntry(args('story', { content: 'x' }))).rejects.toMatchObject({ code: 'SEND_FAILED' });
+    expect(JSON.parse((await Obscura.entryAll('story'))[0].localMetadata ?? '{}').undelivered).toBe(true);
+
+    expect(await flushOutbox({ selfUserId: SELF, friends: FRIENDS })).toBe(0);
+
+    bridge.__setUnreachable([]);
+    expect(await flushOutbox({ selfUserId: SELF, friends: FRIENDS })).toBe(1);
+    expect((await Obscura.entryAll('story'))[0].localMetadata).toBeNull();
+  });
+
+  it('treats a delivery to some recipients as a success', async () => {
+    bridge.__setUnreachable([BOB]);
+    await writeEntry(args('story', { content: 'x' }));
+    expect((await Obscura.entryAll('story'))[0].localMetadata).toBeNull();
+  });
+
   it('does nothing when everything was delivered', async () => {
     await writeEntry(args('story', { content: 'fine' }));
     const sentBefore = bridge.__sent.length;

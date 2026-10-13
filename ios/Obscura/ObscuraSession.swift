@@ -152,10 +152,17 @@ final class ObscuraSession {
             deviceId: saved.deviceId,
             username: saved.username
         )
-        let fresh = await client.ensureFreshToken()
-        guard fresh else { clearSession(); return }
-        saveSession()
-        do { try await client.connect() } catch { logger.log("restore connect failed: \(error)") }
+        // Only a rejected refresh token ends the session (the kit has signed out). Offline, the
+        // session is kept so the app opens on local data and reconnects on the next foreground.
+        switch await client.ensureFreshToken() {
+        case .rejected:
+            clearSession()
+        case .unavailable:
+            logger.log("restore: server unreachable; connect deferred")
+        case .fresh:
+            saveSession()
+            do { try await client.connect() } catch { logger.log("restore connect failed: \(error)") }
+        }
     }
 
     // MARK: - App lifecycle

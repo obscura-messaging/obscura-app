@@ -259,6 +259,21 @@ extension ObscuraBridge {
 
 extension ObscuraBridge {
 
+    /// Forget a friend: the friendship and their devices. Nothing is sent to them.
+    @objc(removeFriend:resolver:rejecter:)
+    func removeFriend(_ userId: String,
+                      resolver resolve: @escaping RCTPromiseResolveBlock,
+                      rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            do {
+                try await client.removeFriend(userId)
+                resolve(nil)
+            } catch {
+                rejectKit(reject, "REMOVE_FRIEND_ERROR", error)
+            }
+        }
+    }
+
     @objc(acceptFriend:resolver:rejecter:)
     func acceptFriend(_ userId: String,
                       resolver resolve: @escaping RCTPromiseResolveBlock,
@@ -407,17 +422,31 @@ extension ObscuraBridge {
         }
     }
 
-    /// Securely remove one local entry. The app decides when.
-    @objc(entryErase:id:resolver:rejecter:)
-    func entryErase(_ model: String, id: String,
+    /// Securely remove local entries. The app decides when.
+    @objc(entryErase:ids:resolver:rejecter:)
+    func entryErase(_ model: String, ids: [String],
                     resolver resolve: @escaping RCTPromiseResolveBlock,
                     rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                try await client.entries.erase(model: model, id: id)
+                try await client.entries.erase(model: model, ids: ids)
                 resolve(nil)
             } catch {
                 rejectKit(reject, "ENTRY_ERASE_ERROR", error)
+            }
+        }
+    }
+
+    /// The named entries that exist.
+    @objc(entryGet:ids:resolver:rejecter:)
+    func entryGet(_ model: String, ids: [String],
+                  resolver resolve: @escaping RCTPromiseResolveBlock,
+                  rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            do {
+                resolve(try await client.entries.get(model: model, ids: ids).map(ObscuraBridge.entryDict))
+            } catch {
+                rejectKit(reject, "ENTRY_GET_ERROR", error)
             }
         }
     }
@@ -428,16 +457,25 @@ extension ObscuraBridge {
                   rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let entries = try await client.entries.all(model: model)
-                resolve(entries.map {
-                    ["id": $0.id, "data": $0.data,
-                     "sentAt": Double($0.sentAt), "authorDeviceId": $0.authorDeviceId,
-                     "localMetadata": $0.localMetadata as Any]
-                })
+                resolve(try await client.entries.all(model: model).map(ObscuraBridge.entryDict))
             } catch {
                 rejectKit(reject, "ENTRY_ALL_ERROR", error)
             }
         }
+    }
+
+    static func entryDict(_ e: StoredEntry) -> [String: Any] {
+        ["id": e.id, "data": e.data, "sentAt": Double(e.sentAt), "authorDeviceId": e.authorDeviceId,
+         "localMetadata": e.localMetadata as Any]
+    }
+
+    /// Per-device results: `{userId, deviceId, status, error}`, status `accepted|rejected|unknown`.
+    static func sendReportDict(_ r: SendReport) -> [String: Any] {
+        func results(_ list: [SubmissionResult]) -> [[String: Any]] {
+            list.map { ["userId": $0.userId, "deviceId": $0.deviceId as Any, "status": $0.status.rawValue,
+                        "error": $0.error as Any] }
+        }
+        return ["recipients": results(r.recipients), "selfSync": results(r.selfSync)]
     }
 
     /// The caller names recipients; the kit resolves no audience.
@@ -448,11 +486,11 @@ extension ObscuraBridge {
                    rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                try await client.send(
+                let report = try await client.send(
                     to: recipientUserIds, modelKey: modelKey, entryId: entryId,
                     sentAt: sentAt.uint64Value, payload: Data(payloadJson.utf8)
                 )
-                resolve(nil)
+                resolve(ObscuraBridge.sendReportDict(report))
             } catch {
                 rejectKit(reject, "SEND_ERROR", error)
             }
@@ -507,8 +545,8 @@ extension ObscuraBridge {
         typingTasks[conversationId]?.cancel()
         let observation = client.observeTyping(contextId: conversationId)
         typingTasks[conversationId] = Task { [weak self] in
-            for await typers in observation.values {
-                self?.emit(.typingChanged, ["conversationId": conversationId, "typers": typers])
+            for await userIds in observation.values {
+                self?.emit(.typingChanged, ["conversationId": conversationId, "userIds": userIds])
             }
         }
         resolve(nil)

@@ -97,11 +97,18 @@ describe('the entry store', () => {
     expect(await Obscura.entryAll('profile')).toEqual([]);
   });
 
-  it('erases one entry through the bridge and leaves the rest', async () => {
+  it('reads exactly the named entries through the bridge', async () => {
+    await Obscura.entryPut('directMessage', 'a', '{}', 1, 'd');
+    await Obscura.entryPut('directMessage', 'b', '{}', 1, 'd');
+
+    expect((await Obscura.entryGet('directMessage', ['b', 'missing'])).map((e) => e.id)).toEqual(['b']);
+  });
+
+  it('erases the named entries through the bridge and leaves the rest', async () => {
     await Obscura.entryPut('directMessage', 'keep', '{}', 1, 'd');
     await Obscura.entryPut('directMessage', 'gone', '{}', 1, 'd');
 
-    await Obscura.entryErase('directMessage', 'gone');
+    await Obscura.entryErase('directMessage', ['gone']);
 
     expect((await Obscura.entryAll('directMessage')).map((e) => e.id)).not.toContain('gone');
     expect((await Obscura.entryAll('directMessage')).map((e) => e.id)).toContain('keep');

@@ -11,7 +11,7 @@ import { logError } from '../utils/log';
 /** The marker goes first, so a crash between the two never leaves an erased entry unmarked. */
 async function eraseWithMarker(model: string, id: string, now: number): Promise<void> {
   await Obscura.entryPut(ERASED_MODEL, erasedKey(model, id), '{}', now, '');
-  await Obscura.entryErase(model, id);
+  await Obscura.entryErase(model, [id]);
 }
 
 /** Erase an entry and its decrypted media. */
@@ -52,12 +52,12 @@ export async function sweepExpired(now: number = Date.now()): Promise<string[]> 
 
     for (const receipt of receiptRows) {
       if (!live.has(receipt.id) && receipt.sentAt + MAX_AGE_MS <= now) {
-        await Obscura.entryErase(SEEN_MODEL, receipt.id);
+        await Obscura.entryErase(SEEN_MODEL, [receipt.id]);
       }
     }
 
     for (const marker of await Obscura.entryAll(ERASED_MODEL)) {
-      if (marker.sentAt + MAX_AGE_MS <= now) await Obscura.entryErase(ERASED_MODEL, marker.id);
+      if (marker.sentAt + MAX_AGE_MS <= now) await Obscura.entryErase(ERASED_MODEL, [marker.id]);
     }
     return [...touched];
   }).catch((e) => {
