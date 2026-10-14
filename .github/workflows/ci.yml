@@ -32,8 +32,7 @@ jobs:
       - run: python3 scripts/test-verify-internal-build.py -q
 
   android:
-    # Required by branch protection; the tool is gone, but the status identity stays.
-    name: Android + push sender
+    name: Android Release Build
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
