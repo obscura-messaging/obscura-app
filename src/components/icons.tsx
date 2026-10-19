@@ -1,12 +1,7 @@
 import React from 'react';
 import Svg, { Path, Circle, Line } from 'react-native-svg';
 
-/**
- * Line-style icons (Feather-ish), tinted via `color` and scaled via `size`.
- * Match the app's hand-rolled SVG convention (see AddFriendIcon). Used for the
- * camera controls and the bottom tab bar so we stop shipping text where every
- * camera app uses glyphs.
- */
+/** Line icons tinted by `color` and scaled by `size`. */
 
 type IconProps = { size?: number; color?: string; strokeWidth?: number };
 
@@ -50,7 +45,7 @@ export function FlashIcon({ size = 24, color = '#fff', strokeWidth = 2, on = fal
   );
 }
 
-/** Camera flip — two arrows chasing each other in a circle (rotate). */
+/** Two arrows chasing each other in a circle. */
 export function FlipCameraIcon({ size = 26, color = '#fff', strokeWidth = 2 }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -64,7 +59,7 @@ export function FlipCameraIcon({ size = 26, color = '#fff', strokeWidth = 2 }: I
   );
 }
 
-/** Send — paper-plane, filled with `color`. Used by the chat composer. */
+/** A filled paper plane. */
 export function SendIcon({ size = 22, color = '#000' }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -74,7 +69,6 @@ export function SendIcon({ size = 22, color = '#000' }: IconProps) {
   );
 }
 
-/** Close — an X made of two crossing lines. Replaces the ASCII "X". */
 export function CloseIcon({ size = 22, color = '#fff', strokeWidth = 2 }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -84,7 +78,6 @@ export function CloseIcon({ size = 22, color = '#fff', strokeWidth = 2 }: IconPr
   );
 }
 
-/** Checkmark — a tick. Replaces the ASCII "V" used for selection checks. */
 export function CheckIcon({ size = 16, color = '#000', strokeWidth = 3 }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">

@@ -1,7 +1,7 @@
 import { PIX_MEDIA } from '../../native/__fixtures__/payloads';
 import { writeEntry, newEntryId, flushOutbox } from '../writeEntry';
 import { DirectRoutingUnresolved } from '../../domain/audience';
-import { Obscura } from '../../native/ObscuraModule';
+import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
 /**
@@ -10,15 +10,11 @@ import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
 const bridge = getFakeBridge();
 
-// UUIDs, as the server actually issues them. Not decoration: a conversation id is
-// `userIdA_userIdB` split on `_`, so an id CONTAINING an underscore would mis-split — and these
-// tests were written with `user_self`-style ids at first and failed for exactly that reason.
-// See the note on `resolveAudience`.
 const SELF = '11111111-1111-4111-8111-111111111111';
 const DEVICE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const BOB = '22222222-2222-4222-8222-222222222222';
 const STRANGER = '33333333-3333-4333-8333-333333333333';
-const FRIENDS = [
+const FRIENDS: Friend[] = [
   { userId: BOB, username: 'bob', status: 'accepted' },
   { userId: '44444444-4444-4444-8444-444444444444', username: 'carol', status: 'accepted' },
 ];
@@ -72,25 +68,12 @@ describe('storing and sending', () => {
 });
 
 describe('the effect ORDER', () => {
-  /**
-   * The local write is the one that must not be lost: the user's content is theirs whether or not
-   * the network cooperated. Asserted on the call sequence, because the end state of a successful
-   * run looks the same either way.
-   */
   it('writes locally BEFORE sending', async () => {
     await writeEntry(args('story', { content: 'x' }));
 
     expect(bridge.__calls.indexOf('entryPut')).toBeLessThan(bridge.__calls.indexOf('sendEntry'));
   });
 
-  /**
-   * A send failure must not cost the user their content — **and must not be silent either**.
-   *
-   * The kit throws from `send` only when a send reached NOBODY (a partial failure is best-effort by
-   * design), so this is the case where the user is looking at an entry in their own timeline that
-   * got nowhere. It keeps the local row, because their content is theirs whether or not the network
-   * cooperated, and it re-throws so a screen can say so.
-   */
   it('keeps the local entry when the send fails, but still reports the failure', async () => {
     bridge.__failNext('sendEntry', 'SEND_FAILED', 'offline');
 
@@ -135,16 +118,6 @@ describe('audience failures', () => {
     expect(bridge.__sent).toEqual([]);
   });
 
-  /**
-   * `pix` resolves by CONVERSATION — `schema.ts` declares
-   * `audience: { kind: 'conversation', field: 'conversationId' }`. The
-   * conversation id names both parties by authenticated userId.
-   *
-   * **A conversation participant who is not an accepted friend gets nothing.** The conversation id
-   * is a payload field, so without that intersection this call would mail the entry — `mediaRef`,
-   * `contentKey`, `nonce` — to whatever userId a peer wrote into it. `StoriesScreen` writes a
-   * viewed-receipt back with `{ ...story.data }`, so the peer-supplied id reaches here directly.
-   */
   it('resolves pix by conversation, and drops a participant who is not a friend', async () => {
     await writeEntry(args('pix', { ...PIX_MEDIA, conversationId: [SELF, STRANGER].sort().join('_') }));
 
@@ -153,11 +126,6 @@ describe('audience failures', () => {
     expect(bridge.__sent[0].recipientUserIds).toEqual([]);
   });
 
-  /**
-   * The other half of the same guard, on the receive-echo path. A conversation between two people
-   * who are not me is not one this device can address at all — the intersection alone would happily
-   * resolve it to both of them (`DOMAIN_CONTRACT.md`).
-   */
   it('refuses a conversation this user is not part of', async () => {
     const theirs = [BOB, '44444444-4444-4444-8444-444444444444'].sort().join('_');
 
@@ -235,6 +203,25 @@ describe('the outbox', () => {
     expect(JSON.parse((await Obscura.entryAll('story'))[0].localMetadata ?? '{}').undelivered).toBe(true);
   });
 
+  /** The kit reports per device and never throws because nobody received it; the app decides. */
+  it('treats a report in which no recipient accepted as a failed send', async () => {
+    bridge.__setUnreachable([BOB, '44444444-4444-4444-8444-444444444444']);
+    await expect(writeEntry(args('story', { content: 'x' }))).rejects.toMatchObject({ code: 'SEND_FAILED' });
+    expect(JSON.parse((await Obscura.entryAll('story'))[0].localMetadata ?? '{}').undelivered).toBe(true);
+
+    expect(await flushOutbox({ selfUserId: SELF, friends: FRIENDS })).toBe(0);
+
+    bridge.__setUnreachable([]);
+    expect(await flushOutbox({ selfUserId: SELF, friends: FRIENDS })).toBe(1);
+    expect((await Obscura.entryAll('story'))[0].localMetadata).toBeNull();
+  });
+
+  it('treats a delivery to some recipients as a success', async () => {
+    bridge.__setUnreachable([BOB]);
+    await writeEntry(args('story', { content: 'x' }));
+    expect((await Obscura.entryAll('story'))[0].localMetadata).toBeNull();
+  });
+
   it('does nothing when everything was delivered', async () => {
     await writeEntry(args('story', { content: 'fine' }));
     const sentBefore = bridge.__sent.length;
@@ -243,11 +230,6 @@ describe('the outbox', () => {
     expect(bridge.__sent).toHaveLength(sentBefore);
   });
 
-  /**
-   * A newer local write supersedes the stranded one, and `entryPut` is blind — so re-putting the
-   * old `sentAt` would roll the newer version back. The mark is simply dropped with the row it
-   * described.
-   */
   it('does not resurrect an entry a newer write has replaced', async () => {
     const id = 'profile_x';
     bridge.__failNext('sendEntry', 'SEND_FAILED');

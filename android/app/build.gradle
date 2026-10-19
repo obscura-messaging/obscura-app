@@ -238,11 +238,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
     // Lifecycle (foreground reconnect)
-    implementation("androidx.lifecycle:lifecycle-process:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-process:2.10.0")
 
     // Firebase Cloud Messaging — silent push wake-up bell. NEVER carries content.
     // Privacy invariant: notification text is hardcoded generic ("New pix" / "New message").
-    implementation(platform("com.google.firebase:firebase-bom:35.0.0"))
+    implementation(platform("com.google.firebase:firebase-bom:35.0.2"))
     implementation("com.google.firebase:firebase-messaging")
 
     // Desugaring (required by libsignal-android)

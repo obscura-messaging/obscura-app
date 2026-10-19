@@ -3,13 +3,7 @@
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { mergeAll, type Entry, type MergeRule } from '../merge';
-
-/**
- * The app-owned merge fixtures, run against this app's merge implementation.
- *
- * Four cases cover the current APPEND and REPLACE rules.
- */
+import { merge, type Entry, type MergeRule } from '../merge';
 
 const VECTORS = join(__dirname, '../__fixtures__/merge.json');
 
@@ -38,6 +32,7 @@ const RULE: Record<string, MergeRule> = { gset: 'APPEND', lww: 'REPLACE' };
 const toEntry = (vector: VectorOp): Entry => ({
   id: vector.id,
   sentAt: vector.ts,
+  authorUserId: 'u',
   authorDeviceId: vector.authorDeviceId,
   data: vector.data,
 });
@@ -56,12 +51,8 @@ describe('merge.json conformance', () => {
       const ops = testCase.ops.map(toEntry);
       const applied = order === 'reverse' ? [...ops].reverse() : ops;
 
-      const state = mergeAll(rule, applied);
+      const state = merge(rule, new Map(), applied);
 
-      // Compare exactly the fields each expectation states — the LWW cases assert the winning
-      // `authorDeviceId`, which IS the tie-break assertion, while the GSet cases assert only
-      // `id`/`data`. Projecting to a fixed shape would either fail spuriously on the former or
-      // silently skip the property the vector exists to pin.
       const expected = [...testCase.expect.entries].sort((a, b) => a.id.localeCompare(b.id));
       const byId = new Map([...state.values()].map((e) => [e.id, e]));
 
@@ -85,8 +76,8 @@ describe('merge.json conformance', () => {
       // The property the applyOrders exist to check, asserted directly rather than inferred from
       // two separate passes both matching a fixture.
       const ops = testCase.ops.map(toEntry);
-      const forward = mergeAll(rule, ops);
-      const reverse = mergeAll(rule, [...ops].reverse());
+      const forward = merge(rule, new Map(), ops);
+      const reverse = merge(rule, new Map(), [...ops].reverse());
       expect([...forward.entries()].sort()).toEqual([...reverse.entries()].sort());
     });
   });

@@ -1,4 +1,6 @@
-import { planDrain, type DrainRow, type ModelRules } from '../drain';
+import { planDrain } from '../drain';
+import type { ModelDeclaration } from '../model';
+import type { InboxRow } from '../../native/ObscuraModule';
 import type { Entry } from '../merge';
 
 /**
@@ -11,17 +13,17 @@ const PEER = 'uPeer';
 const STRANGER = 'uStranger';
 const CONV = [SELF, PEER].sort().join('_');
 
-const models = new Map<string, ModelRules>([
-  ['directMessage', { merge: 'APPEND', fields: { content: 'string' }, conversationField: 'conversationId' }],
-  ['story', { merge: 'APPEND', fields: {} }],
-  ['pix', { merge: 'APPEND', fields: {}, conversationField: 'conversationId' }],
-  ['profile', { merge: 'REPLACE', fields: {}, ownerIdPrefix: 'profile_' }],
+const models = new Map<string, ModelDeclaration>([
+  ['directMessage', { merge: 'APPEND', fields: { content: 'string' }, audience: 'conversation' }],
+  ['story', { merge: 'APPEND', fields: {}, audience: 'friends' }],
+  ['pix', { merge: 'APPEND', fields: {}, audience: 'conversation' }],
+  ['profile', { merge: 'REPLACE', fields: {}, audience: 'friends', ownerIdPrefix: 'profile_' }],
   // A conversation-scoped REPLACE model, for the merge mechanics below.
-  ['note', { merge: 'REPLACE', fields: {}, conversationField: 'conversationId' }],
+  ['note', { merge: 'REPLACE', fields: {}, audience: 'conversation' }],
 ]);
 
 let nextId = 1;
-function row(over: Partial<DrainRow> = {}): DrainRow {
+function row(over: Partial<InboxRow> = {}): InboxRow {
   return {
     id: nextId++,
     kind: 'APP_ENTRY',
@@ -53,8 +55,9 @@ describe('the happy path', () => {
       {
         id: 'dm_1',
         sentAt: 1_000,
+        authorUserId: PEER,
         authorDeviceId: 'device_peer',
-        data: { content: 'hi', conversationId: CONV, _authorUserId: PEER },
+        data: { content: 'hi', conversationId: CONV },
       },
     ]);
   });
@@ -85,14 +88,14 @@ describe('attribution — who an entry is from', () => {
 
     const plan = planDrain([r], models, empty, SELF);
 
-    expect(plan.writes.get('story')?.[0].data._authorUserId).toBe(STRANGER);
+    expect(plan.writes.get('story')?.[0].authorUserId).toBe(STRANGER);
   });
 
   /** A pix is append-only: the other participant cannot change one this device already holds. */
   it('ignores a second write to a stored entry by the other participant', () => {
     const mine: Entry = {
-      id: 'p', sentAt: 1_000, authorDeviceId: 'device_mine',
-      data: { conversationId: CONV, caption: 'mine', _authorUserId: SELF },
+      id: 'p', sentAt: 1_000, authorUserId: SELF, authorDeviceId: 'device_mine',
+      data: { conversationId: CONV, caption: 'mine' },
     };
     const state = new Map([['pix', new Map([['p', mine]])]]);
     const rewrite = row({
@@ -108,11 +111,6 @@ describe('attribution — who an entry is from', () => {
 });
 
 describe('authorization — who may write what', () => {
-  /**
-   * **Attack B.** `profile` is REPLACE and its id is `profile_<userId>`, which anybody can guess. A
-   * stranger's write with a higher `sentAt` took over the row `ProfileScreen` reads — and the save
-   * button then re-broadcast their text to all my friends under my name.
-   */
   it('refuses a profile written to somebody else\'s id', () => {
     const r = row({
       modelKey: 'profile', entryId: `profile_${SELF}`, senderUserId: STRANGER,
@@ -170,12 +168,6 @@ describe('authorization — who may write what', () => {
     ]);
   });
 
-  /**
-   * The other half of the send side's guard. DOMAIN_CONTRACT: a reversed form MUST be rejected
-   * "rather than guessing an audience" — and on this side, guessing files a peer's entry under a
-   * conversation id no participant would ever compute, so the screens never show it and the row is
-   * stored anyway.
-   */
   it('refuses a conversation-scoped entry whose id is reversed', () => {
     const r = row({
       entryId: 'dm_reversed',
@@ -194,15 +186,9 @@ describe('authorization — who may write what', () => {
     const plan = planDrain([r], models, empty, SELF);
 
     expect(plan.consume).toEqual([r.id]);
-    expect(plan.writes.get('directMessage')?.[0].data._authorUserId).toBe(SELF);
+    expect(plan.writes.get('directMessage')?.[0].authorUserId).toBe(SELF);
   });
 
-  /**
-   * `story` has neither rule, and that is a deliberate limit rather than an omission: a story
-   * carries nothing that binds it to an author, so there is no claim to check — only an
-   * attribution to stamp. Friendship is NOT required, because a discard is permanent and the
-   * friend graph updates over a different message than the entry does.
-   */
   it('accepts a story from anybody, attributed to them', () => {
     const r = row({
       modelKey: 'story', entryId: 's_2', senderUserId: STRANGER,
@@ -212,7 +198,7 @@ describe('authorization — who may write what', () => {
     const plan = planDrain([r], models, empty, SELF);
 
     expect(plan.consume).toEqual([r.id]);
-    expect(plan.writes.get('story')?.[0].data._authorUserId).toBe(STRANGER);
+    expect(plan.writes.get('story')?.[0].authorUserId).toBe(STRANGER);
   });
 });
 
@@ -287,11 +273,6 @@ describe('rows the app cannot process', () => {
 });
 
 describe('merging within a batch', () => {
-  /**
-   * Two rows touching one entry must resolve against **each other**, not just against stored state.
-   * Otherwise the second silently wins on arrival order rather than on the merge rule — the
-   * divergence `DOMAIN_CONTRACT.md` describes, reachable inside a single `peek`.
-   */
   it('resolves two rows for the same entry by the rule, not by arrival order', () => {
     const older = row({
       modelKey: 'note', entryId: 'p', sentAt: 1_000,
@@ -316,7 +297,7 @@ describe('merging within a batch', () => {
    */
   it('consumes but does not write a row that loses the merge', () => {
     const stored: Entry = {
-      id: 'p', sentAt: 9_000, authorDeviceId: 'device_x',
+      id: 'p', sentAt: 9_000, authorUserId: PEER, authorDeviceId: 'device_x',
       data: { v: 'stored', conversationId: CONV },
     };
     const state = new Map([['note', new Map([['p', stored]])]]);
@@ -334,7 +315,7 @@ describe('merging within a batch', () => {
   /** APPEND is first-write-wins, so a redelivered duplicate must not overwrite the original. */
   it('keeps the first write for an APPEND model', () => {
     const first: Entry = {
-      id: 'dm', sentAt: 1_000, authorDeviceId: 'd',
+      id: 'dm', sentAt: 1_000, authorUserId: PEER, authorDeviceId: 'd',
       data: { content: 'first', conversationId: CONV },
     };
     const state = new Map([['directMessage', new Map([['dm', first]])]]);
