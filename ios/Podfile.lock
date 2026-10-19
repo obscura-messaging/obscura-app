@@ -1426,7 +1426,7 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
-  - react-native-pager-view (8.0.5):
+  - react-native-pager-view (9.0.8):
     - hermes-engine
     - RCTRequired
     - RCTTypeSafety
@@ -2377,7 +2377,7 @@ SPEC CHECKSUMS:
   React-Mapbuffer: 44dd007f917e2396afa0e70bbd70273237d93fde
   React-microtasksnativemodule: f413ee411341fb3c34d20e85e9f6f524921fab15
   React-mutationobservernativemodule: 58f6d2adf7d98e72b241608dfa2ddce414d2a4e7
-  react-native-pager-view: 9c96bfba63aff996c20295984d8a646272fb3301
+  react-native-pager-view: 77eaf9ae5a0e035963db87e3cb453ac7bfbe33b6
   react-native-safe-area-context: 3d2fac6d8e7405ec6d9325ff13b4c9145fa466c4
   react-native-video: 141f52d2a5c82f139acbfcd69c8a0b8bfb132062
   React-NativeModulesApple: 167e532fb9bae30f3c66636b8ee0092bab263667
