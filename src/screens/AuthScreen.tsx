@@ -1,55 +1,47 @@
 import React, { useState } from 'react';
 import { SafeAreaView, View, Text, TextInput, TouchableOpacity, Image, StyleSheet } from 'react-native';
-import { Obscura } from '../native/ObscuraModule';
-import { useSession } from '../state/store';
-import { logIn } from '../state/login';
+import { MIN_PASSWORD_LENGTH, credentialsProblem, logIn, register } from '../state/login';
 import { KeyboardScreen } from '../components/KeyboardScreen';
+import { errorMessage } from '../utils/log';
 import { s, colors } from '../styles';
 
 export function AuthScreen() {
-  const { setAuthed } = useSession();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState('');
 
-  const register = async () => {
-    if (!username || password.length < 12) { setStatus('Password must be 12+ chars'); return; }
-    setStatus('Registering...');
-    try {
-      await Obscura.register(username, password);
-      await Obscura.connect();
-      setAuthed(true);
-    } catch (e: any) { setStatus(e.message || 'Registration failed'); }
+  const submit = async (progress: string, action: () => Promise<void>) => {
+    const problem = credentialsProblem(username, password);
+    if (problem !== null) { setStatus(problem); return; }
+    setStatus(progress);
+    try { await action(); } catch (e) { setStatus(errorMessage(e)); }
   };
 
-  const login = async () => {
-    if (!username || password.length < 12) { setStatus('Password must be 12+ chars'); return; }
-    setStatus('Logging in...');
-    try {
-      if (!(await logIn(username, password))) setStatus('Wrong username or password');
-    } catch (e: any) { setStatus(e.message || 'Login failed'); }
-  };
+  const onLogIn = () => submit('Logging in...', async () => {
+    if (!(await logIn(username, password))) setStatus('Wrong username or password');
+  });
+  const onRegister = () => submit('Registering...', () => register(username, password));
 
   return (
     <SafeAreaView style={s.container}>
       <KeyboardScreen>
-      <View style={a.box}>
-        <Image source={require('../assets/logo.png')} style={a.logo} resizeMode="contain" />
-        <Text style={a.subtitle}>Encrypted everything</Text>
-        {status ? <Text style={a.status}>{status}</Text> : null}
-        <TextInput style={s.input} placeholder="Username" placeholderTextColor={colors.textDim}
-          value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} />
-        <TextInput style={s.input} placeholder="Password (12+ chars)" placeholderTextColor={colors.textDim}
-          value={password} onChangeText={setPassword} secureTextEntry />
-        <View style={a.buttons}>
-          <TouchableOpacity style={a.primaryBtn} onPress={login}>
-            <Text style={a.primaryBtnText}>Log in</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={a.secondaryBtn} onPress={register}>
-            <Text style={a.secondaryBtnText}>Sign up</Text>
-          </TouchableOpacity>
+        <View style={a.box}>
+          <Image source={require('../assets/logo.png')} style={a.logo} resizeMode="contain" />
+          <Text style={a.subtitle}>Encrypted everything</Text>
+          {status ? <Text style={a.status}>{status}</Text> : null}
+          <TextInput style={s.input} placeholder="Username" placeholderTextColor={colors.textDim}
+            value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} />
+          <TextInput style={s.input} placeholder={`Password (${MIN_PASSWORD_LENGTH}+ chars)`}
+            placeholderTextColor={colors.textDim} value={password} onChangeText={setPassword} secureTextEntry />
+          <View style={a.buttons}>
+            <TouchableOpacity style={a.primaryBtn} onPress={onLogIn}>
+              <Text style={a.primaryBtnText}>Log in</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={a.secondaryBtn} onPress={onRegister}>
+              <Text style={a.secondaryBtnText}>Sign up</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
       </KeyboardScreen>
     </SafeAreaView>
   );

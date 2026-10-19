@@ -1,41 +1,22 @@
+import { putEntry } from '../entryStore';
 import { PIX_MEDIA } from '../../native/__fixtures__/payloads';
 import { drainInbox } from '../drainInbox';
 import { writeEntry } from '../writeEntry';
-import { Obscura } from '../../native/ObscuraModule';
+import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 import { withEntryLock } from '../entryLock';
-
-/**
- * Overlapping writers (`entryLock.ts`).
- *
- * The drain READS the entry store, decides, then writes. A local write landing inside that window is
- * computed against a snapshot that never saw it — so the drain's merge silently reverts it. Nothing
- * throws; the user just loses a change they made.
- *
- * These interleave the two paths deliberately, because the whole 99-test suite passed while the race
- * was live: every existing test runs one path at a time.
- */
 
 const bridge = getFakeBridge();
 
 const SELF = '11111111-1111-4111-8111-111111111111';
 const DEVICE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const BOB = '22222222-2222-4222-8222-222222222222';
-const FRIENDS = [{ userId: BOB, username: 'bob', status: 'accepted' }];
+const FRIENDS: Friend[] = [{ userId: BOB, username: 'bob', status: 'accepted' }];
 const CONV = [SELF, BOB].sort().join('_');
 
 describe('a local write racing an incoming drain', () => {
-  /**
-   * **The load-bearing test.** The concrete case: a pix arrives, the user views it (writing a
-   * `viewedAt` receipt that is also SENT to the peer), and a drain overlaps. Without the lock the
-   * receipt is reverted locally — so the sender sees "viewed" and the recipient sees "unviewed",
-   * permanently, with no error on either side.
-   *
-   * Started without `await` so both are in flight together, which is exactly how `store.ts` fires
-   * them: a drain per incoming message, and the receipt on screen exit.
-   */
   it('does not revert a viewed-receipt written while a drain is in flight', async () => {
-    await Obscura.entryPut('pix', 'p1', JSON.stringify({ conversationId: CONV, viewedAt: 0 }), 1_000, BOB);
+    await Obscura.entryPut('pix', 'p1', JSON.stringify({ conversationId: CONV, viewedAt: 0 }), 1_000, BOB, null);
     bridge.__deliverInbox({
       modelKey: 'pix', entryId: 'p1', sentAt: 3_000, senderDeviceId: 'device_peer',
       payload: JSON.stringify({ ...PIX_MEDIA, conversationId: CONV, viewedAt: 0 }),
@@ -56,7 +37,7 @@ describe('a local write racing an incoming drain', () => {
 
   /** The same, with the write starting first — the interleaving must be safe in both directions. */
   it('does not lose the write when it starts before the drain', async () => {
-    await Obscura.entryPut('pix', 'p1', JSON.stringify({ viewedAt: 0 }), 1_000, BOB);
+    await Obscura.entryPut('pix', 'p1', JSON.stringify({ viewedAt: 0 }), 1_000, BOB, null);
     bridge.__deliverInbox({
       modelKey: 'pix', entryId: 'p1', sentAt: 3_000, senderDeviceId: 'device_peer',
       payload: JSON.stringify({ ...PIX_MEDIA, conversationId: CONV, viewedAt: 0 }),
@@ -78,7 +59,7 @@ describe('a local write racing an incoming drain', () => {
    */
   it('wins against a stored entry whose timestamp is in the future', async () => {
     const future = Date.now() + 45_000;
-    await Obscura.entryPut('pix', 'p1', JSON.stringify({ viewedAt: 0 }), future, BOB);
+    await putEntry('pix', { id: 'p1', sentAt: future, authorUserId: BOB, authorDeviceId: BOB, data: { viewedAt: 0 } });
 
     await writeEntry({
       model: 'pix', id: 'p1', data: { ...PIX_MEDIA, conversationId: CONV, viewedAt: 42 },

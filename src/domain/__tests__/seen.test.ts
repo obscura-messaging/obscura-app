@@ -6,14 +6,16 @@ const BOB = 'uBob';
 const CONV = [ALICE, BOB].sort().join('_');
 
 const message: Entry = {
-  id: 'dm_1', sentAt: 1_000, authorDeviceId: 'd_alice',
-  data: { conversationId: CONV, content: 'hi', _authorUserId: ALICE },
+  id: 'dm_1', sentAt: 1_000, authorUserId: ALICE, authorDeviceId: 'd_alice',
+  data: { conversationId: CONV, content: 'hi' },
 };
 
-function receipt(over: Record<string, unknown> = {}, sentAt = 5_000, id = seenEntryId('directMessage', 'dm_1')): Entry {
+function receipt(
+  over: Record<string, unknown> = {}, sentAt = 5_000, id = seenEntryId('directMessage', 'dm_1'), author = BOB,
+): Entry {
   return {
-    id, sentAt, authorDeviceId: 'd_bob',
-    data: { conversationId: CONV, viewedAt: 4_000, _authorUserId: BOB, ...over },
+    id, sentAt, authorUserId: author, authorDeviceId: 'd_bob',
+    data: { conversationId: CONV, viewedAt: 4_000, ...over },
   };
 }
 
@@ -27,7 +29,7 @@ describe('viewedAtFor', () => {
   });
 
   it('ignores a receipt written by the entry author, so a sender cannot mark their own message seen', () => {
-    expect(viewedAtFor('directMessage', message, indexReceipts([receipt({ _authorUserId: ALICE })]))).toBeNull();
+    expect(viewedAtFor('directMessage', message, indexReceipts([receipt({}, 5_000, undefined, ALICE)]))).toBeNull();
   });
 
   it('ignores a receipt naming a different conversation', () => {

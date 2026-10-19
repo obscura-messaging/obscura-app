@@ -2,10 +2,7 @@ import React from 'react';
 import Svg, { Path } from 'react-native-svg';
 import { colors } from '../styles';
 
-/**
- * "Add friend" icon (two people + a plus). Source: add-friend-svgrepo-com.svg.
- * Filled paths — pass `color` to tint, `size` to scale (viewBox is square).
- */
+/** Two people and a plus (add-friend-svgrepo-com.svg). */
 export function AddFriendIcon({ size = 24, color = colors.accent }: { size?: number; color?: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 45.902 45.902">

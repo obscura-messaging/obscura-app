@@ -1,27 +1,18 @@
 import React from 'react';
 import {
   KeyboardAvoidingView, TouchableWithoutFeedback, Keyboard, Platform,
-  View, StyleSheet, type ViewStyle,
+  View, StyleSheet,
 } from 'react-native';
 
 /**
- * Wrapper for plain-View input screens (no ScrollView/FlatList of their own).
- *
- * - Lifts content above the keyboard: `padding` on iOS, `height` on Android.
- *   (Android 15+ enforces edge-to-edge even with edgeToEdgeEnabled=false, so the
- *   manifest's `adjustResize` no longer resizes the window for the IME — the
- *   KeyboardAvoidingView must do it. `height` mirrors ChatScreen/PhotoPreview.)
- * - Tapping any non-input area dismisses the keyboard.
- *
- * Scroll/list screens should NOT use this — a TouchableWithoutFeedback around a
- * ScrollView/FlatList eats scroll gestures. Those use
- * `keyboardShouldPersistTaps="handled"` (+ `keyboardDismissMode="on-drag"`) on
- * the scrollable itself instead.
+ * Lifts a non-scrolling screen above the keyboard and dismisses it on a tap outside an input.
+ * Android 15 no longer resizes the window for the keyboard, so this must. Scrolling screens use
+ * `keyboardShouldPersistTaps` instead: the touchable here would swallow their scroll gestures.
  */
-export function KeyboardScreen({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
+export function KeyboardScreen({ children }: { children: React.ReactNode }) {
   return (
     <KeyboardAvoidingView
-      style={[styles.flex, style]}
+      style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <TouchableWithoutFeedback accessible={false} onPress={Keyboard.dismiss}>

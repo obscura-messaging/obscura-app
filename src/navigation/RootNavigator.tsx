@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createMaterialTopTabNavigator, type MaterialTopTabBarProps } from '@react-navigation/material-top-tabs';
-import { View, TouchableOpacity, StyleSheet, AppState } from 'react-native';
+import { View, TouchableOpacity, StyleSheet } from 'react-native';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { NativeStackNavigationOptions, NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { useSession, useStore } from '../state/store';
+import { useAppActive } from '../hooks/useAppActive';
 import { Obscura, onObscuraEvent } from '../native/ObscuraModule';
 import { logError } from '../utils/log';
 import { colors } from '../styles';
@@ -29,9 +30,7 @@ import type { RootStackParamList, MainTabParamList } from './types';
 const RootStack = createNativeStackNavigator<RootStackParamList>();
 const MainTab = createMaterialTopTabNavigator<MainTabParamList>();
 
-// Bottom tab bar for the swipe pager. Floats absolutely over the pager so the
-// full-bleed camera preview extends underneath it; background is solid on the
-// Chats tab and transparent on the Camera tab (matching the full-bleed look).
+/** Floats over the pager so the camera preview runs underneath it. */
 function BottomTabBar({ state, navigation }: MaterialTopTabBarProps) {
   const insets = useSafeAreaInsets();
   const onCamera = state.routes[state.index]?.name === 'Camera';
@@ -60,18 +59,9 @@ function BottomTabBar({ state, navigation }: MaterialTopTabBarProps) {
   );
 }
 
-// ─── Main Tabs ───────────────────────────────────────────
-
 function MainTabs() {
-  // Keep the record-camera live while MainTabs is the foreground screen — true
-  // across a tab swipe (so the preview slides in live), false when a modal
-  // (ScanFriend's own camera, PhotoPreview) covers it or the app backgrounds.
   const focused = useIsFocused();
-  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (s) => setAppActive(s === 'active'));
-    return () => sub.remove();
-  }, []);
+  const appActive = useAppActive();
 
   return (
     <CameraActiveContext.Provider value={focused && appActive}>
@@ -79,8 +69,7 @@ function MainTabs() {
         initialRouteName="Camera"
         tabBarPosition="bottom"
         tabBar={BottomTabBar}
-        // Both screens stay mounted so the camera preview is live as it slides
-        // in under the finger; the pager provides the finger-tracking swipe.
+        // Both stay mounted so the camera preview is live as it slides in.
         screenOptions={{ lazy: false, swipeEnabled: true }}
       >
         <MainTab.Screen name="Chats" component={ChatListScreen} />
@@ -90,39 +79,43 @@ function MainTabs() {
   );
 }
 
-// ─── Splash (during initial auth check) ──────────────────
-
 function SplashScreen() {
-  return <View style={headerStyles.splash} />;
+  return <View style={styles.splash} />;
 }
 
-// ─── Root Navigator ──────────────────────────────────────
+function headerOptions(title: string): NativeStackNavigationOptions {
+  return {
+    headerShown: true,
+    headerStyle: { backgroundColor: colors.bg },
+    headerTintColor: colors.accent,
+    headerTitleStyle: { color: colors.text, fontWeight: '700' },
+    title,
+  };
+}
 
 export function RootNavigator() {
   const { authed } = useSession();
   const bootstrapped = useStore((s) => s.bootstrapped);
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
-  // Deep-link routing: cold-start pull AND warm-start event.
-  // Both deliver { screen } and we hop to the matching tab.
+  // Notification taps: pulled once on cold start, and as an event while running.
   useEffect(() => {
     if (!authed) return;
     const route = (screen: string) => {
       if (screen === 'chat') nav.navigate('MainTabs', { screen: 'Chats' });
     };
-    Obscura.getLaunchIntent().then(intent => {
-      if (intent?.screen) route(intent.screen);
-    }).catch((e) => logError('launchIntent', e));
+    Obscura.getLaunchIntent()
+      .then((intent) => { if (intent) route(intent.screen); })
+      .catch((e) => logError('launchIntent', e));
     return onObscuraEvent((event) => {
-      if (event.type === 'launchedFrom' && event.screen) route(event.screen);
+      if (event.type === 'launchedFrom') route(event.screen);
     });
   }, [authed, nav]);
 
   return (
     <RootStack.Navigator screenOptions={{ headerShown: false, headerBackButtonDisplayMode: 'minimal' }}>
       {!bootstrapped ? (
-        // Plain black screen while the cold-start auth check is in flight.
-        // Avoids flashing the AuthScreen for users who are already logged in.
+        // Avoids flashing the auth screen at a signed-in user.
         <RootStack.Screen name="Splash" component={SplashScreen} />
       ) : !authed ? (
         <RootStack.Screen name="Auth" component={AuthScreen} />
@@ -132,19 +125,12 @@ export function RootNavigator() {
           <RootStack.Screen
             name="Chat"
             component={ChatScreen}
-            options={({ route }) => ({
-              headerShown: true,
-              headerStyle: { backgroundColor: colors.bg },
-              headerTintColor: colors.accent,
-              headerTitleStyle: { color: colors.text, fontWeight: '700' },
-              title: route.params.friend.username,
-            })}
+            options={({ route }) => headerOptions(route.params.friend.username)}
           />
           <RootStack.Screen
             name="PhotoPreview"
             component={PhotoPreviewScreen}
-            // Instant swap — no slide/fade so the captured frame feels like it
-            // freezes in place rather than popping in as a new screen.
+            // No animation, so the captured frame seems to freeze in place.
             options={{ presentation: 'fullScreenModal', animation: 'none' }}
           />
           <RootStack.Screen
@@ -160,24 +146,12 @@ export function RootNavigator() {
           <RootStack.Screen
             name="Profile"
             component={ProfileScreen}
-            options={{
-              headerShown: true,
-              headerStyle: { backgroundColor: colors.bg },
-              headerTintColor: colors.accent,
-              headerTitleStyle: { color: colors.text, fontWeight: '700' },
-              title: 'Profile',
-            }}
+            options={headerOptions('Profile')}
           />
           <RootStack.Screen
             name="AddFriend"
             component={AddFriendScreen}
-            options={{
-              headerShown: true,
-              headerStyle: { backgroundColor: colors.bg },
-              headerTintColor: colors.accent,
-              headerTitleStyle: { color: colors.text, fontWeight: '700' },
-              title: 'Add friend',
-            }}
+            options={headerOptions('Add friend')}
           />
           <RootStack.Screen
             name="ScanFriend"
@@ -189,8 +163,6 @@ export function RootNavigator() {
     </RootStack.Navigator>
   );
 }
-
-// ─── Styles ──────────────────────────────────────────────
 
 const tabStyles = StyleSheet.create({
   bar: {
@@ -206,6 +178,6 @@ const tabStyles = StyleSheet.create({
   tab: { flex: 1, alignItems: 'center' },
 });
 
-const headerStyles = StyleSheet.create({
+const styles = StyleSheet.create({
   splash: { flex: 1, backgroundColor: colors.bg },
 });

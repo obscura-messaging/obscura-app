@@ -21,7 +21,7 @@ beforeEach(() => {
 /** A message SELF sent at `sentAt`. */
 function putMessage(id: string, sentAt = NOW - 1_000) {
   return Obscura.entryPut(
-    'directMessage', id, JSON.stringify({ conversationId: CONV, content: id, _authorUserId: SELF }), sentAt, 'd',
+    'directMessage', id, JSON.stringify({ conversationId: CONV, content: id, _authorUserId: SELF }), sentAt, 'd', null,
   );
 }
 
@@ -29,7 +29,7 @@ function putMessage(id: string, sentAt = NOW - 1_000) {
 function seenByPeer(model: string, id: string, viewedAt: number, author = PEER) {
   return Obscura.entryPut(
     SEEN_MODEL, seenEntryId(model, id),
-    JSON.stringify({ conversationId: CONV, viewedAt, _authorUserId: author }), viewedAt, 'd_peer',
+    JSON.stringify({ conversationId: CONV, viewedAt, _authorUserId: author }), viewedAt, 'd_peer', null,
   );
 }
 
@@ -55,6 +55,21 @@ describe('sweepExpired', () => {
     ].sort());
   });
 
+  it('erases each model in one call, after every erased marker is written', async () => {
+    for (const id of ['a', 'b', 'c']) {
+      await putMessage(id);
+      await seenByPeer('directMessage', id, LONG_AGO);
+    }
+    const start = bridge.__calls.length;
+
+    await sweepExpired(NOW);
+
+    const calls = bridge.__calls.slice(start).filter((c) => c === 'entryPut' || c === 'entryErase');
+    expect(calls).toEqual([...Array(6).fill('entryPut'), 'entryErase', 'entryErase']);
+    expect(await ids('directMessage')).toEqual([]);
+    expect(await ids(SEEN_MODEL)).toEqual([]);
+  });
+
   it('erases an unseen entry once it is MAX_AGE_MS old', async () => {
     await putMessage('dm_old', NOW - MAX_AGE_MS);
     await putMessage('dm_new', NOW - MAX_AGE_MS + 1);
@@ -67,12 +82,12 @@ describe('sweepExpired', () => {
   it('purges the decrypted media of an expired pix', async () => {
     await Obscura.entryPut(
       'pix', 'pix_expired',
-      JSON.stringify({ ...PIX_MEDIA, mediaRef: 'att_expired', conversationId: CONV, _authorUserId: SELF }), 1, 'd',
+      JSON.stringify({ ...PIX_MEDIA, mediaRef: 'att_expired', conversationId: CONV, _authorUserId: SELF }), 1, 'd', null,
     );
     await seenByPeer('pix', 'pix_expired', LONG_AGO);
     await Obscura.entryPut(
       'pix', 'pix_unseen',
-      JSON.stringify({ ...PIX_MEDIA, mediaRef: 'att_unseen', conversationId: CONV, _authorUserId: SELF }), NOW, 'd',
+      JSON.stringify({ ...PIX_MEDIA, mediaRef: 'att_unseen', conversationId: CONV, _authorUserId: SELF }), NOW, 'd', null,
     );
 
     await sweepExpired(NOW);
@@ -85,11 +100,11 @@ describe('sweepExpired', () => {
     await Obscura.entryPut(
       'story', 'story_old',
       JSON.stringify({ ...PIX_MEDIA, mediaRef: 'att_story_old', content: '', _authorUserId: PEER }),
-      NOW - STORY_MAX_AGE_MS, 'd_peer',
+      NOW - STORY_MAX_AGE_MS, 'd_peer', null,
     );
     await Obscura.entryPut(
       'story', 'story_new',
-      JSON.stringify({ content: 'text only', _authorUserId: PEER }), NOW - STORY_MAX_AGE_MS + 1, 'd_peer',
+      JSON.stringify({ content: 'text only', _authorUserId: PEER }), NOW - STORY_MAX_AGE_MS + 1, 'd_peer', null,
     );
 
     expect(await sweepExpired(NOW)).toEqual(['story']);
@@ -101,7 +116,7 @@ describe('sweepExpired', () => {
 
   it('keeps an erased story erased when it is delivered again', async () => {
     await Obscura.entryPut(
-      'story', 'story_1', JSON.stringify({ content: 'hi', _authorUserId: PEER }), NOW - STORY_MAX_AGE_MS, 'd_peer',
+      'story', 'story_1', JSON.stringify({ content: 'hi', _authorUserId: PEER }), NOW - STORY_MAX_AGE_MS, 'd_peer', null,
     );
     await sweepExpired(NOW);
 
@@ -125,8 +140,8 @@ describe('sweepExpired', () => {
   it('drops receipts whose entry never arrived once they are MAX_AGE_MS old, and prunes old markers', async () => {
     await seenByPeer('directMessage', 'never_arrived', NOW - MAX_AGE_MS);
     await seenByPeer('directMessage', 'still_coming', NOW - 1);
-    await Obscura.entryPut(ERASED_MODEL, 'directMessage:old', '{}', NOW - MAX_AGE_MS, '');
-    await Obscura.entryPut(ERASED_MODEL, 'directMessage:new', '{}', NOW - 1, '');
+    await Obscura.entryPut(ERASED_MODEL, 'directMessage:old', '{}', NOW - MAX_AGE_MS, '', null);
+    await Obscura.entryPut(ERASED_MODEL, 'directMessage:new', '{}', NOW - 1, '', null);
 
     await sweepExpired(NOW);
 

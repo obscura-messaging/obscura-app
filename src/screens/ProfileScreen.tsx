@@ -3,53 +3,43 @@ import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   KeyboardAvoidingView, Platform, Alert, StyleSheet,
 } from 'react-native';
-import { Obscura } from '../native/ObscuraModule';
-import { logError, getJsLog } from '../utils/log';
+import { Obscura, type ConnectionState } from '../native/ObscuraModule';
+import { errorMessage, logError, getJsLog } from '../utils/log';
 import { toast } from '../components/Toast';
-import { useSession, useModelEntries, saveEntry } from '../state/store';
-import { AUTHOR_USER_ID, profileEntryId } from '../models/schema';
-import { authorOf, displayNameFor } from '../utils/identity';
+import { useSession, useIdentity, useModelEntries, saveEntry, logout } from '../state/store';
+import { profileEntryId } from '../models/schema';
+import { displayNameFor } from '../domain/friends';
 import { s, colors } from '../styles';
-import type { ConnectionState } from '../native/ObscuraModule';
 
-// connState → colored dot + label. Same mapping on iOS and Android since it
-// reads the shared `connState` store value fed by the `connectionChanged`
-// bridge event (both platforms emit it).
-const CONN_META: Record<ConnectionState, { color: string; label: string }> = {
+const CONNECTION_LABELS: Record<ConnectionState, { color: string; label: string }> = {
   connected: { color: colors.connected, label: 'Connected' },
   connecting: { color: colors.connecting, label: 'Connecting…' },
   reconnecting: { color: colors.connecting, label: 'Reconnecting…' },
   disconnected: { color: colors.disconnected, label: 'Disconnected' },
 };
 
+const DEBUG_LOG_POLL_MS = 2000;
+
 export function ProfileScreen() {
-  const { myUserId, myUsername, friends, connState, logout } = useSession();
+  const { myUserId, myUsername, connState } = useSession();
+  const identity = useIdentity();
   const profiles = useModelEntries('profile');
+  const ownProfile = profiles.find((p) => p.id === profileEntryId(myUserId));
   const [displayName, setDisplayName] = useState(myUsername);
   const [bio, setBio] = useState('');
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [showLog, setShowLog] = useState(false);
-  const identity = { myUserId, myUsername, friends };
 
-  // Profile ids are device-independent. The drain accepts `profile_<x>` only
-  // from authenticated user `<x>`.
-  const ownProfile = profiles.find(p => p.id === profileEntryId(myUserId));
-
-  // Hydrate the editable fields from the saved profile once it's available,
-  // falling back to the username for a brand-new profile. `hydrated` stops it
-  // re-running (so clearing a field doesn't refill it); `edited` guards the
-  // async gap so we never clobber input the user typed before entries loaded.
+  // Fill the form from the saved profile once it loads, unless the user has started typing.
   const hydrated = useRef(false);
   const edited = useRef(false);
   useEffect(() => {
     if (hydrated.current || edited.current) return;
     if (ownProfile) {
-      setDisplayName((ownProfile.data.displayName as string) || myUsername || '');
-      setBio((ownProfile.data.bio as string) || '');
+      setDisplayName(ownProfile.data.displayName || myUsername);
+      setBio(ownProfile.data.bio ?? '');
       hydrated.current = true;
-    } else if (myUsername) {
-      // No saved profile yet — seed the name from the handle, but keep
-      // listening in case a saved profile arrives after entries load.
+    } else {
       setDisplayName(myUsername);
     }
   }, [ownProfile, myUsername]);
@@ -57,49 +47,40 @@ export function ProfileScreen() {
   const onChangeDisplayName = (t: string) => { edited.current = true; setDisplayName(t); };
   const onChangeBio = (t: string) => { edited.current = true; setBio(t); };
 
-  // Poll the debug log only while it's visible.
   useEffect(() => {
-    if (showLog) {
-      // Merge the native (kit) debug log with the JS-side log so swallowed
-      // errors routed through logError() are visible on-device too.
-      const refresh = () =>
-        Obscura.getDebugLog()
-          .then((native) => setDebugLog([...native, ...getJsLog()]))
-          .catch((e) => logError('debugLog.fetch', e));
-      refresh();
-      const interval = setInterval(refresh, 2000);
-      return () => clearInterval(interval);
-    }
+    if (!showLog) return;
+    const refresh = () =>
+      Obscura.getDebugLog()
+        .then((native) => setDebugLog([...native, ...getJsLog()]))
+        .catch((e) => logError('debugLog.fetch', e));
+    refresh();
+    const interval = setInterval(refresh, DEBUG_LOG_POLL_MS);
+    return () => clearInterval(interval);
   }, [showLog]);
 
   const save = async () => {
     try {
       await saveEntry('profile', { displayName, bio }, profileEntryId(myUserId));
       toast.success('Profile updated');
-    } catch (e: any) { toast.error(e.message); }
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
   };
 
   const confirmLogout = () => {
-    Alert.alert(
-      'Log out?',
-      'You’ll need your username and password to sign back in.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Log out', style: 'destructive', onPress: () => { logout(); } },
-      ],
-    );
+    Alert.alert('Log out?', 'You’ll need your username and password to sign back in.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Log out', style: 'destructive', onPress: () => { logout(); } },
+    ]);
   };
 
-  // Everyone else's profile, keyed on the AUTHENTICATED owner rather than on `authorDeviceId` —
-  // which excluded only the device that last wrote, so my own profile reappeared here as soon as my
-  // other device saved it. The heading is the friend-graph username (an identity the kit proved);
-  // `displayName` below it is the profile's content, which its owner is entitled to choose.
-  const friendProfiles = profiles
-    .map(p => ({ entry: p, name: displayNameFor(authorOf(p.data, AUTHOR_USER_ID), identity) }))
-    .filter((p): p is { entry: typeof p.entry; name: string } =>
-      p.name !== null && p.entry.id !== profileEntryId(myUserId));
+  // The heading is the friend-graph name; `displayName` is content its owner chose.
+  const friendProfiles = profiles.flatMap((entry) => {
+    const name = entry.authorUserId === myUserId ? null : displayNameFor(entry.authorUserId, identity);
+    return name === null ? [] : [{ entry, name }];
+  });
 
-  const conn = CONN_META[connState] ?? CONN_META.disconnected;
+  const conn = CONNECTION_LABELS[connState];
 
   return (
     <KeyboardAvoidingView

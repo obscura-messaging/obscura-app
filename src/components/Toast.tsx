@@ -3,25 +3,19 @@ import { Animated, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../styles';
 
-/**
- * Lightweight slide-down toast — replaces blocking Alert dialogs. Fire from
- * anywhere via the imperative `toast` API; a single <ToastHost/> mounted at the
- * app root renders it. No buttons: it shows, then auto-dismisses.
- */
+/** A slide-down notice raised from anywhere through `toast` and rendered by the root `ToastHost`. */
 
-export type ToastType = 'success' | 'info' | 'error';
+type ToastType = 'success' | 'error';
 
 interface ToastItem { id: number; message: string; type: ToastType; }
 
 const COLORS: Record<ToastType, string> = {
   success: colors.success,
-  info: colors.info,
   error: colors.error,
 };
 
 const VISIBLE_MS = 2600;
 
-// Module-level channel so `toast.*` works without threading context/props.
 let listener: ((t: ToastItem) => void) | null = null;
 let counter = 0;
 
@@ -33,14 +27,13 @@ function showToast(message: string, type: ToastType) {
 
 export const toast = {
   success: (message: string) => showToast(message, 'success'),
-  info: (message: string) => showToast(message, 'info'),
   error: (message: string) => showToast(message, 'error'),
 };
 
 export function ToastHost() {
   const insets = useSafeAreaInsets();
   const [item, setItem] = useState<ToastItem | null>(null);
-  const anim = useRef(new Animated.Value(0)).current; // 0 = hidden, 1 = shown
+  const anim = useRef(new Animated.Value(0)).current;
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {

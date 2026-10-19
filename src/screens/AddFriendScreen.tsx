@@ -5,8 +5,8 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import QRCode from 'react-native-qrcode-svg';
 import { Obscura } from '../native/ObscuraModule';
 import { toast } from '../components/Toast';
-import { logError } from '../utils/log';
-import { encodeFriendQR } from '../friendQR';
+import { errorMessage, logError } from '../utils/log';
+import { encodeFriendQR } from '../domain/friendQR';
 import type { RootStackParamList } from '../navigation/types';
 import { colors } from '../styles';
 
@@ -16,32 +16,27 @@ export function AddFriendScreen() {
   const [codeInput, setCodeInput] = useState('');
 
   useEffect(() => {
-    Obscura.getFriendCode().then(c => setMyCode(c || '')).catch((e) => logError('getFriendCode', e));
+    Obscura.getFriendCode().then(setMyCode).catch((e) => logError('getFriendCode', e));
   }, []);
 
   const copyMyCode = async () => {
     if (!myCode) return;
     try { await Obscura.setClipboard(myCode); toast.success('Friend code copied'); }
-    catch (e: any) { toast.error(e.message); }
+    catch (e) { toast.error(errorMessage(e)); }
   };
 
   const addByCode = async () => {
     const code = codeInput.trim();
     if (!code) return;
     try { await Obscura.addFriendByCode(code); setCodeInput(''); toast.success('Friend request sent'); }
-    catch (e: any) { toast.error(e.message); }
+    catch (e) { toast.error(errorMessage(e)); }
   };
-
-  // Dedicated scan screen (codeScanner can't coexist with the record camera's
-  // video output — see ScanFriendScreen).
-  const scanQR = () => nav.navigate('ScanFriend');
 
   return (
     <View style={afs.container}>
-      {/* My QR */}
       <View style={afs.qrCard}>
         {myCode
-          ? <QRCode value={encodeFriendQR(myCode)} size={216} backgroundColor="transparent" color="#fff" />
+          ? <QRCode value={encodeFriendQR(myCode)} size={216} backgroundColor="transparent" color={colors.text} />
           : <Text style={afs.dim}>Loading…</Text>}
       </View>
       <Text style={afs.caption}>Friends can scan this to add you</Text>
@@ -55,7 +50,6 @@ export function AddFriendScreen() {
 
       <View style={afs.divider} />
 
-      {/* Add by code */}
       <Text style={afs.sectionLabel}>add by code</Text>
       <View style={afs.enterRow}>
         <TextInput
@@ -72,8 +66,7 @@ export function AddFriendScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Scan */}
-      <TouchableOpacity style={afs.scanBtn} onPress={scanQR}>
+      <TouchableOpacity style={afs.scanBtn} onPress={() => nav.navigate('ScanFriend')}>
         <Text style={afs.scanBtnText}>Scan a friend's QR</Text>
       </TouchableOpacity>
     </View>
@@ -104,7 +97,7 @@ const afs = StyleSheet.create({
     color: colors.text, fontSize: 15, borderWidth: 1, borderColor: colors.border,
   },
   addBtn: { backgroundColor: colors.accent, borderRadius: 12, paddingHorizontal: 20, justifyContent: 'center' },
-  addBtnText: { color: '#000', fontWeight: '700', fontSize: 15 },
+  addBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 15 },
   scanBtn: {
     alignSelf: 'stretch', marginTop: 20, backgroundColor: colors.surface, borderRadius: 12,
     paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: colors.border,

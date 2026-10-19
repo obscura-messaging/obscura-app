@@ -5,14 +5,8 @@
 
 import { FakeObscuraBridge } from './FakeObscuraBridge';
 
-/**
- * One bridge instance for the whole module registry, mutated in place between tests.
- *
- * A singleton rather than a per-test instance because `ObscuraModule.ts` captures the reference at
- * import and caches a `NativeEventEmitter` built from it; a fresh instance per test would leave the
- * module talking to the previous one. `FakeObscuraBridge.__reset()` exists to make this safe.
- */
-export const fakeBridge = new FakeObscuraBridge();
+/** One instance, reset in place between tests: `ObscuraModule` captures it at import. */
+const fakeBridge = new FakeObscuraBridge();
 
 /** The fake the module under test is talking to. */
 export function getFakeBridge(): FakeObscuraBridge {
@@ -30,13 +24,7 @@ export const TurboModuleRegistry = {
   },
 };
 
-/**
- * Minimal `NativeEventEmitter`.
- *
- * The real one requires the native module to expose `addListener` / `removeListeners`; the fake
- * bridge implements both, and this delegates to them, so the subscribe/unsubscribe path that
- * `onObscuraEvent` depends on is genuinely exercised rather than stubbed.
- */
+/** Delegates to the fake's `addListener`, as the real emitter does to the native module. */
 export class NativeEventEmitter {
   constructor(private readonly nativeModule: FakeObscuraBridge) {}
 

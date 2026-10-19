@@ -1,67 +1,60 @@
 import Foundation
 import Security
+import ObscuraKit
 
-/// Keychain-backed session storage — iOS equivalent of Android's
-/// EncryptedSharedPreferences (`ObscuraSession` prefs). Holds the minimal
-/// session needed to restore an `ObscuraClient` on cold start.
-struct SessionData: Codable {
-    let token: String
-    let refreshToken: String?
-    let userId: String
-    let deviceId: String?
-    let username: String?
-}
-
-/// - Note: **The session lives in the App Group keychain** (`SharedContainer`), not the app's
-///   default group. This is dormant preparation for a possible extension; the
-///   current background APNs payload does not launch one.
-enum KeychainSession {
-    private static let service = "dev.barrelmaker.obscura.session"
-    private static let account = "session_data"
-
-    /// The item's identity. `accessGroup: nil` addresses the app's default group.
-    private static func query(accessGroup: String?) -> [String: Any] {
-        var q: [String: Any] = [
+final class KeychainSession: SessionStorage {
+    private func query(accessGroup: String?) -> [String: Any] {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
+            kSecAttrService as String: "dev.barrelmaker.obscura.session",
+            kSecAttrAccount as String: "session_data",
         ]
-        if let accessGroup { q[kSecAttrAccessGroup as String] = accessGroup }
-        return q
+        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        return query
     }
 
-    /// Delete the item from **both** the shared group and the default one.
-    ///
-    /// A keychain item cannot change access group in place, and a query naming
-    /// one group cannot see copies in another. Delete both locations on writes
-    /// and logout so no unreachable bearer token remains.
-    private static func deleteEverywhere() {
-        SecItemDelete(query(accessGroup: SharedContainer.keychainAccessGroup) as CFDictionary)
-        if SharedContainer.keychainAccessGroup != nil {
-            SecItemDelete(query(accessGroup: nil) as CFDictionary)
+    func save(_ session: [String: String]) throws {
+        let identity = query(accessGroup: SharedContainer.keychainAccessGroup)
+        let attributes: [String: Any] = [
+            kSecValueData as String: try JSONEncoder().encode(session),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        var status = SecItemUpdate(identity as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            let item = identity.merging(attributes) { _, new in new }
+            status = SecItemAdd(item as CFDictionary, nil)
+            if status == errSecDuplicateItem {
+                status = SecItemUpdate(identity as CFDictionary, attributes as CFDictionary)
+            }
+        }
+        try requireSuccess(status, operation: "save")
+    }
+
+    func load() throws -> [String: String]? {
+        var query = query(accessGroup: SharedContainer.keychainAccessGroup)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        try requireSuccess(status, operation: "load")
+        guard let data = result as? Data else {
+            throw ObscuraError.storageFailed("Session keychain item is not data")
+        }
+        return try JSONDecoder().decode([String: String].self, from: data)
+    }
+
+    func clear() throws {
+        let groups: [String?] = SharedContainer.keychainAccessGroup.map { [$0, nil] } ?? [nil]
+        for group in groups {
+            let status = SecItemDelete(query(accessGroup: group) as CFDictionary)
+            if status != errSecItemNotFound { try requireSuccess(status, operation: "clear") }
         }
     }
 
-    static func save(_ session: SessionData) {
-        guard let data = try? JSONEncoder().encode(session) else { return }
-        deleteEverywhere()
-        var addQuery = query(accessGroup: SharedContainer.keychainAccessGroup)
-        addQuery[kSecValueData as String] = data
-        // Background processing may run while the device is locked.
-        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(addQuery as CFDictionary, nil)
-    }
-
-    static func load() -> SessionData? {
-        var q = query(accessGroup: SharedContainer.keychainAccessGroup)
-        q[kSecReturnData as String] = true
-        var result: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return try? JSONDecoder().decode(SessionData.self, from: data)
-    }
-
-    static func clear() {
-        deleteEverywhere()
+    private func requireSuccess(_ status: OSStatus, operation: String) throws {
+        guard status == errSecSuccess else {
+            throw ObscuraError.storageFailed("Keychain session \(operation) failed (\(status))")
+        }
     }
 }
