@@ -10,31 +10,26 @@ import { Obscura } from '../native/ObscuraModule';
 import { toast } from '../components/Toast';
 import { CloseIcon } from '../components/icons';
 import { CameraPermissionGate } from '../components/CameraPermissionGate';
-import { parseFriendQR } from '../friendQR';
+import { parseFriendQR } from '../domain/friendQR';
+import { errorMessage } from '../utils/log';
 import type { RootStackParamList } from '../navigation/types';
 
-/**
- * Dedicated QR scan mode. Per the vision-camera constraint, the code scanner
- * can't run alongside a video output (iOS throws not-compatible-with-outputs;
- * Android hits CameraX's use-case limit) — so this is its own screen with
- * `photo` + `codeScanner` only (no video/audio/frameProcessor), NOT the record
- * camera tab. isActive is gated on focus so it releases cleanly on exit.
- */
+/** Its own screen: VisionCamera cannot run a code scanner alongside the record camera's video output. */
 export function ScanFriendScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const isFocused = useIsFocused();
   const device = useCameraDevice('back');
-  const handled = useRef(false); // onCodeScanned fires repeatedly — only act once
+  const handled = useRef(false); // onCodeScanned keeps firing
 
   const onCodeScanned = useCallback((codes: Code[]) => {
     if (handled.current) return;
     for (const c of codes) {
       const code = parseFriendQR(c.value);
-      if (!code) continue; // ignore non-Obscura QR codes
+      if (!code) continue;
       handled.current = true;
       Obscura.addFriendByCode(code)
         .then(() => { toast.success('Friend request sent'); nav.goBack(); })
-        .catch((e: any) => { toast.error(e.message); handled.current = false; });
+        .catch((e) => { toast.error(errorMessage(e)); handled.current = false; });
       return;
     }
   }, [nav]);

@@ -62,7 +62,7 @@ updates:
         update-types: ["version-update:semver-major"]
       # Allow TypeScript majors to open PRs so CI exposes compatibility work.
 
-  # ─── Android gradle (pix app) ───────────────────────────
+  # ─── Android gradle (app) ───────────────────────────────
   - package-ecosystem: "gradle"
     directory: "/android"
     schedule:
@@ -81,8 +81,8 @@ updates:
           - "androidx.lifecycle:*"
     ignore:
       # Owned by obscura-native/kotlin — bumps must happen there first so the
-      # package re-publishes against the new version, then pix follows.
-      # Verified: bumping sqldelight in pix alone breaks compileReleaseKotlin
+      # package re-publishes against the new version, then the app follows.
+      # Verified: bumping sqldelight in the app alone breaks compileReleaseKotlin
       # because the kit jar references the older API surface.
       - dependency-name: "org.signal:libsignal-android"
       - dependency-name: "com.google.protobuf:protobuf-java"
@@ -95,41 +95,6 @@ updates:
       - dependency-name: "com.android.tools.build:gradle"
       - dependency-name: "gradle"
       - dependency-name: "gradle-wrapper"
-
-  # ─── Android gradle (push-sender dev tool) ──────────────
-  # This standalone dev tool composite-builds obscura-native/kotlin (:lib),
-  # so its toolchain is pinned to the kit's line (Kotlin 2.1.20, Gradle
-  # 8.14.x, coroutines 1.8.x). Left ungated, Dependabot floats it onto its
-  # own Kotlin/Gradle major (it reached Kotlin 2.4 / Gradle 9.7), which
-  # diverges from the kit it builds and adds a second Gradle dist to the
-  # cache. Keep it in sync with obscura-native/kotlin instead.
-  - package-ecosystem: "gradle"
-    directory: "/tools/push-sender"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 3
-    groups:
-      kotlinx:
-        patterns:
-          - "org.jetbrains.kotlinx:*"
-    ignore:
-      # Pinned to the kit's Kotlin (2.1.20). Same reason as
-      # obscura-native/kotlin: a newer Kotlin compiler diverges from the
-      # composite-built :lib. Bump in lockstep with the kit.
-      # Dependabot names kotlin("jvm") simply "jvm".
-      - dependency-name: "jvm"
-      - dependency-name: "org.jetbrains.kotlin:*"
-      - dependency-name: "org.jetbrains.kotlin.*"
-      # Coroutines releases are Kotlin-compiler-sensitive and newer versions
-      # have failed against the pinned 2.1.20. Move with the Kotlin bump.
-      - dependency-name: "org.jetbrains.kotlinx:*"
-      # Keep the wrapper exactly aligned with the kit and app. Dependabot
-      # cannot coordinate the three builds, so all bumps happen by hand.
-      - dependency-name: "gradle"
-      - dependency-name: "gradle-wrapper"
-      # Published by the kit; bumped via its own publication, not here.
-      - dependency-name: "dev.barrelmaker.obscura.kit:obscura-kit"
 
   # ─── GitHub Actions ─────────────────────────────────────
   - package-ecosystem: "github-actions"

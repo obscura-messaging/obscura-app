@@ -10,16 +10,16 @@
     "test": "jest"
   },
   "dependencies": {
-    "@react-navigation/bottom-tabs": "^7.20.0",
-    "@react-navigation/material-top-tabs": "^7.8.0",
+    "@react-navigation/bottom-tabs": "^7.21.0",
+    "@react-navigation/material-top-tabs": "^7.8.1",
     "@react-navigation/native": "^7.3.4",
-    "@react-navigation/native-stack": "^7.20.0",
-    "react": "19.3.0",
+    "@react-navigation/native-stack": "^7.21.0",
+    "react": "19.3.1",
     "react-native": "0.86.2",
-    "react-native-pager-view": "^8.0.5",
+    "react-native-pager-view": "^9.0.8",
     "react-native-qrcode-svg": "^6.3.26",
     "react-native-safe-area-context": "^5.10.1",
-    "react-native-screens": "^4.27.0",
+    "react-native-screens": "^4.30.0",
     "react-native-svg": "^15.15.5",
     "react-native-video": "^6.19.3",
     "react-native-vision-camera": "^4.7.3",
@@ -38,8 +38,8 @@
     "@types/react": "^19.3.0",
     "eslint": "^8.19.0",
     "jest": "^30.5.2",
-    "prettier": "^3.9.9",
-    "ts-jest": "^29.4.14",
+    "prettier": "^3.9.10",
+    "ts-jest": "^29.4.15",
     "typescript": "^6.0.3"
   },
   "engines": {

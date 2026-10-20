@@ -1,6 +1,6 @@
 # Contributing
 
-Never commit to `main`. A PR merges once `JavaScript`, `Android + push sender`
+Never commit to `main`. A PR merges once `JavaScript`, `Android Release Build`
 and `iOS Debug Build` pass on a branch that is up to date with `main`.
 
 ## Prerequisites
@@ -22,8 +22,8 @@ Gradle recipes reject any JDK except 21. They find it through `JAVA_HOME`, or
 ## Setup and builds
 
 ```bash
-git clone --recurse-submodules https://github.com/obscura-messaging/obscura-pix.git
-cd obscura-pix && just setup && just doctor
+git clone --recurse-submodules https://github.com/obscura-messaging/obscura-app.git
+cd obscura-app && just setup && just doctor
 just doctor-android && just android-release   # or: just android-run
 just doctor-ios && just ios-build             # simulator
 ```
@@ -73,7 +73,7 @@ state logic. It does not cover rendered UI or device behavior.
 | CI job | Runs | On |
 | --- | --- | --- |
 | `JavaScript` | `just check`, `scripts/test-verify-internal-build.py` | PRs, `main` |
-| `Android + push sender` | `just android-release arm64-v8a false`, `just push-sender-build` | PRs |
+| `Android Release Build` | `just android-release arm64-v8a false` | PRs |
 | `iOS Debug Build` | `just ios-build arm64` | PRs |
 
 ## Updating `obscura-native`

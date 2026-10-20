@@ -12,14 +12,11 @@ function matches(type: FieldType, value: unknown): boolean {
     : typeof value === 'number' && Number.isFinite(value);
 }
 
-/**
- * Fields of `data` that do not match their declared type. Fields prefixed `_` are local-only and
- * never on the wire, so they are not checked. Undeclared fields are allowed.
- */
+/** Fields of `data` that do not match their declared type. Undeclared fields are allowed. */
 export function invalidFields(
   fields: Readonly<Record<string, FieldType>>, data: Record<string, unknown>,
 ): string[] {
   return Object.entries(fields)
-    .filter(([name, type]) => !name.startsWith('_') && !matches(type, data[name]))
+    .filter(([name, type]) => !matches(type, data[name]))
     .map(([name]) => name);
 }

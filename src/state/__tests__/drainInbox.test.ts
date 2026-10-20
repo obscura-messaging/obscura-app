@@ -1,16 +1,8 @@
+import { putEntry } from '../entryStore';
 import { PIX_MEDIA } from '../../native/__fixtures__/payloads';
 import { drainInbox, drainInboxFully } from '../drainInbox';
 import { Obscura } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
-
-/**
- * The drain, end to end against the in-memory kit double.
- *
- * `drain.test.ts` covers the decision; this covers the **effects and their order**, which is the
- * part that can destroy a message. An inbox row is the only copy — the kit already acked, so the
- * server deleted its own — so "consume" is irreversible and everything here is about what happens
- * before it.
- */
 
 const bridge = getFakeBridge();
 
@@ -38,6 +30,17 @@ function deliver(over: Partial<Parameters<typeof bridge.__deliverInbox>[0]> = {}
 }
 
 describe('draining', () => {
+  it('reads only the entries its batch names, never a whole model', async () => {
+    await Obscura.entryPut('directMessage', 'dm_old', '{}', 1, 'd', null);
+    deliver({ modelKey: 'directMessage', entryId: 'dm_1' });
+    const start = bridge.__calls.length;
+
+    await drainInbox();
+
+    expect(bridge.__calls.slice(start)).not.toContain('entryAll');
+    expect(bridge.__calls.slice(start)).toContain('entryGet');
+  });
+
   it('writes the entry and consumes the row', async () => {
     deliver({ modelKey: 'directMessage', entryId: 'dm_1' });
 
@@ -69,11 +72,6 @@ describe('draining', () => {
     expect(bridge.__calls).not.toContain('entryPut');
   });
 
-  /**
-   * Without an identity there is nothing to authorize against, and the safe answer is to store
-   * nothing rather than to discard everything — the rows stay put and the next trigger retries,
-   * which is exactly what `peek` being side-effect free buys.
-   */
   it('refuses to drain before the session identity is available', async () => {
     await Obscura.logout();
     bridge.__deliverInbox({ payload: JSON.stringify({ conversationId: CONV }) });
@@ -86,12 +84,6 @@ describe('draining', () => {
 });
 
 describe('the effect ORDER', () => {
-  /**
-   * **The load-bearing test.** The row must be written before it is consumed, because consuming
-   * destroys the only copy. Asserted on the actual call sequence rather than on the end state,
-   * because the end state looks identical either way — and looks identical right up until a write
-   * fails.
-   */
   it('writes the entry BEFORE consuming the row', async () => {
     deliver({ entryId: 'dm_1' });
 
@@ -116,11 +108,6 @@ describe('the effect ORDER', () => {
     expect(bridge.__calls).toContain('inboxDiscard');
   });
 
-  /**
-   * The consequence of that order, and the reason it is worth enforcing: if the write fails, the row
-   * is still in the inbox, so the next drain reprocesses it. Nothing is lost. That is safe only
-   * because `peek` is side-effect free and `merge` is idempotent.
-   */
   it('leaves the row in the inbox when the write fails', async () => {
     deliver({ entryId: 'dm_1' });
     bridge.__failNext('entryPut', 'ENTRY_PUT_ERROR', 'disk full');
@@ -212,7 +199,9 @@ describe('rows the app cannot process', () => {
 
 describe('merging against what is already stored', () => {
   it('does not overwrite a newer entry with an older redelivered one', async () => {
-    await Obscura.entryPut('pix', 'p', JSON.stringify({ conversationId: CONV, v: 'newer' }), 9_000, 'device_a');
+    await putEntry('pix', {
+      id: 'p', sentAt: 9_000, authorUserId: PEER, authorDeviceId: 'device_a', data: { conversationId: CONV, v: 'newer' },
+    });
     deliver({
       modelKey: 'pix', entryId: 'p', sentAt: 1_000,
       payload: JSON.stringify({ ...PIX_MEDIA, conversationId: CONV, v: 'older' }),
@@ -226,9 +215,9 @@ describe('merging against what is already stored', () => {
   });
 
   it('keeps the first write for an APPEND model when a duplicate arrives', async () => {
-    await Obscura.entryPut(
-      'directMessage', 'dm', JSON.stringify({ conversationId: CONV, content: 'first' }), 1_000, 'd',
-    );
+    await putEntry('directMessage', {
+      id: 'dm', sentAt: 1_000, authorUserId: PEER, authorDeviceId: 'd', data: { conversationId: CONV, content: 'first' },
+    });
     deliver({
       entryId: 'dm', sentAt: 9_000,
       payload: JSON.stringify({ conversationId: CONV, content: 'second' }),
@@ -239,11 +228,6 @@ describe('merging against what is already stored', () => {
     expect(JSON.parse((await Obscura.entryAll('directMessage'))[0].data).content).toBe('first');
   });
 
-  /**
-   * Draining twice must reach the same state, because a crash between peek and consume means the
-   * same rows come back. This is the property that makes write-before-consume safe rather than
-   * merely careful.
-   */
   it('is idempotent across a re-drain of the same rows', async () => {
     const row = {
       modelKey: 'pix' as const, entryId: 'p', sentAt: 5_000,
@@ -266,11 +250,11 @@ describe('merging against what is already stored', () => {
   it('ignores the other participant rewriting a pix or message', async () => {
     await Obscura.entryPut(
       'pix', 'p', JSON.stringify({ ...PIX_MEDIA, conversationId: CONV, caption: 'mine', _authorUserId: SELF }),
-      1_000, 'device_mine',
+      1_000, 'device_mine', null,
     );
     await Obscura.entryPut(
       'directMessage', 'dm', JSON.stringify({ conversationId: CONV, content: 'what I said', _authorUserId: SELF }),
-      1_000, 'device_mine',
+      1_000, 'device_mine', null,
     );
     deliver({
       modelKey: 'pix', entryId: 'p', sentAt: 9_000,
@@ -330,12 +314,6 @@ describe('draining fully', () => {
     expect(await Obscura.inboxDepth()).toBe(0);
   });
 
-  /**
-   * The batch bound is a termination guard, and hitting it is worth logging — but only when rows are
-   * actually left behind. Testing `i === maxBatches - 1` inside the loop fired whenever the LAST
-   * permitted batch made progress, so a run that emptied the inbox on its final batch reported a
-   * failure. Any row count that is an exact multiple of the batch size hits that.
-   */
   it('does not report a failure when the last permitted batch empties the inbox', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     for (let i = 0; i < 4; i += 1) deliver({ entryId: `dm_${i}` });

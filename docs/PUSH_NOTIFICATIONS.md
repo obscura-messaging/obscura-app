@@ -23,7 +23,7 @@ content persists in OS databases and backups.
 | Layer | Responsibility |
 | --- | --- |
 | Server | Stores one token per device. Sends a silent wake when that device's queue changes. |
-| Kit | Registers the token and processes pending envelopes ([Push drain and events](https://github.com/obscura-messaging/obscura-native/blob/7b72b52d033f098f5444d38bf8d4608120efa8c2/docs/KIT_API.md#push-drain-and-events)). Never posts a notification. |
+| Kit | Registers the token and processes pending envelopes ([Push](https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md#typing-attachments-and-push)). Never posts a notification. |
 | Native host | Receives the wake, restores the session, drains, and posts generic copy while the app is backgrounded. |
 | TypeScript app | Requests permission and registers every token it receives. |
 
@@ -55,9 +55,10 @@ The server's `OBSCURA_FCM_TTL_SECS` overrides the TTL.
 ## Android
 
 - **`ObscuraSession`** owns the kit client for the whole process. It is the only
-  consumer of `incomingMessages`. It posts only while the app is backgrounded.
+  consumer of `messageReceived`. It posts only while the app is backgrounded.
   A `pix` posts `New pix`, a `directMessage` posts `New message` and a
-  `FRIEND_REQUEST` posts `New friend request`. `story`, `profile` and `seen`
+  newly pending friend request posts `New friend request` through the friend
+  change stream. `story`, `profile` and `seen`
   post nothing. An unrecognised model posts `New message`.
 - **`ObscuraMessagingService`** passes each wake to
   `ObscuraSession.onPushWake`, which runs `processPendingMessages` with a 25 s
@@ -68,8 +69,8 @@ The server's `OBSCURA_FCM_TTL_SECS` overrides the TTL.
   on rotations without checking the permission, and JS registers every token.
   Logout clears the local session but keeps the server device and its token.
 
-Test with [`tools/push-sender`](../tools/push-sender/README.md). The device or
-emulator needs Google Play Services and a build with the real
+Test by sending from another signed-in app while the receiving app is in the
+background. The receiving device or emulator needs Google Play Services and a build with the real
 `google-services.json` ([CONTRIBUTING](../CONTRIBUTING.md#setup-and-builds)).
 
 ## Not yet verified against the real provider

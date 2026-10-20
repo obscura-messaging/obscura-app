@@ -5,6 +5,11 @@ Kotlin and Swift kits in the [`obscura-native`](obscura-native/) submodule.
 Android is the release target. iOS ships internal TestFlight builds and works in
 the foreground; push is not implemented ([iOS status](docs/IOS_PARITY.md)).
 
+The product is **Obscura**; `obscura-app` is this repository. A **pix** is a
+direct, disappearing photo or video message, not the app's name. Its `pix`
+model key is part of stored and transmitted data and does not change with the
+repository name.
+
 ## Ownership
 
 | Layer | Owns |
@@ -16,7 +21,7 @@ the foreground; push is not implemented ([iOS status](docs/IOS_PARITY.md)).
 Never move application semantics into native code. Contracts:
 [`DOMAIN_CONTRACT.md`](docs/DOMAIN_CONTRACT.md) (app),
 [`BRIDGE.md`](docs/BRIDGE.md) (React Native bridge),
-[`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/7b72b52d033f098f5444d38bf8d4608120efa8c2/docs/KIT_API.md) (kit).
+[`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md) (kit).
 
 ## Where things live
 
@@ -31,7 +36,6 @@ Never move application semantics into native code. Contracts:
 | Session, events and reactive state | `src/state/store.ts` |
 | Bridge facade | `src/native/ObscuraModule.ts` |
 | Native hosts | `android/app/src/main/java/dev/barrelmaker/obscura/`, `ios/Obscura/` |
-| Push test sender | [`tools/push-sender/`](tools/push-sender/README.md) |
 
 ## Docs
 

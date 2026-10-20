@@ -33,8 +33,11 @@ All methods exist on both platforms. Behavior beyond the types:
 | Method | Behavior |
 | --- | --- |
 | `login` | Returns one of the four outcomes in [Login][kit-login]. Persists the session only for `existingDevice`. The app handles the other outcomes in `src/state/login.ts`: `deviceMismatch` calls `wipeDevice` then `loginAndProvision`. |
-| `wipeDevice` | Runs the kit wipe, then clears the persisted session that the kit leaves behind. |
+| `wipeDevice` | The kit logs out, clears its persisted session and securely wipes local data; the host releases the client. |
 | `entryPut` | A blind upsert: the app merges first. It emits no event, so the app refreshes itself. |
+| `entryGet`, `entryErase` | Take a list of IDs; missing IDs are skipped. Each `entryErase` call checkpoints the WAL, so erase in batches. |
+| `sendEntry` | Resolves to a `SendReport` of per-device outcomes ([Send][kit-send]) and does not reject because nobody accepted. `src/domain/delivery.ts` decides whether the send failed. |
+| `removeFriend` | Forgets the friend and their devices locally. Nothing is sent to them. |
 | `observeTyping` | Emits `typingChanged` until `stopObservingTyping`. Observing the same conversation twice still leaves one observation. |
 | `uploadAttachment` | Leaves the source file alone. `contentKey` and `nonce` are base64. |
 | `purgeAttachment` | Deletes the cached `jpg`, `mp4` and `mov` files for the id and their `.tmp` files. The expiry sweep calls it before erasing an entry with media. |
@@ -44,7 +47,7 @@ All methods exist on both platforms. Behavior beyond the types:
 | `getLaunchIntent` | Returns the cold-start notification target once, then `null`. JS calls it on mount, because the bridge does not exist yet during a cold start. Always `null` on iOS. |
 | `prewarmAudioSession` | **iOS:** activates the audio session so recording starts without a ~1.4 s delay. Idempotent. **Android:** no-op. |
 | `deleteFile` | Best-effort. Resolves even when the file is missing. |
-| `addListener`, `removeListeners` | Not in the TS interface. `NativeEventEmitter` requires them. Android defines no-op stubs, and iOS inherits them from `RCTEventEmitter`. |
+| `addListener`, `removeListeners` | Framework methods inherited by the TS interface from `NativeEventEmitter`. Android defines no-op stubs, and iOS inherits them from `RCTEventEmitter`. |
 
 `resizeImage` and `writeTestImage` never modify their source.
 
@@ -59,18 +62,17 @@ its media.
 ## Events
 
 All events share one stream, `ObscuraEvent`, keyed by `type`. The
-`OBSCURA_EVENT_TYPES` list must match the `BridgeEvent` enum in each bridge.
+`ObscuraEvent` union must match the `BridgeEvent` enum in each bridge.
 
 | Event | Emitted when | JS reaction (`src/state/store.ts`) |
 | --- | --- | --- |
 | `connectionChanged` | The WebSocket state changes | On `connected`: drain, flush the outbox, sweep expiry |
-| `authStateChanged` | Login, logout or a pending-approval transition | `loggedOut` resets the session. `authenticated` loads it and runs the cold-start sync. |
-| `authFailed` | Token refresh exhausted its retries | Reset the session |
+| `authStateChanged` | Login, logout or a rejected refresh token | `loggedOut` resets the session. `authenticated` loads it and runs the cold-start sync. |
 | `appStateChanged` | The process moves to foreground or background | On `active`: drain, flush, sweep |
 | `launchedFrom` | A notification is tapped while the app runs (Android only) | Navigate |
 | `friendsChanged` | The friend graph changes | Call `getFriends()` |
 | `messageReceived` | An `APP_ENTRY` row is persisted | Drain |
-| `typingChanged` | An observed conversation's typer set changes | Show `typers`, which are display names |
+| `typingChanged` | An observed conversation's typing set changes | Show the bubble only if `userIds` contains the conversation's friend |
 | `pushTokenReceived` | A push token arrives or rotates (Android only) | Call `registerPushToken` |
 
 `messageReceived` is a wake-up, not a delivery, and it may be dropped. That is
@@ -80,20 +82,33 @@ On Android, a newly bound bridge first replays `appStateChanged`,
 `authStateChanged`, `connectionChanged` and `friendsChanged`. On iOS, events
 emitted before JS subscribes are dropped.
 
+Both hosts wait for cold-start session restoration before resolving the
+initial auth read. Session blobs are written only by the kit through an
+encrypted Android adapter or the iOS Keychain adapter; token rotation is not
+an application callback. Storage write/clear failures reject rather than
+reporting success.
+
+The process-scoped session, not the React Native bridge, consumes the kit's
+single `messageReceived` stream. Recreating the bridge must not cancel that
+stream or stop subsequent wake-ups.
+
+Concurrent auth operations reject with `INVALID_ARGUMENT` instead of racing
+different clients against the same session store.
+
 ## Adding a method or event
 
-1. Add it to `ObscuraModule.ts`. An event also goes in `OBSCURA_EVENT_TYPES`,
-   where `_AssertEventTypesMatch` turns any drift into a compile error.
+1. Add it to `ObscuraBridge` or `ObscuraEvent` in `ObscuraModule.ts`.
 2. Implement it in `android/.../ObscuraBridgeModule.kt`.
 3. Implement it in `ios/Obscura/ObscuraBridge.swift` **and declare it in
    `ObscuraBridge.m`**. Without the `.m` line it compiles but is invisible at
    runtime.
-4. Mirror it in `src/native/__fixtures__/FakeObscuraBridge.ts`. The fake models
-   this contract, not kit internals.
+4. Mirror it in `src/native/__fixtures__/FakeObscuraBridge.ts`, which
+   implements `ObscuraBridge`. The fake models this contract, not kit internals.
 5. Emit events only through each bridge's `emit` helper.
 6. If the types do not capture its behavior, add a row here.
 
-[kit]: https://github.com/obscura-messaging/obscura-native/blob/7b72b52d033f098f5444d38bf8d4608120efa8c2/docs/KIT_API.md
-[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/7b72b52d033f098f5444d38bf8d4608120efa8c2/docs/KIT_API.md#envelope-identity
-[kit-login]: https://github.com/obscura-messaging/obscura-native/blob/7b72b52d033f098f5444d38bf8d4608120efa8c2/docs/KIT_API.md#login
-[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/7b72b52d033f098f5444d38bf8d4608120efa8c2/docs/KIT_API.md#inbox
+[kit]: https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md
+[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md#envelope-identity
+[kit-login]: https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md#login
+[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md#inbox
+[kit-send]: https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md#send

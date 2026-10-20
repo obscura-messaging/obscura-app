@@ -1,115 +1,66 @@
 /**
- * The app's model declarations and their accessors (`docs/DOMAIN_CONTRACT.md`). The kit never
- * reads them.
- *
- * No model has a sender or author name field: a payload-supplied name is attacker-chosen.
- * `_authorUserId` is stamped by the drain or `writeEntry` from the authenticated sender, and
- * display names come from the friend graph at render time.
+ * The app's models (`docs/DOMAIN_CONTRACT.md`, "Models"). No model has an author field: the author is
+ * the authenticated sender, and names come from the friend graph.
  */
 
-import { DirectRoutingUnresolved, type AudienceConfig } from '../domain/audience';
-import type { ModelRules } from '../domain/drain';
+import { DirectRoutingUnresolved } from '../domain/audience';
 import type { FieldType, FieldValue } from '../domain/fields';
-import type { MergeRule } from '../domain/merge';
+import type { ModelDeclaration } from '../domain/model';
 
-/** App-owned metadata on every stored entry: the authenticated userId of whoever created it. */
-export const AUTHOR_USER_ID = '_authorUserId';
+const PROFILE_ID_PREFIX = 'profile_';
 
-/**
- * A `profile` entry's id is derived from its owner, which is what makes the entry authorizable:
- * only `<userId>` may write `profile_<userId>` (see `drain.ts`). Kept here so the one place that
- * mints the id and the one place that checks it cannot drift.
- */
-export const PROFILE_ID_PREFIX = 'profile_';
 export function profileEntryId(userId: string): string {
   return PROFILE_ID_PREFIX + userId;
 }
 
-/** What one model declares. */
-export interface ModelDeclaration {
-  /** Enforced on every local write and every received entry (`domain/fields.ts`). */
-  fields: Record<string, FieldType>;
-  /** How two writes to one entry id reconcile (`domain/merge.ts`). */
-  merge: MergeRule;
-  /** Who an entry reaches. Omitted means every accepted friend (`domain/audience.ts`). */
-  audience?: AudienceConfig;
-  /** An entry-id prefix binding an entry to its owner: only `<userId>` may write `<prefix><userId>`. */
-  ownerIdPrefix?: string;
-}
+/** Media fields shared by `story` and `pix`, so one viewer renders both. */
+const MEDIA_FIELDS = {
+  /** `photo` when absent, or `video`. */
+  mediaType: 'string?',
+  /** A `CaptionMeta` JSON blob (`components/Caption.tsx`). */
+  captionMeta: 'string?',
+} as const;
 
-/** Every model the app declares, by model key. */
-export type ModelSchema = Record<string, ModelDeclaration>;
-
-/**
- * `satisfies`, not `:`. The annotation has to CHECK the declarations without erasing the literal
- * key types that `Object.keys(obscuraSchema)` and the screens' model names rely on.
- *
- * Checking is the point: while these values were untyped, a typo'd merge rule passed both typecheck
- * and the whole test suite while silently flipping a model from APPEND to REPLACE.
- */
+// `satisfies` checks the declarations without widening the literal types `ModelData` reads.
 export const obscuraSchema = {
   directMessage: {
-    fields: { conversationId: 'string', content: 'string', _authorUserId: 'string' },
+    fields: { conversationId: 'string', content: 'string' },
     merge: 'APPEND',
-    // 1:1 — deliver to both conversation participants; never broadcast.
-    audience: { kind: 'conversation', field: 'conversationId' },
+    audience: 'conversation',
   },
   story: {
-    fields: {
-      content: 'string',
-      _authorUserId: 'string',
-      // Attachment fields — present iff the story has a photo (text-only stories
-      // omit all three). Same shape as pix so a single viewer can render both.
-      mediaRef: 'string?',
-      contentKey: 'string?',
-      nonce: 'string?',
-      // 'photo' (default when absent) | 'video'. Opaque string.
-      mediaType: 'string?',
-      // Styled-caption blob (JSON: style/x/y/rot/color/font). Opaque string —
-      // the shape can evolve without a schema/contract change. See Caption.tsx.
-      captionMeta: 'string?',
-    },
+    // A text-only story has no attachment fields.
+    fields: { content: 'string', mediaRef: 'string?', contentKey: 'string?', nonce: 'string?', ...MEDIA_FIELDS },
     merge: 'APPEND',
-    // Stories are permanent until the app implements expiry.
+    audience: 'friends',
   },
   profile: {
-    fields: { displayName: 'string', bio: 'string?', avatarUrl: 'string?', _authorUserId: 'string' },
+    fields: { displayName: 'string', bio: 'string?', avatarUrl: 'string?' },
     merge: 'REPLACE',
-    // The id binds the entry to its owner: only `<userId>` may write
-    // `profile_<userId>`.
+    audience: 'friends',
     ownerIdPrefix: PROFILE_ID_PREFIX,
   },
   pix: {
     fields: {
       conversationId: 'string',
-      _authorUserId: 'string',
       mediaRef: 'string',
       contentKey: 'string',
       nonce: 'string',
       caption: 'string?',
-      // 'photo' (default when absent) | 'video'. Opaque string.
-      mediaType: 'string?',
-      // Styled-caption blob (JSON: style/x/y/rot/color/font). Opaque string —
-      // the shape can evolve without a schema/contract change. See Caption.tsx.
-      captionMeta: 'string?',
+      ...MEDIA_FIELDS,
+      /** Seconds on screen; 0 means the viewer's default. */
       displayDuration: 'number',
     },
     merge: 'APPEND',
-    audience: { kind: 'conversation', field: 'conversationId' },
+    audience: 'conversation',
   },
   seen: {
-    // A seen receipt for a `directMessage` or `pix` (`domain/seen.ts`). Its id names the entry.
-    fields: { conversationId: 'string', viewedAt: 'number', _authorUserId: 'string' },
+    // A seen receipt (`domain/seen.ts`); its id names the entry it marks.
+    fields: { conversationId: 'string', viewedAt: 'number' },
     merge: 'APPEND',
-    audience: { kind: 'conversation', field: 'conversationId' },
+    audience: 'conversation',
   },
-} satisfies ModelSchema;
-
-/**
- * The same declarations, widened so they can be looked up by a model name that is only known at
- * runtime. `obscuraSchema` itself keeps its literal keys and cannot be indexed by a `string`.
- */
-const declarations: ModelSchema = obscuraSchema;
+} satisfies Record<string, ModelDeclaration>;
 
 export type ModelName = keyof typeof obscuraSchema;
 
@@ -120,48 +71,17 @@ export type ModelData<M extends ModelName> = {
   [K in keyof FieldsOf<M>]: FieldsOf<M>[K] extends FieldType ? FieldValue<FieldsOf<M>[K]> : never;
 };
 
-/**
- * The audience a model declares.
- *
- * **Throws on a model the schema does not declare**, and that is the point. Before this check, a
- * lookup miss and a deliberate "no audience declared" were indistinguishable — both produced
- * `undefined`, which `resolveAudience` treats as *broadcast to every friend*. So a single-character
- * typo in a model name turned a 1:1 message into a broadcast, silently. An unknown model is a bug in
- * the app, and a bug must not fail open into a wider audience.
- */
-export function audienceFor(model: string): AudienceConfig | undefined {
-  if (!Object.prototype.hasOwnProperty.call(obscuraSchema, model)) {
-    throw new DirectRoutingUnresolved(
-      `'${model}' is not declared in schema.ts, so its audience is unknown`,
-    );
-  }
-  return declarations[model].audience;
-}
-
-/** The declared fields of `model`. Throws on an undeclared model. */
-export function fieldsFor(model: string): Record<string, FieldType> {
-  if (!Object.prototype.hasOwnProperty.call(obscuraSchema, model)) {
-    throw new Error(`'${model}' is not declared in schema.ts`);
-  }
-  return declarations[model].fields;
-}
+/** Every declared model, for lookup by a runtime model name. */
+export const MODELS: ReadonlyMap<string, ModelDeclaration> = new Map(Object.entries(obscuraSchema));
 
 /**
- * What the drain needs per model: the merge rule and the authorization rules.
- *
- * The authorization rules are derived from the same declarations the *send* side uses, so the two
- * directions cannot disagree: a model whose audience is a conversation is exactly a model whose
- * inbound entries must name a conversation between this user and the sender.
+ * The declaration of `model`. An undeclared model throws rather than falling through to any
+ * audience: a typo must not turn into a send.
  */
-export function modelRules(): Map<string, ModelRules> {
-  const rules = new Map<string, ModelRules>();
-  for (const [model, config] of Object.entries(declarations)) {
-    rules.set(model, {
-      merge: config.merge,
-      fields: config.fields,
-      conversationField: config.audience?.kind === 'conversation' ? config.audience.field : undefined,
-      ownerIdPrefix: config.ownerIdPrefix,
-    });
+export function declarationOf(model: string): ModelDeclaration {
+  const declaration = MODELS.get(model);
+  if (declaration === undefined) {
+    throw new DirectRoutingUnresolved(`'${model}' is not declared in schema.ts`);
   }
-  return rules;
+  return declaration;
 }

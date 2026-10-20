@@ -86,10 +86,6 @@ android-clean: ensure-node-modules
     rm -rf android/app/.cxx
     ./scripts/run-with-android-env.sh ./android/gradlew -p android clean --parallel
 
-# Build the standalone encrypted push sender.
-push-sender-build:
-    cd tools/push-sender && ../../scripts/run-with-java-21.sh ./gradlew installDist --parallel
-
 # Prepare all native iOS dependencies.
 [private]
 ios-prepare libsignal_target="ios-sim": ensure-node-modules

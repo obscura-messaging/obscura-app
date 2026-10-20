@@ -13,9 +13,11 @@ import { colors } from '../styles';
 import { CloseIcon } from '../components/icons';
 import { clamp, touchDist } from '../utils/gesture';
 import {
-  CAPTION_FONTS, CAPTION_FONT_LABELS, CAPTION_COLORS, captionStyles, boldTextStyle,
+  CAPTION_FONTS, CAPTION_FONT_LABELS, CAPTION_COLORS, DEFAULT_BAR, captionStyles, boldTextStyle,
   serializeCaptionMeta, type CaptionMeta, type CaptionStyle,
 } from '../components/Caption';
+import { DEFAULT_DISPLAY_SECONDS } from '../domain/pix';
+import { fileUri } from '../utils/files';
 
 const TIMER_OPTIONS = [
   { label: '3s', value: 3 },
@@ -24,35 +26,35 @@ const TIMER_OPTIONS = [
   { label: 'no limit', value: 0 },
 ];
 
-// Drag a caption above this y (px from top) and release to delete it.
+/** Releasing a dragged caption above this y (px) deletes it. */
 const DELETE_Y = 130;
+const CAPTION_MAX_LENGTH = 100;
 
 export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview'>) {
-  const { photo, mediaType = 'photo' } = route.params;
+  const { path, mediaType } = route.params;
   const isVideo = mediaType === 'video';
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { width: W, height: H } = useWindowDimensions();
   const insets = useSafeAreaInsets();
 
   const [caption, setCaption] = useState('');
-  const [duration, setDuration] = useState(5);
+  const [duration, setDuration] = useState(DEFAULT_DISPLAY_SECONDS);
   const [keyboardUp, setKeyboardUp] = useState(false);
   const [editing, setEditing] = useState(false);
   const [style, setStyle] = useState<CaptionStyle>('bar');
   const [fontIdx, setFontIdx] = useState(0);
   const [colorIdx, setColorIdx] = useState(0);
-  const [dragging, setDragging] = useState(false);   // caption drag in progress
-  const [nearDelete, setNearDelete] = useState(false); // hovering the delete zone
+  const [dragging, setDragging] = useState(false);
+  const [nearDelete, setNearDelete] = useState(false);
   const nearDeleteRef = useRef(false);
 
-  // ─── Animated caption position (bar: vertical; bold: pan + rotate) ─────────
-  // Animated drives smooth rendering; the mirrored refs are read at send time
-  // (avoids the private Animated.__getValue()).
-  const barY = useRef(new Animated.Value(0.72 * H)).current;
-  const boldPan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current; // offset from screen center, px
-  const boldRot = useRef(new Animated.Value(0)).current;               // radians
-  const boldScale = useRef(new Animated.Value(1)).current;             // pinch scale factor
-  const barYVal = useRef(0.72 * H);
+  // The caption's transform, animated for rendering and mirrored into refs to read at send time.
+  const initialBarY = DEFAULT_BAR.y * H;
+  const barY = useRef(new Animated.Value(initialBarY)).current;
+  const boldPan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current; // px from the screen center
+  const boldRot = useRef(new Animated.Value(0)).current; // radians
+  const boldScale = useRef(new Animated.Value(1)).current;
+  const barYVal = useRef(initialBarY);
   const boldPanVal = useRef({ x: 0, y: 0 });
   const boldRotVal = useRef(0);
   const boldScaleVal = useRef(1);
@@ -80,20 +82,18 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
     return () => { showSub.remove(); hideSub.remove(); };
   }, []);
 
-  // Clears the caption and resets every transform back to defaults.
   const deleteCaption = () => {
     setCaption('');
     setStyle('bar');
     setFontIdx(0);
     setColorIdx(0);
-    barY.setValue(0.72 * H);
+    barY.setValue(initialBarY);
     boldPan.setValue({ x: 0, y: 0 });
     boldRot.setValue(0);
     boldScale.setValue(1);
     setEditing(false);
   };
 
-  // Deduped delete-zone hover update — called from the drag handlers.
   const hoverDelete = (yPx: number) => {
     const near = yPx < DELETE_Y;
     if (near !== nearDeleteRef.current) { nearDeleteRef.current = near; setNearDelete(near); }
@@ -104,7 +104,7 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
     if (wasTap) setEditing(true);
   };
 
-  // ─── Gesture: bar = vertical drag; tap = re-edit; drag-to-top = delete ─────
+  // Bar caption: drag vertically; a tap re-edits.
   const barMoved = useRef(false);
   const barStartY = useRef(0);
   const barPan = useRef(PanResponder.create({
@@ -119,7 +119,7 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
     onPanResponderRelease: () => endDrag(!barMoved.current),
   })).current;
 
-  // ─── Gesture: bold = 1-finger pan, 2-finger rotate; tap = re-edit ─────────
+  // Bold caption: one finger pans, two pinch and rotate; a tap re-edits.
   const boldMoved = useRef(false);
   const boldStart = useRef({
     x: 0, y: 0, rot: 0, angle: 0, scale: 1, dist: 0, mode: '' as '' | 'pan' | 'pinch',
@@ -137,7 +137,6 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
     onPanResponderMove: (e, gs) => {
       const touches = e.nativeEvent.touches;
       if (touches.length >= 2) {
-        // Two fingers = pinch-to-resize + rotate together (Snapchat-style).
         const ang = Math.atan2(touches[1].pageY - touches[0].pageY, touches[1].pageX - touches[0].pageX);
         const dist = touchDist(touches);
         if (boldStart.current.mode !== 'pinch') {
@@ -161,7 +160,7 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
         const offsetY = boldStart.current.y + gs.dy;
         boldPan.setValue({ x: boldStart.current.x + gs.dx, y: offsetY });
         if (Math.abs(gs.dx) + Math.abs(gs.dy) > 6) boldMoved.current = true;
-        hoverDelete(H / 2 + offsetY); // caption center in screen px
+        hoverDelete(H / 2 + offsetY);
       }
     },
     onPanResponderRelease: () => endDrag(!boldMoved.current),
@@ -171,11 +170,9 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
     inputRange: [-Math.PI, Math.PI], outputRange: ['-180deg', '180deg'], extrapolate: 'extend',
   });
 
-  const boldMeta: CaptionMeta = { style: 'bold', x: 0.5, y: 0.5, font: fontIdx, color: CAPTION_COLORS[colorIdx] };
+  const boldLook = { font: fontIdx, color: CAPTION_COLORS[colorIdx] };
   const hasCaption = caption.trim().length > 0;
 
-  // ─── Actions ──────────────────────────────────────────────────────────────
-  const onRetake = () => nav.goBack();
   const cycleFont = () => setFontIdx(i => (i + 1) % CAPTION_FONTS.length);
 
   const buildMeta = (): CaptionMeta | null => {
@@ -195,34 +192,26 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
   const onChoose = () => {
     const meta = buildMeta();
     nav.navigate('RecipientPicker', {
-      photo,
+      path,
       mediaType,
       caption: caption.trim(),
-      captionMeta: meta ? serializeCaptionMeta(meta) : '',
+      captionMeta: meta ? serializeCaptionMeta(meta) : undefined,
       displayDuration: duration,
     });
   };
 
   return (
     <View style={ps.container}>
-      {/* Tap anywhere on the media to start typing a caption (Snapchat-style);
-          while the keyboard is up, a tap dismisses it instead. */}
+      {/* A tap on the media starts a caption, or dismisses the keyboard. */}
       <TouchableWithoutFeedback
         onPress={() => { if (editing) Keyboard.dismiss(); else setEditing(true); }}
         accessible={false}
       >
         {isVideo ? (
-          <Video
-            source={{ uri: `file://${photo.path}` }}
-            style={StyleSheet.absoluteFill}
-            resizeMode="cover"
-            repeat
-            muted={false}
-            paused={false}
-          />
+          <Video source={{ uri: fileUri(path) }} style={StyleSheet.absoluteFill} resizeMode="cover" repeat />
         ) : (
           <Image
-            source={{ uri: `file://${photo.path}` }}
+            source={{ uri: fileUri(path) }}
             style={StyleSheet.absoluteFill}
             resizeMode="cover"
             fadeDuration={0}
@@ -230,7 +219,6 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
         )}
       </TouchableWithoutFeedback>
 
-      {/* ── Caption sticker (committed, draggable) ── */}
       {hasCaption && !editing && style === 'bar' && (
         <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
           <Animated.View
@@ -246,7 +234,7 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
           <Animated.Text
             {...boldPanResponder.panHandlers}
             style={[
-              boldTextStyle(boldMeta),
+              boldTextStyle(boldLook),
               { transform: [{ translateX: boldPan.x }, { translateY: boldPan.y }, { rotate: rotateStr }, { scale: boldScale }] },
             ]}
           >
@@ -255,11 +243,10 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
         </View>
       )}
 
-      {/* ── Editor (keyboard up) ── */}
       {editing && style === 'bold' && (
         <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, ps.center]}>
           <TextInput
-            style={[boldTextStyle(boldMeta), ps.boldInput]}
+            style={[boldTextStyle(boldLook), ps.boldInput]}
             value={caption}
             onChangeText={setCaption}
             placeholder="Type…"
@@ -267,7 +254,7 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
             autoFocus
             multiline
             textAlign="center"
-            maxLength={100}
+            maxLength={CAPTION_MAX_LENGTH}
           />
         </View>
       )}
@@ -288,15 +275,14 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
               autoFocus
               multiline
               textAlign="center"
-              maxLength={100}
+              maxLength={CAPTION_MAX_LENGTH}
             />
           </View>
         </KeyboardAvoidingView>
       )}
 
-      {/* ── Top toolbar ── */}
       <View style={[ps.topBar, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
-        <TouchableOpacity onPress={onRetake} style={ps.retakeBtn}>
+        <TouchableOpacity onPress={() => nav.goBack()} style={ps.retakeBtn}>
           <CloseIcon size={20} color="#fff" />
         </TouchableOpacity>
 
@@ -324,17 +310,15 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
         </View>
       </View>
 
-      {/* ── Delete zone (appears while dragging a caption) ── */}
       {dragging && (
         <View style={ps.deleteZone} pointerEvents="none">
           <View style={[ps.deletePill, nearDelete && ps.deletePillActive]}>
             <Text style={ps.deleteIcon}>{'✕'}</Text>
-            <Text style={ps.deleteLabel}>            {nearDelete ? 'Release to delete' : 'Drag here to delete'}</Text>
+            <Text style={ps.deleteLabel}>{nearDelete ? 'Release to delete' : 'Drag here to delete'}</Text>
           </View>
         </View>
       )}
 
-      {/* ── Color strip (bold editing) ── */}
       {editing && style === 'bold' && (
         <View style={ps.colorStrip} pointerEvents="box-none">
           {CAPTION_COLORS.map((c, i) => (
@@ -347,7 +331,6 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
         </View>
       )}
 
-      {/* ── Bottom controls (hidden while keyboard up) ── */}
       {!keyboardUp && (
         <View style={ps.bottom} pointerEvents="box-none">
           <View style={ps.timerRow}>
@@ -391,7 +374,7 @@ const ps = StyleSheet.create({
   segBtn: { paddingHorizontal: 14, height: 40, justifyContent: 'center', alignItems: 'center' },
   segBtnActive: { backgroundColor: colors.accent },
   segText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  segTextActive: { color: '#000' },
+  segTextActive: { color: colors.onAccent },
   deleteZone: { position: 'absolute', top: 44, left: 0, right: 0, alignItems: 'center', zIndex: 3 },
   deletePill: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -417,7 +400,7 @@ const ps = StyleSheet.create({
   timerBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.15)' },
   timerBtnActive: { backgroundColor: colors.accent },
   timerText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  timerTextActive: { color: '#000' },
+  timerTextActive: { color: colors.onAccent },
   sendBtn: { backgroundColor: colors.accent, borderRadius: 12, padding: 14, alignItems: 'center' },
-  sendBtnText: { color: '#000', fontWeight: '700', fontSize: 16 },
+  sendBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 16 },
 });

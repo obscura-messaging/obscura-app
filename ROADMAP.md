@@ -6,7 +6,7 @@
   the device and re-provisions it.
 - Friends: codes, QR scan, requests and acceptance.
 - Encrypted 1:1 chat with typing indicators.
-- Stories (post and feed). They do not expire yet.
+- Stories (post and feed). They are erased 24 hours after posting.
 - Profiles: display name and bio, synced to friends.
 - Encrypted photo and video attachments.
 - Camera capture, preview, captions and a recipient picker for pix.
@@ -20,9 +20,6 @@
 
 ## Gaps
 
-- 24-hour story expiry.
-- Device-linking UI. Both bridges expose `generateLinkCode` and
-  `validateAndApproveLink`, but no screen uses them.
 - iOS push and production readiness ([`IOS_PARITY.md`](docs/IOS_PARITY.md)).
 
 ## Next
@@ -36,5 +33,5 @@
 
 ## Not planned
 
-AR lenses, drawing on photos, video calls, maps or location, saved memories,
+Device linking or history/key transfer, AR lenses, drawing on photos, video calls, maps or location, saved memories,
 Bitmoji, snap score, chat wallpapers.

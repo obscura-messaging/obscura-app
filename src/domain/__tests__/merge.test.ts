@@ -1,19 +1,8 @@
-import { mergeAll, merge, type Entry } from '../merge';
-
-/**
- * Properties the merge fixtures cannot express.
- *
- * These exist because mutation-testing the vector suite found a hole: changing APPEND from
- * "first write wins" to "last write wins" passed all 13 vector-driven tests. The vectors' GSet
- * idempotence case uses a duplicate id carrying IDENTICAL data — because `DOMAIN_CONTRACT.md` requires
- * GSet entries are immutable by construction — so the two behaviours are indistinguishable there.
- *
- * A hostile peer can replay an existing id with different content, so
- * first-wins is pinned here explicitly.
- */
+import { merge, type Entry } from '../merge';
 
 const entry = (over: Partial<Entry> & { id: string }): Entry => ({
   sentAt: 1,
+  authorUserId: 'uA',
   authorDeviceId: 'devA',
   data: {},
   ...over,
@@ -21,10 +10,7 @@ const entry = (over: Partial<Entry> & { id: string }): Entry => ({
 
 describe('APPEND', () => {
   it('keeps the FIRST write when a peer replays an id with different content', () => {
-    // Not covered by merge.json: its duplicate carries identical data, so first-vs-last is
-    // unobservable there. A peer that replays an established id with new content must not be able
-    // to rewrite it — the same class of defect as a peer renaming itself in the friend graph.
-    const state = mergeAll('APPEND', [
+    const state = merge('APPEND', new Map(), [
       entry({ id: 'm1', sentAt: 1, authorDeviceId: 'devA', data: { text: 'original' } }),
       entry({ id: 'm1', sentAt: 99, authorDeviceId: 'devEvil', data: { text: 'rewritten' } }),
     ]);
@@ -36,7 +22,7 @@ describe('APPEND', () => {
   it('is idempotent under replay — the inbox drain depends on this', () => {
     // peek -> process -> consume: an app that crashes before consuming reprocesses those rows.
     const ops = [entry({ id: 'a' }), entry({ id: 'b' }), entry({ id: 'c' })];
-    const once = mergeAll('APPEND', ops);
+    const once = merge('APPEND', new Map(), ops);
     const twice = merge('APPEND', once, ops);
     expect([...twice.entries()]).toEqual([...once.entries()]);
   });
@@ -46,22 +32,22 @@ describe('REPLACE', () => {
   it('keeps the higher sentAt regardless of arrival order', () => {
     const older = entry({ id: 'p', sentAt: 10, data: { v: 'old' } });
     const newer = entry({ id: 'p', sentAt: 20, data: { v: 'new' } });
-    expect(mergeAll('REPLACE', [older, newer]).get('p')!.data).toEqual({ v: 'new' });
-    expect(mergeAll('REPLACE', [newer, older]).get('p')!.data).toEqual({ v: 'new' });
+    expect(merge('REPLACE', new Map(), [older, newer]).get('p')!.data).toEqual({ v: 'new' });
+    expect(merge('REPLACE', new Map(), [newer, older]).get('p')!.data).toEqual({ v: 'new' });
   });
 
   it('breaks an equal-timestamp tie by the higher authorDeviceId, both ways round', () => {
     const a = entry({ id: 'p', sentAt: 5, authorDeviceId: 'devA', data: { v: 'a' } });
     const b = entry({ id: 'p', sentAt: 5, authorDeviceId: 'devB', data: { v: 'b' } });
-    expect(mergeAll('REPLACE', [a, b]).get('p')!.data).toEqual({ v: 'b' });
-    expect(mergeAll('REPLACE', [b, a]).get('p')!.data).toEqual({ v: 'b' });
+    expect(merge('REPLACE', new Map(), [a, b]).get('p')!.data).toEqual({ v: 'b' });
+    expect(merge('REPLACE', new Map(), [b, a]).get('p')!.data).toEqual({ v: 'b' });
   });
 
   it('treats an identical (sentAt, authorDeviceId) as the same logical write', () => {
     const first = entry({ id: 'p', sentAt: 5, authorDeviceId: 'devA', data: { v: 'first' } });
     const dup = entry({ id: 'p', sentAt: 5, authorDeviceId: 'devA', data: { v: 'second' } });
     // Idempotent: keep what we have rather than churn on a redelivery.
-    expect(mergeAll('REPLACE', [first, dup]).get('p')!.data).toEqual({ v: 'first' });
+    expect(merge('REPLACE', new Map(), [first, dup]).get('p')!.data).toEqual({ v: 'first' });
   });
 
   it('is idempotent under replay', () => {
@@ -69,16 +55,13 @@ describe('REPLACE', () => {
       entry({ id: 'p', sentAt: 1, data: { v: 1 } }),
       entry({ id: 'p', sentAt: 2, data: { v: 2 } }),
     ];
-    const once = mergeAll('REPLACE', ops);
+    const once = merge('REPLACE', new Map(), ops);
     const twice = merge('REPLACE', once, ops);
     expect([...twice.entries()]).toEqual([...once.entries()]);
   });
 });
 
 describe('convergence', () => {
-  // The property the whole design rests on: two devices that receive the same writes in different
-  // orders must reach the same state. Single-device testing cannot see a violation, which is why
-  // DOMAIN_CONTRACT calls the tie-break mandatory.
   const ops: Entry[] = [
     entry({ id: 'p', sentAt: 5, authorDeviceId: 'devA', data: { v: 'a' } }),
     entry({ id: 'p', sentAt: 5, authorDeviceId: 'devB', data: { v: 'b' } }),
@@ -95,7 +78,7 @@ describe('convergence', () => {
 
   it('REPLACE converges across every arrival order', () => {
     const results = permutations(ops).map((order) =>
-      JSON.stringify([...mergeAll('REPLACE', order).entries()].sort()),
+      JSON.stringify([...merge('REPLACE', new Map(), order).entries()].sort()),
     );
     expect(new Set(results).size).toBe(1);
   });
@@ -106,32 +89,24 @@ describe('convergence', () => {
     const dup = entry({ id: 'm1', sentAt: 3, authorDeviceId: 'devA', data: { text: 'hello' } });
     const set = [entry({ id: 'm0', data: { text: 'zero' } }), dup, { ...dup }, { ...dup }];
     const results = permutations(set).map((order) =>
-      JSON.stringify([...mergeAll('APPEND', order).entries()].sort()),
+      JSON.stringify([...merge('APPEND', new Map(), order).entries()].sort()),
     );
     expect(new Set(results).size).toBe(1);
   });
 
   it('APPEND is deliberately order-dependent when a peer replays an id with DIFFERENT content', () => {
-    // A DECISION, not a defect, and it is written down here so it is not "fixed" later.
-    //
-    // Only a buggy or hostile peer can produce one id with two contents. Given that, there are two
-    // options and no third: first-wins (this) keeps what we already had and may leave two devices
-    // disagreeing about the attacker's entry; last-wins would converge, at the cost of letting any
-    // peer overwrite an established entry by replaying its id.
-    //
-    // We take non-convergence over silent overwrite. Divergence about a hostile write is visible
-    // and recoverable; a rewritten message is neither.
+    // Chosen: a replayed id must not rewrite an established entry, even at the cost of convergence.
     const conflicting = [
       entry({ id: 'm1', sentAt: 1, authorDeviceId: 'devA', data: { text: 'original' } }),
       entry({ id: 'm1', sentAt: 2, authorDeviceId: 'devEvil', data: { text: 'rewritten' } }),
     ];
     const outcomes = new Set(
       permutations(conflicting).map((order) =>
-        JSON.stringify([...mergeAll('APPEND', order).entries()]),
+        JSON.stringify([...merge('APPEND', new Map(), order).entries()]),
       ),
     );
     expect(outcomes.size).toBe(2);
     // ...and whichever order the honest write arrives in, it is never silently replaced afterwards.
-    expect(mergeAll('APPEND', conflicting).get('m1')!.data).toEqual({ text: 'original' });
+    expect(merge('APPEND', new Map(), conflicting).get('m1')!.data).toEqual({ text: 'original' });
   });
 });

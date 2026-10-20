@@ -1,11 +1,11 @@
-import { logIn } from '../login';
-import { useStore } from '../store';
+import { MIN_PASSWORD_LENGTH, credentialsProblem, logIn, register } from '../login';
+import { resetSession, useStore } from '../store';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
 const bridge = getFakeBridge();
 
 beforeEach(() => {
-  useStore.getState().reset();
+  resetSession();
 });
 
 describe('logIn', () => {
@@ -52,5 +52,25 @@ describe('logIn', () => {
 
     expect(bridge.__calls).toEqual(['login']);
     expect(useStore.getState().authed).toBe(false);
+  });
+});
+
+describe('register', () => {
+  it('registers, connects and signs in', async () => {
+    await register('alice', 'password-1234');
+
+    expect(bridge.__calls).toEqual(['registerUser', 'connect']);
+    expect(useStore.getState().authed).toBe(true);
+  });
+});
+
+describe('credentialsProblem', () => {
+  it('accepts a username with a long enough password', () => {
+    expect(credentialsProblem('alice', 'x'.repeat(MIN_PASSWORD_LENGTH))).toBeNull();
+  });
+
+  it('rejects an empty username or a short password', () => {
+    expect(credentialsProblem('', 'x'.repeat(MIN_PASSWORD_LENGTH))).not.toBeNull();
+    expect(credentialsProblem('alice', 'x'.repeat(MIN_PASSWORD_LENGTH - 1))).not.toBeNull();
   });
 });

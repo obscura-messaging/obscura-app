@@ -1,46 +1,31 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { MaterialTopTabScreenProps } from '@react-navigation/material-top-tabs';
-import type { CompositeScreenProps, NavigatorScreenParams } from '@react-navigation/native';
+import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { Friend } from '../native/ObscuraModule';
-import type { PhotoFile } from 'react-native-vision-camera';
-import type { ScreenEntry } from '../state/store';
+import type { ScreenEntry } from '../domain/seen';
+import type { StoryGroup } from '../domain/stories';
 import type { ModelData } from '../models/schema';
+import type { Capture, MediaType } from '../state/sendMedia';
 
 export type MainTabParamList = {
   Camera: undefined;
   Chats: undefined;
 };
 
+/** The story viewer shows stories and pix alike. */
+export type ViewerEntry = ScreenEntry<Partial<ModelData<'story'> & ModelData<'pix'>>>;
+
 export type RootStackParamList = {
-  /** Black placeholder shown only while the cold-start auth check is in flight. */
+  /** Shown while the cold-start auth check runs. */
   Splash: undefined;
   Auth: undefined;
   MainTabs: NavigatorScreenParams<MainTabParamList>;
   Chat: { friend: Friend };
-  PhotoPreview: {
-    photo: { path: string; width: number; height: number };
-    /** Defaults to 'photo' when omitted. */
-    mediaType?: 'photo' | 'video';
-  };
-  RecipientPicker: {
-    photo: { path: string; width: number; height: number };
-    mediaType?: 'photo' | 'video';
-    caption: string;
-    /** Serialized CaptionMeta JSON blob (empty string when no caption). */
-    captionMeta: string;
-    displayDuration: number;
-  };
+  PhotoPreview: { path: string; mediaType: MediaType };
+  RecipientPicker: Capture;
   StoryViewer: {
-    /**
-     * Stories grouped by author. Each group is rendered as one auto-advancing
-     * sequence; the viewer can swipe between groups.
-     */
-    groups: StoryGroup[];
+    groups: StoryGroup<ViewerEntry>[];
     startIndex: number;
-    /**
-     * Whether to send seen receipts as entries are shown. Used by the
-     * pix viewer; story groups don't need it.
-     */
+    /** View-once pix: send seen receipts and forbid going back. */
     markViewed?: boolean;
   };
   Profile: undefined;
@@ -48,26 +33,5 @@ export type RootStackParamList = {
   ScanFriend: undefined;
 };
 
-/** The story viewer shows stories and pix alike. */
-export type ViewerEntry = ScreenEntry<Partial<ModelData<'story'> & ModelData<'pix'>>>;
-
-export interface StoryGroup {
-  /** The transport-attributed author. The grouping key for username resolution. */
-  userId: string;
-  /** Display only — resolved from the friend graph at build time, never read out of a payload. */
-  username: string;
-  stories: ViewerEntry[];
-  isMe: boolean;
-}
-
 export type RootStackScreenProps<T extends keyof RootStackParamList> =
   NativeStackScreenProps<RootStackParamList, T>;
-
-export type MainTabScreenProps<T extends keyof MainTabParamList> =
-  CompositeScreenProps<
-    MaterialTopTabScreenProps<MainTabParamList, T>,
-    NativeStackScreenProps<RootStackParamList>
-  >;
-
-// PhotoFile compatibility for camera capture path
-export type CapturedPhoto = Pick<PhotoFile, 'path' | 'width' | 'height'>;
