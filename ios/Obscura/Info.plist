@@ -37,6 +37,8 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Obscura uses the camera to capture photos you send to friends.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Obscura's camera library includes location support, but Obscura does not request or use your location.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Obscura uses the microphone for video messages.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
