@@ -23,6 +23,8 @@ import { StoryViewer } from '../screens/StoriesScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { AddFriendScreen } from '../screens/AddFriendScreen';
 import { ScanFriendScreen } from '../screens/ScanFriendScreen';
+import { DevicesScreen } from '../screens/DevicesScreen';
+import { ScanLinkScreen } from '../screens/ScanLinkScreen';
 import { CameraIcon, ChatIcon } from '../components/icons';
 
 import type { RootStackParamList, MainTabParamList } from './types';
@@ -156,6 +158,16 @@ export function RootNavigator() {
           <RootStack.Screen
             name="ScanFriend"
             component={ScanFriendScreen}
+            options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+          />
+          <RootStack.Screen
+            name="Devices"
+            component={DevicesScreen}
+            options={headerOptions('Devices')}
+          />
+          <RootStack.Screen
+            name="ScanLink"
+            component={ScanLinkScreen}
             options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
           />
         </>
