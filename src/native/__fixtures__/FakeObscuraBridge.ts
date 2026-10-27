@@ -445,6 +445,14 @@ export class FakeObscuraBridge implements ObscuraBridge {
 
   // ─── Devices ───────────────────────────────────────────
 
+  /** Accepts the codes `beginLink` issues, named after `FAKE_LINK_DEVICE_NAME`. */
+  async linkCodeDeviceName(code: string): Promise<string> {
+    this.record('linkCodeDeviceName');
+    this.checkFailure('linkCodeDeviceName');
+    if (!code.startsWith('link_')) throw rejection('INVALID_ARGUMENT', 'Invalid link code');
+    return FAKE_LINK_DEVICE_NAME;
+  }
+
   async approveLink(code: string): Promise<void> {
     this.record('approveLink');
     this.checkFailure('approveLink');
@@ -597,6 +605,8 @@ export class FakeObscuraBridge implements ObscuraBridge {
     return null;
   }
 }
+
+export const FAKE_LINK_DEVICE_NAME = 'Test phone';
 
 /** A rejection as the native side delivers it: an `Error` with a `code`. */
 function rejection(code: string, message: string): Error & { code: string } {

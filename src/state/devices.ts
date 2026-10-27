@@ -17,6 +17,16 @@ export async function loadDevices(): Promise<DeviceInfo[]> {
   return orderDevices(await Obscura.getDevices());
 }
 
+/** The device name in a pasted or scanned link code, or null when it is not one. */
+export async function linkCodeDeviceName(code: string): Promise<string | null> {
+  try {
+    return await Obscura.linkCodeDeviceName(code.trim());
+  } catch (e) {
+    if (errorCode(e) === 'INVALID_ARGUMENT') return null;
+    throw e;
+  }
+}
+
 export function approveLink(code: string): Promise<void> {
   return primaryOnly(() => Obscura.approveLink(code.trim()));
 }

@@ -333,6 +333,14 @@ extension ObscuraBridge {
 
 extension ObscuraBridge {
 
+    @objc(linkCodeDeviceName:resolver:rejecter:)
+    func linkCodeDeviceName(_ code: String,
+                            resolver resolve: @escaping RCTPromiseResolveBlock,
+                            rejecter reject: @escaping RCTPromiseRejectBlock) {
+        do { resolve(try ObscuraClient.linkCodeDeviceName(code)) }
+        catch { rejectKit(reject, "LINK_CODE_ERROR", error) }
+    }
+
     @objc(approveLink:resolver:rejecter:)
     func approveLink(_ code: String,
                      resolver resolve: @escaping RCTPromiseResolveBlock,

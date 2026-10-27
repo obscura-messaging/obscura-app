@@ -362,6 +362,12 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     // ─── Devices ────────────────────────────────────────────────────────────
 
     @ReactMethod
+    fun linkCodeDeviceName(code: String, promise: Promise) {
+        try { promise.resolve(ObscuraClient.linkCodeDeviceName(code)) }
+        catch (e: Exception) { promise.rejectKit("LINK_CODE_ERROR", e) }
+    }
+
+    @ReactMethod
     fun approveLink(code: String, promise: Promise) {
         scope.launch {
             try {

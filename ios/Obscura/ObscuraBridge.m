@@ -30,6 +30,8 @@ RCT_EXTERN_METHOD(getDeviceId:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromi
 RCT_EXTERN_METHOD(isPrimary:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 
 // ── Devices ───────────────────────────────────────────────────────────────
+RCT_EXTERN_METHOD(linkCodeDeviceName:(NSString *)code
+                  resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(approveLink:(NSString *)code
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(getDevices:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)

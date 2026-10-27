@@ -2,7 +2,7 @@
 
 These are the semantics the app owns in `src/models/`, `src/domain/` and
 `src/state/`. The kit only stores and sends opaque bytes
-([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/6c1b9e8543a84bba8a130acd0417736803e7038b/docs/KIT_API.md)).
+([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/dbb081bb6b1e15316912263b7276ba72972104f0/docs/KIT_API.md)).
 
 ## Models
 
@@ -134,5 +134,5 @@ safety-number change.
 `src/state/login.ts` drives sign-in: an account without devices makes this
 device its primary, and an account with devices links it. The new device shows
 its link code as a QR code (`obscura:link:<code>`, `src/domain/qr.ts`); the
-primary scans or pastes it, sees the device name from the code
-(`src/domain/devices.ts`) and approves it.
+primary scans or pastes it, sees the device name the kit reads from the code
+and approves it. The app never parses the code itself.

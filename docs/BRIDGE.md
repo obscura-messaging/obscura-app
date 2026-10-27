@@ -38,7 +38,8 @@ All methods exist on both platforms. Behavior beyond the types:
 | `resetAccount` | Deletes every device of the account on the server, then wipes this device; the host releases the client. Peers see the next primary's identity as a change. The app calls `provisionPrimary` next. |
 | `beginLink` | Opens a link session and resolves only its code, which the app shows as a QR code. The bridge keeps the pending request, with its ephemeral key and account token, in one slot that JS never reads; another `beginLink`, `completeLink` or `cancelLink` clears it. |
 | `completeLink` | Takes the pending request, waits for the primary's approval, provisions this device as a linked device and connects. Rejects `LINK_FAILED` when the session expires, `INVALID_ARGUMENT` without a pending request, and `CANCELLED` after `cancelLink`. It holds the auth lock while it waits. |
-| `cancelLink` | Drops the pending request and cancels a waiting `completeLink`, resolving once it has settled. On Android that can take until the current long poll returns (up to about 25 s). |
+| `cancelLink` | Drops the pending request and cancels a waiting `completeLink`, resolving once it has settled. |
+| `linkCodeDeviceName` | Reads the device name from a link code with the kit's parser, so the primary can confirm it before `approveLink`. Rejects `INVALID_ARGUMENT` for anything that is not a link code. |
 | `approveLink`, `unlinkDevice`, `addFriendByCode`, `acceptFriend`, `removeFriend` | Primary only: `NOT_PRIMARY` on a linked device, except that a linked device may `unlinkDevice` itself. Unlinking this device wipes it and the host releases the client; the primary cannot unlink itself. |
 | `wipeDevice` | The kit logs out, clears its persisted session and securely wipes local data; the host releases the client. |
 | `entryPut` | A blind upsert: the app merges first. It emits no event, so the app refreshes itself. |
@@ -114,7 +115,7 @@ different clients against the same session store.
 5. Emit events only through each bridge's `emit` helper.
 6. If the types do not capture its behavior, add a row here.
 
-[kit]: https://github.com/obscura-messaging/obscura-native/blob/6c1b9e8543a84bba8a130acd0417736803e7038b/docs/KIT_API.md
-[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/6c1b9e8543a84bba8a130acd0417736803e7038b/docs/KIT_API.md#envelope-identity
-[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/6c1b9e8543a84bba8a130acd0417736803e7038b/docs/KIT_API.md#inbox
-[kit-send]: https://github.com/obscura-messaging/obscura-native/blob/6c1b9e8543a84bba8a130acd0417736803e7038b/docs/KIT_API.md#send
+[kit]: https://github.com/obscura-messaging/obscura-native/blob/dbb081bb6b1e15316912263b7276ba72972104f0/docs/KIT_API.md
+[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/dbb081bb6b1e15316912263b7276ba72972104f0/docs/KIT_API.md#envelope-identity
+[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/dbb081bb6b1e15316912263b7276ba72972104f0/docs/KIT_API.md#inbox
+[kit-send]: https://github.com/obscura-messaging/obscura-native/blob/dbb081bb6b1e15316912263b7276ba72972104f0/docs/KIT_API.md#send

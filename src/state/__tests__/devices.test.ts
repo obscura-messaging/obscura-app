@@ -1,6 +1,7 @@
-import { approveLink, loadDevices, primaryOnly, unlinkDevice } from '../devices';
+import { approveLink, linkCodeDeviceName, loadDevices, primaryOnly, unlinkDevice } from '../devices';
 import { resetSession, useStore } from '../store';
 import { Obscura, type DeviceInfo } from '../../native/ObscuraModule';
+import { FAKE_LINK_DEVICE_NAME } from '../../native/__fixtures__/FakeObscuraBridge';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
 const bridge = getFakeBridge();
@@ -19,6 +20,24 @@ describe('loadDevices', () => {
     bridge.__setDevices([TABLET, PRIMARY]);
 
     expect((await loadDevices()).map((d) => d.deviceId)).toEqual(['device_self', 'device_tablet']);
+  });
+});
+
+describe('linkCodeDeviceName', () => {
+  it('reads the name of a trimmed link code through the kit', async () => {
+    const code = await Obscura.beginLink('alice', 'password-1234');
+
+    expect(await linkCodeDeviceName(` ${code}\n`)).toBe(FAKE_LINK_DEVICE_NAME);
+  });
+
+  it('answers null for text that is not a link code', async () => {
+    expect(await linkCodeDeviceName('hello')).toBeNull();
+  });
+
+  it('propagates other failures', async () => {
+    bridge.__failNext('linkCodeDeviceName', 'STORAGE_ERROR');
+
+    await expect(linkCodeDeviceName('link_1')).rejects.toMatchObject({ code: 'STORAGE_ERROR' });
   });
 });
 

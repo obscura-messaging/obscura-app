@@ -21,7 +21,7 @@ repository name.
 Never move application semantics into native code. Contracts:
 [`DOMAIN_CONTRACT.md`](docs/DOMAIN_CONTRACT.md) (app),
 [`BRIDGE.md`](docs/BRIDGE.md) (React Native bridge),
-[`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/6c1b9e8543a84bba8a130acd0417736803e7038b/docs/KIT_API.md) (kit).
+[`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/dbb081bb6b1e15316912263b7276ba72972104f0/docs/KIT_API.md) (kit).
 
 ## Where things live
 

@@ -118,6 +118,8 @@ export interface ObscuraBridge extends TurboModule, EventModule {
   getDeviceId(): Promise<string | null>;
   isPrimary(): Promise<boolean>;
 
+  /** The device name in a link code; rejects `INVALID_ARGUMENT` for anything else. */
+  linkCodeDeviceName(code: string): Promise<string>;
   /** Primary only. */
   approveLink(code: string): Promise<void>;
   getDevices(): Promise<DeviceInfo[]>;
