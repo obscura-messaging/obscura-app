@@ -15,8 +15,8 @@ if [[ -z "$sdk" ]]; then
   esac
 fi
 
-if [[ -z "$sdk" || ! -d "$sdk/platforms/android-36" ]]; then
-  echo "error: Android SDK 36 is required; set ANDROID_HOME" >&2
+if [[ -z "$sdk" || ! -d "$sdk/platforms/android-37.0" ]]; then
+  echo "error: Android SDK 37 is required; set ANDROID_HOME" >&2
   exit 1
 fi
 
