@@ -1,10 +1,12 @@
 /**
  * An in-memory `ObscuraBridge` for Jest. It models the bridge contract, not the kit: no crypto,
  * network or authentication. What the app relies on is faithful: `inboxPeek` has no side effects,
- * inbox ids are never reused, `entryPut` is a blind upsert, and `sendEntry` stores no local row.
+ * inbox ids are never reused, `entryPut` is a blind upsert, `sendEntry` stores no local row, friend
+ * and device changes are primary only, and `completeLink` waits until the test approves, expires or
+ * cancels the pending link.
  */
 
-import type { AuthState, ConnectionState, Friend, ObscuraBridge, InboxRow, LoginScenario, SendReport, StoredEntry, SubmissionResult } from '../ObscuraModule';
+import type { AuthState, ConnectionState, DeviceInfo, Friend, ObscuraBridge, InboxRow, LoginScenario, SendReport, StoredEntry, SubmissionResult } from '../ObscuraModule';
 
 type FakeInboxRow = InboxRow & { envelopeId: string };
 
@@ -28,6 +30,13 @@ export class FakeObscuraBridge implements ObscuraBridge {
   private debugLog: string[] = [];
   private pushToken: string | null = null;
   private loginScenario: LoginScenario = 'existingDevice';
+  private primary = true;
+  private devices: DeviceInfo[] = [];
+  private linkCode: string | null = null;
+  private linkWait: { resolve: () => void; reject: (e: Error) => void } | null = null;
+
+  /** Codes `approveLink` accepted, in order. */
+  readonly __approved: string[] = [];
 
   /** Strictly increasing timestamps, so same-tick writes never tie. */
   private clock = 1_700_000_000_000;
@@ -221,6 +230,26 @@ export class FakeObscuraBridge implements ObscuraBridge {
     this.loginScenario = scenario;
   }
 
+  /** Whether this device is the account's primary. */
+  __setPrimary(primary: boolean): void {
+    this.primary = primary;
+  }
+
+  /** The account's devices as `getDevices` reports them. */
+  __setDevices(devices: DeviceInfo[]): void {
+    this.devices = devices;
+  }
+
+  /** The primary approves the pending link: `completeLink` provisions this device and resolves. */
+  __approvePendingLink(): void {
+    this.settleLink(null);
+  }
+
+  /** The pending link session expires: `completeLink` rejects `LINK_FAILED`. */
+  __expirePendingLink(): void {
+    this.settleLink(rejection('LINK_FAILED', 'Link session expired'));
+  }
+
   /** Flip connection state and emit. */
   __setConnectionState(state: ConnectionState): void {
     this.connectionState = state;
@@ -243,6 +272,11 @@ export class FakeObscuraBridge implements ObscuraBridge {
     this.__calls.length = 0;
     this.pushToken = null;
     this.loginScenario = 'existingDevice';
+    this.primary = true;
+    this.devices = [];
+    this.linkCode = null;
+    this.linkWait = null;
+    this.__approved.length = 0;
     this.userId = 'user_self';
     this.username = 'self';
     this.deviceId = 'device_self';
@@ -266,9 +300,11 @@ export class FakeObscuraBridge implements ObscuraBridge {
     const f = this.failures.get(method);
     if (!f) return;
     this.failures.delete(method);
-    const err: Error & { code?: string } = new Error(f.message);
-    err.code = f.code;
-    throw err;
+    throw rejection(f.code, f.message);
+  }
+
+  private requirePrimary(): void {
+    if (!this.primary) throw rejection('NOT_PRIMARY', 'Only the primary device can do this');
   }
 
   // ─── Event subscription (what `NativeEventEmitter` drives) ───
@@ -305,11 +341,50 @@ export class FakeObscuraBridge implements ObscuraBridge {
     return this.loginScenario;
   }
 
-  async loginAndProvision(username: string, _password: string): Promise<void> {
-    this.record('loginAndProvision');
-    this.checkFailure('loginAndProvision');
+  async provisionPrimary(username: string, _password: string): Promise<void> {
+    this.record('provisionPrimary');
+    this.checkFailure('provisionPrimary');
     this.username = username;
+    this.primary = true;
     this.__setAuthState('authenticated');
+  }
+
+  async resetAccount(_username: string, _password: string): Promise<void> {
+    this.record('resetAccount');
+    this.checkFailure('resetAccount');
+    this.clearLocalState();
+  }
+
+  async beginLink(username: string, _password: string): Promise<string> {
+    this.record('beginLink');
+    this.checkFailure('beginLink');
+    this.username = username;
+    this.linkCode = `link_${this.nextTimestamp()}`;
+    return this.linkCode;
+  }
+
+  async completeLink(): Promise<void> {
+    this.record('completeLink');
+    this.checkFailure('completeLink');
+    if (this.linkCode === null) throw rejection('INVALID_ARGUMENT', 'No link in progress');
+    this.linkCode = null;
+    await new Promise<void>((resolve, reject) => { this.linkWait = { resolve, reject }; });
+    this.primary = false;
+    this.__setAuthState('authenticated');
+    this.__setConnectionState('connected');
+  }
+
+  async cancelLink(): Promise<void> {
+    this.record('cancelLink');
+    this.linkCode = null;
+    this.settleLink(rejection('CANCELLED', 'Link cancelled'));
+  }
+
+  private settleLink(error: Error | null): void {
+    const wait = this.linkWait;
+    this.linkWait = null;
+    if (error === null) wait?.resolve();
+    else wait?.reject(error);
   }
 
   async connect(): Promise<void> {
@@ -363,18 +438,51 @@ export class FakeObscuraBridge implements ObscuraBridge {
     this.record('getDeviceId');
     return this.authState === 'authenticated' ? this.deviceId : null;
   }
+  async isPrimary(): Promise<boolean> {
+    this.record('isPrimary');
+    return this.authState === 'authenticated' && this.primary;
+  }
+
+  // ─── Devices ───────────────────────────────────────────
+
+  async approveLink(code: string): Promise<void> {
+    this.record('approveLink');
+    this.checkFailure('approveLink');
+    this.requirePrimary();
+    this.__approved.push(code);
+  }
+
+  async getDevices(): Promise<DeviceInfo[]> {
+    this.record('getDevices');
+    this.checkFailure('getDevices');
+    return this.devices.map((d) => ({ ...d }));
+  }
+
+  async unlinkDevice(deviceId: string): Promise<void> {
+    this.record('unlinkDevice');
+    this.checkFailure('unlinkDevice');
+    if (deviceId === this.deviceId) {
+      if (this.primary) throw rejection('INVALID_ARGUMENT', 'The primary device cannot unlink itself');
+      this.clearLocalState();
+      return;
+    }
+    this.requirePrimary();
+    this.devices = this.devices.filter((d) => d.deviceId !== deviceId);
+  }
 
   // ─── Friends ───────────────────────────────────────────
 
   async removeFriend(userId: string): Promise<void> {
     this.record('removeFriend');
     this.checkFailure('removeFriend');
+    this.requirePrimary();
     this.__setFriends(this.friends.filter((f) => f.userId !== userId));
   }
 
   async acceptFriend(userId: string): Promise<void> {
     this.record('acceptFriend');
     this.checkFailure('acceptFriend');
+    this.requirePrimary();
     const existing = this.friends.find((f) => f.userId === userId);
     if (!existing) throw new Error(`Unknown friend ${userId}`);
     const rest = this.friends.filter((f) => f.userId !== userId);
@@ -389,6 +497,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
   async addFriendByCode(code: string): Promise<void> {
     this.record('addFriendByCode');
     this.checkFailure('addFriendByCode');
+    this.requirePrimary();
     const [userId, username] = code.split(':');
     this.__setFriends([
       ...this.friends,
@@ -487,4 +596,9 @@ export class FakeObscuraBridge implements ObscuraBridge {
     this.record('getLaunchIntent');
     return null;
   }
+}
+
+/** A rejection as the native side delivers it: an `Error` with a `code`. */
+function rejection(code: string, message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
 }

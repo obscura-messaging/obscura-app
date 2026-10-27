@@ -8,7 +8,7 @@ final class BridgeLogger: ObscuraLogger {
     func ackFailed(envelopeId: String, reason: String) { log("ack failed \(envelopeId): \(reason)") }
     func tokenRefreshFailed(attempt: Int, reason: String) { log("token refresh failed (\(attempt)): \(reason)") }
     func preKeyReplenishFailed(reason: String) { log("prekey replenish failed: \(reason)") }
-    func identityChanged(address: String) { log("identity changed: \(address)") }
+    func identityChanged(userId: String) { log("identity changed: \(userId)") }
     func sessionEstablishFailed(userId: String, reason: String) { log("session establish failed \(userId): \(reason)") }
     func databaseError(store: String, operation: String, reason: String) { log("db error \(store).\(operation): \(reason)") }
 }
@@ -22,6 +22,8 @@ final class ObscuraSession {
     private(set) var client: ObscuraClient?
     private(set) var appInForeground = true
     let logger = BridgeLogger()
+    /// This device's name on the account, shown in device lists and on the primary when linking.
+    let deviceName = UIDevice.current.model
     private let storage = KeychainSession()
     private var restoreTask: Task<Void, Never>?
     private var messageTask: Task<Void, Never>?
@@ -65,7 +67,7 @@ final class ObscuraSession {
             dataDirectory: Self.baseDir.appendingPathComponent(storageName).path,
             userId: storageName,
             keychainAccessGroup: SharedContainer.keychainAccessGroup,
-            deviceName: UIDevice.current.model,
+            deviceName: deviceName,
             sessionStorage: storage,
             logger: logger
         )

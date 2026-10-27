@@ -27,6 +27,8 @@ interface Session {
   myUserId: string;
   myUsername: string;
   myDeviceId: string;
+  /** Whether this device is the account's primary; null until the session loads. */
+  isPrimary: boolean | null;
   /** Every relationship, any status. */
   friends: Friend[];
   connState: ConnectionState;
@@ -39,6 +41,7 @@ const SIGNED_OUT = {
   myUserId: '',
   myUsername: '',
   myDeviceId: '',
+  isPrimary: null,
   friends: [],
   connState: 'disconnected',
   entries: {},
@@ -63,6 +66,7 @@ export function useSession() {
     authed: s.authed,
     myUserId: s.myUserId,
     myUsername: s.myUsername,
+    isPrimary: s.isPrimary,
     connState: s.connState,
   })));
 }
@@ -221,6 +225,7 @@ export async function loadSession(): Promise<void> {
     Obscura.getUserId().then((id) => set({ myUserId: id ?? '' })),
     Obscura.getUsername().then((name) => set({ myUsername: name ?? '' })),
     Obscura.getDeviceId().then((id) => set({ myDeviceId: id ?? '' })),
+    Obscura.isPrimary().then((isPrimary) => set({ isPrimary })),
     Obscura.getConnectionState().then((connState) => set({ connState })),
     refreshFriends(),
   ].map((pull) => pull.catch((e) => logError('session.load', e))));

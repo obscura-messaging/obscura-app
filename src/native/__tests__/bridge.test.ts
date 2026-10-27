@@ -162,3 +162,43 @@ describe('failures', () => {
     await expect(Obscura.entryPut('story', 'b', '{}', 1, 'd', null)).resolves.toBeUndefined();
   });
 });
+
+describe('multi-device', () => {
+  it('waits only on a link that beginLink opened, and only once', async () => {
+    await expect(Obscura.completeLink()).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+
+    await Obscura.beginLink('alice', 'password-1234');
+    const waiting = Obscura.completeLink();
+    await expect(Obscura.completeLink()).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+
+    bridge.__approvePendingLink();
+    await waiting;
+    expect(await Obscura.isPrimary()).toBe(false);
+  });
+
+  it('refuses primary-only calls on a linked device', async () => {
+    bridge.__authenticate();
+    bridge.__setPrimary(false);
+
+    for (const call of [
+      () => Obscura.approveLink('code'),
+      () => Obscura.addFriendByCode('u:name'),
+      () => Obscura.acceptFriend('u'),
+      () => Obscura.removeFriend('u'),
+      () => Obscura.unlinkDevice('device_other'),
+    ]) await expect(call()).rejects.toMatchObject({ code: 'NOT_PRIMARY' });
+  });
+
+  it('lets the primary unlink another device but not itself', async () => {
+    bridge.__authenticate();
+    bridge.__setDevices([
+      { deviceId: 'device_self', name: 'Phone', isPrimary: true, isThisDevice: true },
+      { deviceId: 'device_other', name: null, isPrimary: false, isThisDevice: false },
+    ]);
+
+    await expect(Obscura.unlinkDevice('device_self')).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+    await Obscura.unlinkDevice('device_other');
+
+    expect((await Obscura.getDevices()).map((d) => d.deviceId)).toEqual(['device_self']);
+  });
+});

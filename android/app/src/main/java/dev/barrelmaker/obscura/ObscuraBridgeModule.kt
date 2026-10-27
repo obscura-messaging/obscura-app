@@ -7,6 +7,8 @@ import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.ConnectionState
+import dev.barrelmaker.obscura.kit.DeviceInfo
+import dev.barrelmaker.obscura.kit.LinkRequest
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.SendReport
@@ -68,6 +70,11 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     private val authMutex = Mutex()
     private val typingJobs = mutableMapOf<String, Job>()
 
+    /** The link this device is waiting on. Its secrets never cross to JS, which holds only the code. */
+    private class PendingLink(val client: ObscuraClient, val request: LinkRequest)
+    @Volatile private var pendingLink: PendingLink? = null
+    @Volatile private var linkJob: Job? = null
+
     private val client: ObscuraClient?
         get() = ObscuraSession.client
 
@@ -83,14 +90,14 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         if (t is ObscuraError) reject(t.code, t.message, t) else reject(fallbackCode, t.message, t)
     }
 
-    private fun authenticate(promise: Promise, code: String, operation: suspend () -> Any?) {
+    private fun authenticate(promise: Promise, code: String, operation: suspend () -> Any?): Job? {
         if (!authMutex.tryLock()) {
             promise.rejectKit(code, ObscuraError.InvalidArgument("Authentication already in progress"))
-            return
+            return null
         }
-        scope.launch {
+        return scope.launch {
             try { promise.resolve(operation()) }
-            catch (e: CancellationException) { throw e }
+            catch (e: CancellationException) { promise.reject("CANCELLED", "Cancelled", e); throw e }
             catch (e: Exception) { promise.rejectKit(code, e) }
             finally { authMutex.unlock() }
         }
@@ -209,7 +216,8 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         authenticate(promise, "LOGIN_ERROR") {
             when (ObscuraSession.createClient(username).login(username, password)) {
                 LoginScenario.EXISTING_DEVICE -> "existingDevice"
-                LoginScenario.NEW_DEVICE -> "newDevice"
+                LoginScenario.LINK_REQUIRED -> "linkRequired"
+                LoginScenario.NO_DEVICES -> "noDevices"
                 LoginScenario.DEVICE_MISMATCH -> "deviceMismatch"
                 LoginScenario.INVALID_CREDENTIALS -> "invalidCredentials"
             }
@@ -217,10 +225,57 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun loginAndProvision(username: String, password: String, promise: Promise) {
+    fun provisionPrimary(username: String, password: String, promise: Promise) {
         authenticate(promise, "PROVISION_ERROR") {
-            ObscuraSession.createClient(username).loginAndProvision(username, password)
+            ObscuraSession.createClient(username).provisionPrimary(username, password)
             null
+        }
+    }
+
+    @ReactMethod
+    fun resetAccount(username: String, password: String, promise: Promise) {
+        authenticate(promise, "RESET_ERROR") {
+            ObscuraSession.createClient(username).resetAccount(username, password)
+            ObscuraSession.destroyClient()
+            null
+        }
+    }
+
+    @ReactMethod
+    fun beginLink(username: String, password: String, promise: Promise) {
+        pendingLink = null
+        authenticate(promise, "LINK_ERROR") {
+            val c = ObscuraSession.createClient(username)
+            val request = c.beginLink(username, password, ObscuraSession.deviceName)
+            pendingLink = PendingLink(c, request)
+            request.code
+        }
+    }
+
+    /** Cancellable with [cancelLink]; the kit bounds the wait by the link session's expiry. */
+    @ReactMethod
+    fun completeLink(promise: Promise) {
+        val pending = pendingLink
+        pendingLink = null
+        if (pending == null || pending.client !== client) {
+            promise.rejectKit("LINK_ERROR", ObscuraError.InvalidArgument("No link in progress"))
+            return
+        }
+        linkJob = authenticate(promise, "LINK_ERROR") {
+            pending.client.completeLink(pending.request)
+            null
+        }
+    }
+
+    /** Resolves once a waiting [completeLink] has settled, so the next auth call does not race it. */
+    @ReactMethod
+    fun cancelLink(promise: Promise) {
+        pendingLink = null
+        val job = linkJob
+        linkJob = null
+        scope.launch {
+            job?.cancelAndJoin()
+            promise.resolve(null)
         }
     }
 
@@ -295,6 +350,53 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     @ReactMethod fun getUserId(promise: Promise) { promise.resolve(client?.userId) }
     @ReactMethod fun getUsername(promise: Promise) { promise.resolve(client?.username) }
     @ReactMethod fun getDeviceId(promise: Promise) { promise.resolve(client?.deviceId) }
+
+    @ReactMethod
+    fun isPrimary(promise: Promise) {
+        scope.launch {
+            try { promise.resolve(client?.isPrimary() ?: false) }
+            catch (e: Exception) { promise.rejectKit("IS_PRIMARY_ERROR", e) }
+        }
+    }
+
+    // ─── Devices ────────────────────────────────────────────────────────────
+
+    @ReactMethod
+    fun approveLink(code: String, promise: Promise) {
+        scope.launch {
+            try {
+                requireClient().approveLink(code)
+                promise.resolve(null)
+            } catch (e: Exception) {
+                promise.rejectKit("APPROVE_LINK_ERROR", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun getDevices(promise: Promise) {
+        scope.launch {
+            try {
+                val arr = Arguments.createArray()
+                for (d in requireClient().devices()) arr.pushMap(deviceToMap(d))
+                promise.resolve(arr)
+            } catch (e: Exception) {
+                promise.rejectKit("GET_DEVICES_ERROR", e)
+            }
+        }
+    }
+
+    /** Unlinking this device wipes it, so the host releases the client as [wipeDevice] does. */
+    @ReactMethod
+    fun unlinkDevice(deviceId: String, promise: Promise) {
+        authenticate(promise, "UNLINK_ERROR") {
+            val c = requireClient()
+            val self = deviceId == c.deviceId
+            c.unlinkDevice(deviceId)
+            if (self) ObscuraSession.destroyClient()
+            null
+        }
+    }
 
     // ─── Friends ────────────────────────────────────────────────────────────
 
@@ -811,6 +913,14 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     // ─── Marshallers ────────────────────────────────────────────────────────
+
+    private fun deviceToMap(d: DeviceInfo): WritableMap =
+        Arguments.createMap().apply {
+            putString("deviceId", d.deviceId)
+            putString("name", d.name)
+            putBoolean("isPrimary", d.isPrimary)
+            putBoolean("isThisDevice", d.isThisDevice)
+        }
 
     private fun friendToMap(f: FriendData, status: String): WritableMap =
         Arguments.createMap().apply {
