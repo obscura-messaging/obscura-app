@@ -2,7 +2,7 @@
 
 These are the semantics the app owns in `src/models/`, `src/domain/` and
 `src/state/`. The kit only stores and sends opaque bytes
-([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md)).
+([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md)).
 
 ## Models
 
@@ -120,3 +120,19 @@ The rules for `directMessage` and `pix` are in `src/domain/seen.ts` and
   row hides an expired story until the sweep erases it.
 - **Sweep.** `src/state/expiry.ts` runs on cold start, reconnect, foreground and
   every 30 s while signed in.
+
+## Devices
+
+An account has one primary device, the first one provisioned, and any number of
+linked devices that share its identity. Only the primary adds, accepts and
+removes friends, links devices and unlinks other devices; a linked device hides
+those actions and treats `NOT_PRIMARY` as proof that it is not the primary
+(`src/state/devices.ts`). A linked device is never promoted: losing the primary
+means resetting the account, which signs out every device and shows friends a
+safety-number change.
+
+`src/state/login.ts` drives sign-in: an account without devices makes this
+device its primary, and an account with devices links it. The new device shows
+its link code as a QR code (`obscura:link:<code>`, `src/domain/qr.ts`); the
+primary scans or pastes it, sees the device name the kit reads from the code
+and approves it. The app never parses the code itself.

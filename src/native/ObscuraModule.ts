@@ -67,9 +67,17 @@ export interface LaunchIntent {
 
 export type LoginScenario =
   | 'existingDevice'
-  | 'newDevice'
+  | 'linkRequired'
   | 'deviceMismatch'
   | 'invalidCredentials';
+
+/** One device of the signed-in account. */
+export interface DeviceInfo {
+  deviceId: string;
+  name: string | null;
+  isPrimary: boolean;
+  isThisDevice: boolean;
+}
 
 /** The `code` of a kit rejection, mirroring `ObscuraError.kt`. Other failures use a per-method code. */
 export type ObscuraErrorCode =
@@ -80,7 +88,9 @@ export type ObscuraErrorCode =
   | 'CONNECTION_FAILED'
   | 'SEND_FAILED'
   | 'PROTOCOL_VIOLATION'
-  | 'STORAGE_ERROR';
+  | 'STORAGE_ERROR'
+  | 'NOT_PRIMARY'
+  | 'LINK_FAILED';
 
 type EventModule = NonNullable<ConstructorParameters<typeof NativeEventEmitter>[0]>;
 
@@ -88,7 +98,13 @@ type EventModule = NonNullable<ConstructorParameters<typeof NativeEventEmitter>[
 export interface ObscuraBridge extends TurboModule, EventModule {
   registerUser(username: string, password: string): Promise<void>;
   login(username: string, password: string): Promise<LoginScenario>;
-  loginAndProvision(username: string, password: string): Promise<void>;
+  /** Deletes every device of the account, wipes local data, and provisions this device as the new primary. */
+  resetAccount(username: string, password: string): Promise<void>;
+  /** Opens a link session for this device and resolves the code to show the primary. */
+  beginLink(username: string, password: string): Promise<string>;
+  /** Waits for the primary to approve the pending link, then provisions this device and connects. */
+  completeLink(): Promise<void>;
+  cancelLink(): Promise<void>;
   connect(): Promise<void>;
   logout(): Promise<void>;
   wipeDevice(): Promise<void>;
@@ -98,6 +114,14 @@ export interface ObscuraBridge extends TurboModule, EventModule {
   getUserId(): Promise<string | null>;
   getUsername(): Promise<string | null>;
   getDeviceId(): Promise<string | null>;
+  isPrimary(): Promise<boolean>;
+
+  /** The device name in a link code; rejects `INVALID_ARGUMENT` for anything else. */
+  linkCodeDeviceName(code: string): Promise<string>;
+  /** Primary only. */
+  approveLink(code: string): Promise<void>;
+  getDevices(): Promise<DeviceInfo[]>;
+  unlinkDevice(deviceId: string): Promise<void>;
 
   acceptFriend(userId: string): Promise<void>;
   removeFriend(userId: string): Promise<void>;

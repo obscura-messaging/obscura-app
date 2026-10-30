@@ -33,6 +33,8 @@ import java.util.Locale
 object ObscuraSession {
     private const val TAG = "ObscuraSession"
     private const val API_URL = "https://obscura.barrelmaker.dev"
+    /** This device's name on the account, shown in device lists and on the primary when linking. */
+    val deviceName: String = android.os.Build.MODEL
 
     interface EventSink {
         fun onConnectionChanged(state: ConnectionState)
@@ -67,7 +69,7 @@ object ObscuraSession {
         override fun ackFailed(envelopeId: String, reason: String) { Log.w(TAG, "ack failed $envelopeId: $reason") }
         override fun tokenRefreshFailed(attempt: Int, reason: String) { Log.e(TAG, "token refresh failed ($attempt): $reason") }
         override fun preKeyReplenishFailed(reason: String) { Log.w(TAG, "prekey replenish failed: $reason") }
-        override fun identityChanged(address: String) { Log.w(TAG, "identity changed: $address") }
+        override fun identityChanged(userId: String) { Log.w(TAG, "identity changed: $userId") }
         override fun databaseError(store: String, operation: String, reason: String) { Log.e(TAG, "db error $store.$operation: $reason") }
     }
 
@@ -136,7 +138,7 @@ object ObscuraSession {
             openDatabase(storageName, dbName)
         }
         return ObscuraClient(
-            ObscuraConfig(apiUrl = API_URL, deviceName = android.os.Build.MODEL),
+            ObscuraConfig(apiUrl = API_URL, deviceName = deviceName),
             driver = driver,
             sessionStorage = sessionStorage,
         ).also {

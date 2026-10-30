@@ -23,8 +23,9 @@ only what the types cannot express. Kit semantics behind each call are in
 
 A kit failure rejects with its `ObscuraErrorCode`. Any other failure rejects
 with a per-method code such as `LOGIN_ERROR`, `INBOX_PEEK_ERROR` or
-`ENTRY_PUT_ERROR`. `DIRECT_ROUTING_UNRESOLVED` is an app error and never crosses
-the bridge.
+`ENTRY_PUT_ERROR`. An auth call cancelled before it settles rejects with
+`CANCELLED`. `DIRECT_ROUTING_UNRESOLVED` is an app error and never crosses the
+bridge.
 
 ## Methods
 
@@ -32,7 +33,14 @@ All methods exist on both platforms. Behavior beyond the types:
 
 | Method | Behavior |
 | --- | --- |
-| `login` | Returns one of the four outcomes in [Login][kit-login]. Persists the session only for `existingDevice`. The app handles the other outcomes in `src/state/login.ts`: `deviceMismatch` calls `wipeDevice` then `loginAndProvision`. |
+| `login` | Resolves `existingDevice` (authenticated as the stored device), `linkRequired` (no stored device; opens a link session), `deviceMismatch` (the stored device no longer belongs to the account) or `invalidCredentials`. Persists the session only for `existingDevice`. `src/state/login.ts` handles the rest: `deviceMismatch` calls `wipeDevice` and logs in again, and `linkRequired` links this device. |
+| `registerUser` | Creates the account and provisions this device as its primary, with a new identity. |
+| `resetAccount` | Deletes every device of the account on the server, wipes old local data, and provisions this device as the new primary with a new identity. Peers see the new primary's identity as a change. |
+| `beginLink` | Reuses the link session from `login` (or opens a new one) and resolves only its code, which the app shows as a QR code. The bridge keeps the pending request, with its ephemeral key, in one slot that JS never reads; another `beginLink`, `completeLink` or `cancelLink` clears it. |
+| `completeLink` | Takes the pending request, waits for the primary's approval, provisions this device as a linked device and connects. Rejects `LINK_FAILED` when the session expires, `INVALID_ARGUMENT` without a pending request, and `CANCELLED` after `cancelLink`. It holds the auth lock while it waits. |
+| `cancelLink` | Drops the pending request and cancels a waiting `completeLink`, resolving once it has settled. |
+| `linkCodeDeviceName` | Reads the device name from a link code with the kit's parser, so the primary can confirm it before `approveLink`. Rejects `INVALID_ARGUMENT` for anything that is not a link code. |
+| `approveLink`, `unlinkDevice`, `addFriendByCode`, `acceptFriend`, `removeFriend` | Primary only: `NOT_PRIMARY` on a linked device, except that a linked device may `unlinkDevice` itself. Unlinking this device wipes it and the host releases the client; the primary cannot unlink itself. |
 | `wipeDevice` | The kit logs out, clears its persisted session and securely wipes local data; the host releases the client. |
 | `entryPut` | A blind upsert: the app merges first. It emits no event, so the app refreshes itself. |
 | `entryGet`, `entryErase` | Take a list of IDs; missing IDs are skipped. Each `entryErase` call checkpoints the WAL, so erase in batches. |
@@ -107,8 +115,7 @@ different clients against the same session store.
 5. Emit events only through each bridge's `emit` helper.
 6. If the types do not capture its behavior, add a row here.
 
-[kit]: https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md
-[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md#envelope-identity
-[kit-login]: https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md#login
-[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md#inbox
-[kit-send]: https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md#send
+[kit]: https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md
+[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md#envelope-identity
+[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md#inbox
+[kit-send]: https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md#send

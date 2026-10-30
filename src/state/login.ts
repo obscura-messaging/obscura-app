@@ -10,33 +10,70 @@ export function credentialsProblem(username: string, password: string): string |
   return null;
 }
 
-export async function register(username: string, password: string): Promise<void> {
-  await Obscura.registerUser(username, password);
+async function signIn(): Promise<void> {
   await Obscura.connect();
   useStore.setState({ authed: true });
 }
 
+export async function register(username: string, password: string): Promise<void> {
+  await Obscura.registerUser(username, password);
+  await signIn();
+}
+
+export type LogInResult = 'signedIn' | 'invalidCredentials' | 'linkRequired';
+
 /**
- * Log in and connect, provisioning this phone as a device when the server has none for it.
- * Resolves `false` when the server rejected the credentials.
+ * Log in and connect an existing device. An unprovisioned phone needs to be linked by the
+ * account's primary first (`linkRequired`).
  */
-export async function logIn(username: string, password: string): Promise<boolean> {
-  const scenario = await Obscura.login(username, password);
+export async function logIn(username: string, password: string): Promise<LogInResult> {
+  let scenario = await Obscura.login(username, password);
+  if (scenario === 'deviceMismatch') {
+    // The account no longer has this device (unlinked or reset), so start over as a fresh install.
+    await Obscura.wipeDevice();
+    scenario = await Obscura.login(username, password);
+  }
   switch (scenario) {
     case 'invalidCredentials':
-      return false;
+    case 'linkRequired':
+      return scenario;
     case 'deviceMismatch':
-      // The server no longer knows this device, so start over as a fresh install.
-      await Obscura.wipeDevice();
-      await Obscura.loginAndProvision(username, password);
-      break;
-    case 'newDevice':
-      await Obscura.loginAndProvision(username, password);
-      break;
+      throw new Error('The server rejected this device after a wipe');
     case 'existingDevice':
       break;
   }
-  await Obscura.connect();
+  await signIn();
+  return 'signedIn';
+}
+
+let linkAttempt = 0;
+
+/**
+ * Link this phone to an account: `onCode` receives the code for the primary to scan, then this waits
+ * for its approval. The kit provisions and connects; rejects `CANCELLED` after `cancelLink`.
+ */
+export async function linkThisDevice(
+  username: string, password: string, onCode: (code: string) => void,
+): Promise<void> {
+  const attempt = ++linkAttempt;
+  const code = await Obscura.beginLink(username, password);
+  if (attempt !== linkAttempt) {
+    // Cancelled while the session opened: drop the request the bridge now holds.
+    await Obscura.cancelLink();
+    throw Object.assign(new Error('Link cancelled'), { code: 'CANCELLED' });
+  }
+  onCode(code);
+  await Obscura.completeLink();
   useStore.setState({ authed: true });
-  return true;
+}
+
+export function cancelLink(): Promise<void> {
+  linkAttempt += 1;
+  return Obscura.cancelLink();
+}
+
+/** For a lost primary: delete every device of the account and start over with this phone as primary. */
+export async function resetAccount(username: string, password: string): Promise<void> {
+  await Obscura.resetAccount(username, password);
+  await signIn();
 }

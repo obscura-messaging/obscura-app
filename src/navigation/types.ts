@@ -31,6 +31,8 @@ export type RootStackParamList = {
   Profile: undefined;
   AddFriend: undefined;
   ScanFriend: undefined;
+  Devices: undefined;
+  ScanLink: undefined;
 };
 
 export type RootStackScreenProps<T extends keyof RootStackParamList> =
