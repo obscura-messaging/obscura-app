@@ -2,7 +2,7 @@
 
 These are the semantics the app owns in `src/models/`, `src/domain/` and
 `src/state/`. The kit only stores and sends opaque bytes
-([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/0bb6a281454461ddda38d45c4bebbd68e3b81a78/docs/KIT_API.md)).
+([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md)).
 
 ## Models
 

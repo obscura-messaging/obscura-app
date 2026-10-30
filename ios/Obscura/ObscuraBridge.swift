@@ -169,22 +169,9 @@ extension ObscuraBridge {
             switch try await c.login(username, password) {
             case .existingDevice: return "existingDevice"
             case .linkRequired: return "linkRequired"
-            case .noDevices: return "noDevices"
             case .deviceMismatch: return "deviceMismatch"
             case .invalidCredentials: return "invalidCredentials"
             }
-        }
-    }
-
-    @objc(provisionPrimary:password:resolver:rejecter:)
-    func provisionPrimary(_ username: String, password: String,
-                          resolver resolve: @escaping RCTPromiseResolveBlock,
-                          rejecter reject: @escaping RCTPromiseRejectBlock) {
-        authenticate(resolve, reject, "PROVISION_ERROR") {
-            let c = try ObscuraSession.shared.makeUserClient(username: username)
-            try await ObscuraSession.shared.replaceClient(c)
-            try await c.provisionPrimary(username, password)
-            return nil
         }
     }
 
@@ -196,7 +183,6 @@ extension ObscuraBridge {
             let c = try ObscuraSession.shared.makeUserClient(username: username)
             try await ObscuraSession.shared.replaceClient(c)
             try await c.resetAccount(username, password)
-            ObscuraSession.shared.discardClient()
             return nil
         }
     }

@@ -68,7 +68,6 @@ export interface LaunchIntent {
 export type LoginScenario =
   | 'existingDevice'
   | 'linkRequired'
-  | 'noDevices'
   | 'deviceMismatch'
   | 'invalidCredentials';
 
@@ -99,8 +98,7 @@ type EventModule = NonNullable<ConstructorParameters<typeof NativeEventEmitter>[
 export interface ObscuraBridge extends TurboModule, EventModule {
   registerUser(username: string, password: string): Promise<void>;
   login(username: string, password: string): Promise<LoginScenario>;
-  provisionPrimary(username: string, password: string): Promise<void>;
-  /** Deletes every device of the account, then this device's local data. */
+  /** Deletes every device of the account, wipes local data, and provisions this device as the new primary. */
   resetAccount(username: string, password: string): Promise<void>;
   /** Opens a link session for this device and resolves the code to show the primary. */
   beginLink(username: string, password: string): Promise<string>;

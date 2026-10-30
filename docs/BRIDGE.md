@@ -33,10 +33,10 @@ All methods exist on both platforms. Behavior beyond the types:
 
 | Method | Behavior |
 | --- | --- |
-| `login` | Resolves `existingDevice` (authenticated as the stored device), `linkRequired` (no stored device; the account has devices), `noDevices` (no stored device; the account has none), `deviceMismatch` (the stored device no longer belongs to the account) or `invalidCredentials`. Persists the session only for `existingDevice`. `src/state/login.ts` handles the rest: `noDevices` calls `provisionPrimary`, `deviceMismatch` calls `wipeDevice` and logs in again, and `linkRequired` links this device. |
-| `registerUser`, `provisionPrimary` | Make this device the primary of the account, with a new identity. |
-| `resetAccount` | Deletes every device of the account on the server, then wipes this device; the host releases the client. Peers see the next primary's identity as a change. The app calls `provisionPrimary` next. |
-| `beginLink` | Opens a link session and resolves only its code, which the app shows as a QR code. The bridge keeps the pending request, with its ephemeral key and account token, in one slot that JS never reads; another `beginLink`, `completeLink` or `cancelLink` clears it. |
+| `login` | Resolves `existingDevice` (authenticated as the stored device), `linkRequired` (no stored device; opens a link session), `deviceMismatch` (the stored device no longer belongs to the account) or `invalidCredentials`. Persists the session only for `existingDevice`. `src/state/login.ts` handles the rest: `deviceMismatch` calls `wipeDevice` and logs in again, and `linkRequired` links this device. |
+| `registerUser` | Creates the account and provisions this device as its primary, with a new identity. |
+| `resetAccount` | Deletes every device of the account on the server, wipes old local data, and provisions this device as the new primary with a new identity. Peers see the new primary's identity as a change. |
+| `beginLink` | Reuses the link session from `login` (or opens a new one) and resolves only its code, which the app shows as a QR code. The bridge keeps the pending request, with its ephemeral key, in one slot that JS never reads; another `beginLink`, `completeLink` or `cancelLink` clears it. |
 | `completeLink` | Takes the pending request, waits for the primary's approval, provisions this device as a linked device and connects. Rejects `LINK_FAILED` when the session expires, `INVALID_ARGUMENT` without a pending request, and `CANCELLED` after `cancelLink`. It holds the auth lock while it waits. |
 | `cancelLink` | Drops the pending request and cancels a waiting `completeLink`, resolving once it has settled. |
 | `linkCodeDeviceName` | Reads the device name from a link code with the kit's parser, so the primary can confirm it before `approveLink`. Rejects `INVALID_ARGUMENT` for anything that is not a link code. |
@@ -115,7 +115,7 @@ different clients against the same session store.
 5. Emit events only through each bridge's `emit` helper.
 6. If the types do not capture its behavior, add a row here.
 
-[kit]: https://github.com/obscura-messaging/obscura-native/blob/0bb6a281454461ddda38d45c4bebbd68e3b81a78/docs/KIT_API.md
-[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/0bb6a281454461ddda38d45c4bebbd68e3b81a78/docs/KIT_API.md#envelope-identity
-[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/0bb6a281454461ddda38d45c4bebbd68e3b81a78/docs/KIT_API.md#inbox
-[kit-send]: https://github.com/obscura-messaging/obscura-native/blob/0bb6a281454461ddda38d45c4bebbd68e3b81a78/docs/KIT_API.md#send
+[kit]: https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md
+[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md#envelope-identity
+[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md#inbox
+[kit-send]: https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md#send

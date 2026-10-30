@@ -341,18 +341,13 @@ export class FakeObscuraBridge implements ObscuraBridge {
     return this.loginScenario;
   }
 
-  async provisionPrimary(username: string, _password: string): Promise<void> {
-    this.record('provisionPrimary');
-    this.checkFailure('provisionPrimary');
-    this.username = username;
-    this.primary = true;
-    this.__setAuthState('authenticated');
-  }
-
-  async resetAccount(_username: string, _password: string): Promise<void> {
+  async resetAccount(username: string, _password: string): Promise<void> {
     this.record('resetAccount');
     this.checkFailure('resetAccount');
     this.clearLocalState();
+    this.username = username;
+    this.primary = true;
+    this.__setAuthState('authenticated');
   }
 
   async beginLink(username: string, _password: string): Promise<string> {

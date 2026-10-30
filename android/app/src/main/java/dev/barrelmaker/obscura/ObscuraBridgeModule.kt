@@ -217,7 +217,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
             when (ObscuraSession.createClient(username).login(username, password)) {
                 LoginScenario.EXISTING_DEVICE -> "existingDevice"
                 LoginScenario.LINK_REQUIRED -> "linkRequired"
-                LoginScenario.NO_DEVICES -> "noDevices"
                 LoginScenario.DEVICE_MISMATCH -> "deviceMismatch"
                 LoginScenario.INVALID_CREDENTIALS -> "invalidCredentials"
             }
@@ -225,18 +224,9 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun provisionPrimary(username: String, password: String, promise: Promise) {
-        authenticate(promise, "PROVISION_ERROR") {
-            ObscuraSession.createClient(username).provisionPrimary(username, password)
-            null
-        }
-    }
-
-    @ReactMethod
     fun resetAccount(username: String, password: String, promise: Promise) {
         authenticate(promise, "RESET_ERROR") {
             ObscuraSession.createClient(username).resetAccount(username, password)
-            ObscuraSession.destroyClient()
             null
         }
     }

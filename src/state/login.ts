@@ -23,8 +23,8 @@ export async function register(username: string, password: string): Promise<void
 export type LogInResult = 'signedIn' | 'invalidCredentials' | 'linkRequired';
 
 /**
- * Log in and connect, provisioning this phone as the primary of an account without devices. An
- * account with devices needs this phone linked by its primary first (`linkRequired`).
+ * Log in and connect an existing device. An unprovisioned phone needs to be linked by the
+ * account's primary first (`linkRequired`).
  */
 export async function logIn(username: string, password: string): Promise<LogInResult> {
   let scenario = await Obscura.login(username, password);
@@ -39,9 +39,6 @@ export async function logIn(username: string, password: string): Promise<LogInRe
       return scenario;
     case 'deviceMismatch':
       throw new Error('The server rejected this device after a wipe');
-    case 'noDevices':
-      await Obscura.provisionPrimary(username, password);
-      break;
     case 'existingDevice':
       break;
   }
@@ -78,6 +75,5 @@ export function cancelLink(): Promise<void> {
 /** For a lost primary: delete every device of the account and start over with this phone as primary. */
 export async function resetAccount(username: string, password: string): Promise<void> {
   await Obscura.resetAccount(username, password);
-  await Obscura.provisionPrimary(username, password);
   await signIn();
 }

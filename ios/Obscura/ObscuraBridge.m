@@ -11,8 +11,6 @@ RCT_EXTERN_METHOD(registerUser:(NSString *)username password:(NSString *)passwor
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(login:(NSString *)username password:(NSString *)password
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(provisionPrimary:(NSString *)username password:(NSString *)password
-                  resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(resetAccount:(NSString *)username password:(NSString *)password
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(beginLink:(NSString *)username password:(NSString *)password

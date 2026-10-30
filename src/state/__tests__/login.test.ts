@@ -22,16 +22,7 @@ describe('logIn', () => {
     expect(useStore.getState().authed).toBe(true);
   });
 
-  it('provisions the primary of an account without devices, then connects', async () => {
-    bridge.__setLoginScenario('noDevices');
-
-    expect(await logIn('alice', 'password-1234')).toBe('signedIn');
-
-    expect(bridge.__calls).toEqual(['login', 'provisionPrimary', 'connect']);
-    expect(useStore.getState().authed).toBe(true);
-  });
-
-  it('asks for a link when the account already has devices', async () => {
+  it('asks for a link when there is no local device', async () => {
     bridge.__setLoginScenario('linkRequired');
 
     expect(await logIn('alice', 'password-1234')).toBe('linkRequired');
@@ -40,19 +31,19 @@ describe('logIn', () => {
     expect(useStore.getState().authed).toBe(false);
   });
 
-  it('wipes a device the account no longer has, then logs in again', async () => {
+  it('wipes a device the account no longer has, then logs in again to link', async () => {
     bridge.__setLoginScenario('deviceMismatch');
     const login = bridge.login.bind(bridge);
     jest.spyOn(bridge, 'login').mockImplementation(async (u, p) => {
       const scenario = await login(u, p);
-      bridge.__setLoginScenario('noDevices');
+      bridge.__setLoginScenario('linkRequired');
       return scenario;
     });
 
-    expect(await logIn('alice', 'password-1234')).toBe('signedIn');
+    expect(await logIn('alice', 'password-1234')).toBe('linkRequired');
 
-    expect(bridge.__calls).toEqual(['login', 'wipeDevice', 'login', 'provisionPrimary', 'connect']);
-    expect(bridge.authState).toBe('authenticated');
+    expect(bridge.__calls).toEqual(['login', 'wipeDevice', 'login']);
+    expect(bridge.authState).toBe('loggedOut');
   });
 
   it('refuses a second mismatch rather than wiping in a loop', async () => {
@@ -136,14 +127,14 @@ describe('linkThisDevice', () => {
 });
 
 describe('resetAccount', () => {
-  it('resets, provisions this device as the new primary and connects', async () => {
+  it('resets and provisions this device as the new primary, then connects', async () => {
     await resetAccount('alice', 'password-1234');
 
-    expect(bridge.__calls).toEqual(['resetAccount', 'provisionPrimary', 'connect']);
+    expect(bridge.__calls).toEqual(['resetAccount', 'connect']);
     expect(useStore.getState().authed).toBe(true);
   });
 
-  it('provisions nothing when the reset fails', async () => {
+  it('connects nothing when the reset fails', async () => {
     bridge.__failNext('resetAccount', 'HTTP_ERROR');
 
     await expect(resetAccount('alice', 'password-1234')).rejects.toMatchObject({ code: 'HTTP_ERROR' });
