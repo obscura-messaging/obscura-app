@@ -5,6 +5,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Obscura } from '../native/ObscuraModule';
 import { toast } from '../components/Toast';
 import { CodeCard } from '../components/CodeCard';
+import { cleanCode } from '../domain/qr';
 import { useSession } from '../state/store';
 import { primaryOnly } from '../state/devices';
 import { errorMessage, logError } from '../utils/log';
@@ -22,7 +23,7 @@ export function AddFriendScreen() {
   }, []);
 
   const addByCode = async () => {
-    const code = codeInput.trim();
+    const code = cleanCode('friend', codeInput);
     if (!code) return;
     try {
       await primaryOnly(() => Obscura.addFriendByCode(code));

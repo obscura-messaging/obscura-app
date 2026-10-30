@@ -1,5 +1,6 @@
 import { Obscura, type DeviceInfo } from '../native/ObscuraModule';
 import { orderDevices } from '../domain/devices';
+import { cleanCode } from '../domain/qr';
 import { errorCode } from '../utils/log';
 import { resetSession, useStore } from './store';
 
@@ -20,7 +21,7 @@ export async function loadDevices(): Promise<DeviceInfo[]> {
 /** The device name in a pasted or scanned link code, or null when it is not one. */
 export async function linkCodeDeviceName(code: string): Promise<string | null> {
   try {
-    return await Obscura.linkCodeDeviceName(code.trim());
+    return await Obscura.linkCodeDeviceName(cleanCode('link', code));
   } catch (e) {
     if (errorCode(e) === 'INVALID_ARGUMENT') return null;
     throw e;
@@ -28,7 +29,7 @@ export async function linkCodeDeviceName(code: string): Promise<string | null> {
 }
 
 export function approveLink(code: string): Promise<void> {
-  return primaryOnly(() => Obscura.approveLink(code.trim()));
+  return primaryOnly(() => Obscura.approveLink(cleanCode('link', code)));
 }
 
 /** Unlinking this device wipes it and signs out; only the primary unlinks another device. */

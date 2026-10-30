@@ -319,8 +319,11 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun getConnectionState(promise: Promise) {
-        val state = client?.connectionState?.value ?: ConnectionState.DISCONNECTED
-        promise.resolve(state.toJsString())
+        scope.launch {
+            ObscuraSession.waitForRestore()
+            val state = client?.connectionState?.value ?: ConnectionState.DISCONNECTED
+            promise.resolve(state.toJsString())
+        }
     }
 
     @ReactMethod
@@ -347,13 +350,34 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    @ReactMethod fun getUserId(promise: Promise) { promise.resolve(client?.userId) }
-    @ReactMethod fun getUsername(promise: Promise) { promise.resolve(client?.username) }
-    @ReactMethod fun getDeviceId(promise: Promise) { promise.resolve(client?.deviceId) }
+    @ReactMethod
+    fun getUserId(promise: Promise) {
+        scope.launch {
+            ObscuraSession.waitForRestore()
+            promise.resolve(client?.userId)
+        }
+    }
+
+    @ReactMethod
+    fun getUsername(promise: Promise) {
+        scope.launch {
+            ObscuraSession.waitForRestore()
+            promise.resolve(client?.username)
+        }
+    }
+
+    @ReactMethod
+    fun getDeviceId(promise: Promise) {
+        scope.launch {
+            ObscuraSession.waitForRestore()
+            promise.resolve(client?.deviceId)
+        }
+    }
 
     @ReactMethod
     fun isPrimary(promise: Promise) {
         scope.launch {
+            ObscuraSession.waitForRestore()
             try { promise.resolve(client?.isPrimary() ?: false) }
             catch (e: Exception) { promise.rejectKit("IS_PRIMARY_ERROR", e) }
         }

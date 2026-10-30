@@ -17,3 +17,9 @@ export function parseQR(kind: QRKind, value: string | undefined): string | null 
   const code = value.slice(PREFIX[kind].length).trim();
   return code.length > 0 ? code : null;
 }
+
+/** Trims pasted input and strips an `obscura:<kind>:` QR prefix if the user copied a scanned QR value. */
+export function cleanCode(kind: QRKind, input: string): string {
+  const trimmed = input.trim();
+  return parseQR(kind, trimmed) ?? trimmed;
+}

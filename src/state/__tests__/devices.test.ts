@@ -24,10 +24,11 @@ describe('loadDevices', () => {
 });
 
 describe('linkCodeDeviceName', () => {
-  it('reads the name of a trimmed link code through the kit', async () => {
+  it('reads the name of a trimmed or QR-prefixed link code through the kit', async () => {
     const code = await Obscura.beginLink('alice', 'password-1234');
 
     expect(await linkCodeDeviceName(` ${code}\n`)).toBe(FAKE_LINK_DEVICE_NAME);
+    expect(await linkCodeDeviceName(`obscura:link:${code}`)).toBe(FAKE_LINK_DEVICE_NAME);
   });
 
   it('answers null for text that is not a link code', async () => {
