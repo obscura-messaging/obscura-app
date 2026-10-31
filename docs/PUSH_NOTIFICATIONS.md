@@ -30,7 +30,7 @@ content persists in OS databases and backups.
 ## Server contract
 
 ```text
-PUT /v1/push-tokens
+PUT /v1/push-token
 Authorization: Bearer <device-scoped JWT>
 Body: { "token": "<fcm-token>" }
 ```
