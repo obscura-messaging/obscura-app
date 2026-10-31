@@ -1116,7 +1116,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
                     entryId = entryId,
                     sentAt = sentAt.toLong(),
                     payload = payloadJson.toByteArray(),
-                    acceptedDeviceIds = emptySet(),
                 )
                 promise.resolve(sendReportToMap(report))
             } catch (e: Exception) {

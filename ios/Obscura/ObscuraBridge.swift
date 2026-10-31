@@ -582,7 +582,7 @@ extension ObscuraBridge {
             do {
                 let report = try await client.send(
                     to: recipientUserIds, modelKey: modelKey, entryId: entryId,
-                    sentAt: sentAt.uint64Value, payload: Data(payloadJson.utf8), acceptedDeviceIds: []
+                    sentAt: sentAt.uint64Value, payload: Data(payloadJson.utf8)
                 )
                 resolve(ObscuraBridge.sendReportDict(report))
             } catch {
