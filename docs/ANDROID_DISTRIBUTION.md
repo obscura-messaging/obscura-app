@@ -106,8 +106,9 @@ service-account JSON key.
 2. Map `attribute.repository` to `assertion.repository`, and grant the
    `principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/attribute.repository/obscura-messaging/obscura-app`
    principal `roles/iam.workloadIdentityUser` on a dedicated service account.
-3. Grant that service account `roles/firebaseappdistro.admin` in the Firebase
-   project.
+3. Enable `androidpublisher.googleapis.com` in the Google Cloud project and
+   grant that service account **View app information** and **Release to testing
+   tracks** in Google Play Console (**Users and permissions**).
 
 On a repository rename, update both the provider condition and the
 service-account principal; GitHub redirects do not apply to OIDC claims.
@@ -116,7 +117,6 @@ unchanged. Keep workflow paths pinned even when using immutable subject claims.
 
 ## Installing
 
-Firebase emails each new tester an invitation. Once they accept it, they can
-install from the Firebase App Tester page. Later builds signed with the same
-key update in place. The run's GitHub artifact is a fallback. These APKs are
-not Play-ready AABs; Google Play needs its own versioned release process.
+Testers join once via the **Internal testing** opt-in link in Google Play
+Console (**Testing → Internal testing → Testers → Copy link**). Updates then
+install and auto-update directly through the Google Play Store app.
