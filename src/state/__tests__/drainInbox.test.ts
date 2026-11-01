@@ -306,7 +306,7 @@ describe('draining fully', () => {
   });
 
   it('terminates on an inbox of only undrainable rows', async () => {
-    bridge.__deliverInbox({ kind: 'UNKNOWN', modelKey: null, entryId: null, payload: 'x' });
+    bridge.__deliverInbox({ modelKey: 'unknownModel', payload: 'x' });
 
     const result = await drainInboxFully(5);
 

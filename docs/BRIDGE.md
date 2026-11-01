@@ -115,7 +115,7 @@ different clients against the same session store.
 5. Emit events only through each bridge's `emit` helper.
 6. If the types do not capture its behavior, add a row here.
 
-[kit]: https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md
-[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md#envelope-identity
-[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md#inbox
-[kit-send]: https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md#send
+[kit]: https://github.com/obscura-messaging/obscura-native/blob/9cb1c63778e8860d6d7767338279acdd40611d63/docs/KIT_API.md
+[kit-identity]: https://github.com/obscura-messaging/obscura-native/blob/9cb1c63778e8860d6d7767338279acdd40611d63/docs/KIT_API.md#envelope-identity
+[kit-inbox]: https://github.com/obscura-messaging/obscura-native/blob/9cb1c63778e8860d6d7767338279acdd40611d63/docs/KIT_API.md#inbox
+[kit-send]: https://github.com/obscura-messaging/obscura-native/blob/9cb1c63778e8860d6d7767338279acdd40611d63/docs/KIT_API.md#send

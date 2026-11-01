@@ -82,7 +82,7 @@ describe('attribution — who an entry is from', () => {
       modelKey: 'story',
       entryId: 's_1',
       senderUserId: STRANGER,
-      payload: JSON.stringify({ content: 'x', _authorUserId: 'uAlice', authorUsername: 'alice' }),
+      payload: JSON.stringify({ content: 'x', authorUserId: 'uAlice', authorUsername: 'alice' }),
     });
 
     const plan = planDrain([r], models, empty, SELF);

@@ -4,6 +4,7 @@ import { CodeCard } from '../components/CodeCard';
 import { confirm } from '../components/confirm';
 import { linkProblem, type LinkProblem } from '../domain/devices';
 import { cancelLink, linkThisDevice, resetAccount } from '../state/login';
+import { useStore } from '../state/store';
 import { errorMessage, logError } from '../utils/log';
 import { colors } from '../styles';
 
@@ -30,7 +31,11 @@ export function LinkThisDevice({ username, password, onBack }: LinkThisDevicePro
 
   useEffect(() => {
     start();
-    return () => { cancelLink().catch((e) => logError('link.cancel', e)); };
+    return () => {
+      if (!useStore.getState().authed) {
+        cancelLink().catch((e) => logError('link.cancel', e));
+      }
+    };
   }, [start]);
 
   const reset = async () => {

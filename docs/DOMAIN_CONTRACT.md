@@ -2,7 +2,7 @@
 
 These are the semantics the app owns in `src/models/`, `src/domain/` and
 `src/state/`. The kit only stores and sends opaque bytes
-([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/93ee2b9660b3e5dc086779214879042f6824e99f/docs/KIT_API.md)).
+([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/9cb1c63778e8860d6d7767338279acdd40611d63/docs/KIT_API.md)).
 
 ## Models
 
@@ -132,8 +132,10 @@ those actions and treats `NOT_PRIMARY` as proof that it is not the primary
 means resetting the account, which signs out every device and shows friends a
 safety-number change.
 
-`src/state/login.ts` drives sign-in: an account without devices makes this
-device its primary, and an account with devices links it. The new device shows
+`src/state/login.ts` drives sign-in: registration and account reset provision
+this device as the primary, existing devices sign in directly, and an
+unprovisioned device on an existing account links via the primary. The new
+device shows
 its link code as a QR code (`obscura:link:<code>`, `src/domain/qr.ts`); the
 primary scans or pastes it, sees the device name the kit reads from the code
 and approves it. The app never parses the code itself.

@@ -153,7 +153,7 @@ extension ObscuraBridge {
                       rejecter reject: @escaping RCTPromiseRejectBlock) {
         authenticate(resolve, reject, "REGISTER_ERROR") {
             let c = try ObscuraSession.shared.makeUserClient(username: username)
-            try await ObscuraSession.shared.replaceClient(c)
+            try await ObscuraSession.shared.replaceClient(c, username: username)
             try await c.register(username, password)
             return nil
         }
@@ -165,7 +165,7 @@ extension ObscuraBridge {
                rejecter reject: @escaping RCTPromiseRejectBlock) {
         authenticate(resolve, reject, "LOGIN_ERROR") {
             let c = try ObscuraSession.shared.makeUserClient(username: username)
-            try await ObscuraSession.shared.replaceClient(c)
+            try await ObscuraSession.shared.replaceClient(c, username: username)
             switch try await c.login(username, password) {
             case .existingDevice: return "existingDevice"
             case .linkRequired: return "linkRequired"
@@ -181,7 +181,7 @@ extension ObscuraBridge {
                       rejecter reject: @escaping RCTPromiseRejectBlock) {
         authenticate(resolve, reject, "RESET_ERROR") {
             let c = try ObscuraSession.shared.makeUserClient(username: username)
-            try await ObscuraSession.shared.replaceClient(c)
+            try await ObscuraSession.shared.replaceClient(c, username: username)
             try await c.resetAccount(username, password)
             return nil
         }
@@ -192,9 +192,8 @@ extension ObscuraBridge {
                    resolver resolve: @escaping RCTPromiseResolveBlock,
                    rejecter reject: @escaping RCTPromiseRejectBlock) {
         pendingLink = nil
-        authenticate(resolve, reject, "LINK_ERROR") {
-            let c = try ObscuraSession.shared.makeUserClient(username: username)
-            try await ObscuraSession.shared.replaceClient(c)
+        linkTask = authenticate(resolve, reject, "LINK_ERROR") {
+            let c = try await ObscuraSession.shared.reuseOrReplaceClient(username: username)
             let request = try await c.beginLink(username, password, deviceName: ObscuraSession.shared.deviceName)
             self.pendingLink = PendingLink(client: c, request: request)
             return request.code

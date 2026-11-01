@@ -20,7 +20,6 @@ import dev.barrelmaker.obscura.kit.stores.StoredEntry
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.sync.Mutex
-import org.json.JSONObject
 
 private const val TAG = "ObscuraBridge"
 
@@ -199,8 +198,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    /** Fired after a successful local CRUD on a model. Lets screens re-query reactively. */
-
     // ─── Auth ───────────────────────────────────────────────────────────────
 
     @ReactMethod
@@ -234,8 +231,8 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     @ReactMethod
     fun beginLink(username: String, password: String, promise: Promise) {
         pendingLink = null
-        authenticate(promise, "LINK_ERROR") {
-            val c = ObscuraSession.createClient(username)
+        linkJob = authenticate(promise, "LINK_ERROR") {
+            val c = ObscuraSession.reuseOrCreateClient(username)
             val request = c.beginLink(username, password, ObscuraSession.deviceName)
             pendingLink = PendingLink(c, request)
             request.code
@@ -1149,26 +1146,4 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     private fun ReadableArray.toStringList(): List<String> =
         (0 until size()).mapNotNull { getString(it) }
-
-    private fun jsonStringToMap(jsonStr: String): Map<String, Any?> {
-        val map = mutableMapOf<String, Any?>()
-        try {
-            val json = JSONObject(jsonStr)
-            for (key in json.keys()) {
-                map[key] = when {
-                    json.isNull(key) -> null
-                    else -> {
-                        val v = json.get(key)
-                        when (v) {
-                            is String -> v
-                            is Number -> if (v.toDouble() == v.toLong().toDouble()) v.toLong() else v.toDouble()
-                            is Boolean -> v
-                            else -> v.toString()
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-        return map
-    }
 }

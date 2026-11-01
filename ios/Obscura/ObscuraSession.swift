@@ -20,6 +20,7 @@ final class ObscuraSession {
     private static let apiURL = "https://obscura.barrelmaker.dev"
 
     private(set) var client: ObscuraClient?
+    private var clientUsername: String?
     private(set) var appInForeground = true
     let logger = BridgeLogger()
     /// This device's name on the account, shown in device lists and on the primary when linking.
@@ -37,6 +38,7 @@ final class ObscuraSession {
             if let username = try storage.load()?["username"] {
                 let restored = try makeUserClient(username: username)
                 client = restored
+                clientUsername = username.lowercased()
                 observeMessages(restored)
                 restoreTask = Task {
                     if !(await restored.restorePersistedSession()) {
@@ -73,14 +75,28 @@ final class ObscuraSession {
         )
     }
 
-    func replaceClient(_ next: ObscuraClient?) async throws {
+    func replaceClient(_ next: ObscuraClient?, username: String? = nil) async throws {
         restoreTask?.cancel()
         await restoreTask?.value
         restoreTask = nil
         if let previous = client { try await previous.logout() }
         client = next
+        clientUsername = username?.lowercased()
         observeMessages(next)
         onClientReplaced?(next)
+    }
+
+    func reuseOrReplaceClient(username: String) async throws -> ObscuraClient {
+        restoreTask?.cancel()
+        await restoreTask?.value
+        restoreTask = nil
+        let storageName = username.lowercased()
+        if let existing = client, clientUsername == storageName, existing.authState == .loggedOut {
+            return existing
+        }
+        let next = try makeUserClient(username: username)
+        try await replaceClient(next, username: storageName)
+        return next
     }
 
     func readyClient() async throws -> ObscuraClient {
@@ -95,6 +111,7 @@ final class ObscuraSession {
 
     func discardClient() {
         client = nil
+        clientUsername = nil
         observeMessages(nil)
         onClientReplaced?(nil)
     }

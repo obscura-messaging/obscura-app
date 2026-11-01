@@ -189,7 +189,7 @@ describe('the outbox', () => {
 
     await flushOutbox({ selfUserId: SELF, friends: FRIENDS });
 
-    expect(JSON.parse(bridge.__sent[0].payloadJson)._authorUserId).toBeUndefined();
+    expect(JSON.parse(bridge.__sent[0].payloadJson).undelivered).toBeUndefined();
     expect((await Obscura.entryAll('story'))[0].localMetadata).toBeNull();
   });
 
