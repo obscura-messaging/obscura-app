@@ -17,7 +17,12 @@ final class BridgeLogger: ObscuraLogger {
 @MainActor
 final class ObscuraSession {
     static let shared = ObscuraSession()
-    private static let apiURL = "https://obscura.barrelmaker.dev"
+    private static let apiURL: String = {
+        guard let url = Bundle.main.object(forInfoDictionaryKey: "ObscuraAPIURL") as? String, !url.isEmpty else {
+            fatalError("ObscuraAPIURL missing from Info.plist")
+        }
+        return url
+    }()
 
     private(set) var client: ObscuraClient?
     private var clientUsername: String?

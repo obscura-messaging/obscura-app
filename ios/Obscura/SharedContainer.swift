@@ -11,7 +11,7 @@ enum SharedContainer {
     /// group registered against the team in the Apple Developer portal — an unregistered group
     /// silently yields a `nil` container rather than a build error, which is what `isAvailable`
     /// below is for.
-    static let appGroupId = "group.dev.barrelmaker.obscura"
+    static let appGroupId = "group.\(Bundle.main.bundleIdentifier ?? "dev.barrelmaker.obscura.dev")"
 
     /// The shared container, or `nil` when the entitlement is absent or unprovisioned.
     static var containerURL: URL? {

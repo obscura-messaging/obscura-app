@@ -7,25 +7,37 @@ workflow** on `main`. `scripts/verify-internal-build.sh` checks the starting
 and rerunning actor. It also requires the commit to be the current `main` tip
 with a successful `main` CI run. Android and iOS then run independently.
 
+Internal builds use the `dev` environment (`dev.barrelmaker.obscura.dev`,
+display name **Obscura Dev**, pointing at `https://devscura.barrelmaker.dev`),
+so **Obscura Dev** can be installed side-by-side with the production
+`dev.barrelmaker.obscura` app (`https://obscura.barrelmaker.dev`).
+
 `.github/workflows/internal-android.yml` builds that commit once as a signed,
-minified universal APK. It keeps the APK and release notes as a GitHub artifact
-for 30 days. A second job verifies the APK's checksum and commit, then sends it
-to Firebase App Distribution. There is no tag and no Google Play upload.
+minified Android App Bundle (`.aab`). It keeps the `.aab` and release notes as
+a GitHub artifact for 30 days. A second job verifies the bundle's checksum and
+commit, then uploads it to the Google Play Console **Internal testing** track.
 The version code is 1000 plus the release run number. Never rerun a release
 that has already uploaded; retry the failed jobs or start a new run.
 
-## Firebase
+## Google Play Console & Firebase (FCM)
 
-The Firebase Android app must use package `dev.barrelmaker.obscura`. Enable App
-Distribution, create a tester group, and add each tester's Google account. For
-local push testing, use the real config
-([CONTRIBUTING](../CONTRIBUTING.md#setup-and-builds)).
+1. **Google Play Console:** Create the internal app entry for
+   `dev.barrelmaker.obscura.dev` (**Obscura Dev**), upload the first `.aab`
+   once manually to initialize the app in Play Console, add testers to the
+   **Internal testing** track, and grant your Google Cloud Workload Identity
+   service account **Release to testing tracks** permission under **Users and
+   permissions**.
+2. **Firebase (FCM push only):** Register `dev.barrelmaker.obscura.dev` (and
+   `dev.barrelmaker.obscura` for production) in the Firebase project so
+   `google-services.json` contains both package names. For local push testing,
+   place the real config at `android/app/google-services.json`
+   ([CONTRIBUTING](../CONTRIBUTING.md#setup-and-builds)).
 
 ## Signing key
 
-Create one long-lived key. Keep an encrypted backup outside the repository.
-Every distributed APK must use this key, or it cannot update an existing
-install. PKCS12 uses the same password for the store and the key.
+Create one long-lived upload key. Keep an encrypted backup outside the
+repository. Every distributed bundle must use this key. PKCS12 uses the same
+password for the store and the key.
 
 ```bash
 mkdir -p ~/.config/obscura
@@ -36,10 +48,10 @@ keytool -genkeypair -v \
   -keyalg RSA -keysize 4096 -validity 10000
 ```
 
-For a local signed build, create the gitignored `android/keystore.properties`.
+For a local signed bundle, create the gitignored `android/keystore.properties`.
 The matching `ANDROID_RELEASE_STORE_FILE`, `ANDROID_RELEASE_STORE_PASSWORD`,
 `ANDROID_RELEASE_KEY_ALIAS` and `ANDROID_RELEASE_KEY_PASSWORD` environment
-variables override it. Then run `just android-distribution 1 1.0.0-test.1`.
+variables override it. Then run `just android-distribution 1 1.0.0-dev.1 dev`.
 Unlike `just android-release`, it fails if signing, version metadata or the
 real Firebase config is missing.
 
@@ -57,9 +69,7 @@ Deployments are allowed only from `main`.
 | Variable | Value |
 | --- | --- |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Full workload identity provider resource name |
-| `GCP_SERVICE_ACCOUNT` | Distribution service-account email |
-| `FIREBASE_ANDROID_APP_ID` | Firebase Android App ID |
-| `FIREBASE_TESTER_GROUP` | App Distribution group alias |
+| `GCP_SERVICE_ACCOUNT` | Distribution service-account email (granted Play Console access) |
 
 | Secret | Value |
 | --- | --- |
@@ -69,10 +79,11 @@ Deployments are allowed only from `main`.
 | `ANDROID_RELEASE_KEY_ALIAS` | Normally `obscura-release` |
 | `ANDROID_RELEASE_KEY_PASSWORD` | PKCS12 password |
 
-Before building, the build job checks the config's package and App ID. It
-writes credentials only to runner-temporary or gitignored paths. The delivery
-job receives only the APK and the release notes, and it authenticates to Google
-Cloud only after verifying them.
+Before building, the build job checks that `google-services.json` includes
+`dev.barrelmaker.obscura.dev`. It writes credentials only to runner-temporary
+or gitignored paths. The delivery job receives only the `.aab` and the release
+notes, authenticates to Google Cloud via OIDC after verifying them, and commits
+the bundle to the `internal` track via the Google Play Android Developer API.
 
 ## Google authentication
 

@@ -15,18 +15,18 @@ permissions:
 
 jobs:
   build:
-    name: Build signed APK
+    name: Build signed AAB
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: android-internal
     outputs:
       artifact_name: ${{ steps.metadata.outputs.artifact_name }}
-      apk_sha256: ${{ steps.verify.outputs.apk_sha256 }}
+      aab_sha256: ${{ steps.verify.outputs.aab_sha256 }}
       sha: ${{ steps.metadata.outputs.sha }}
     env:
       DISTRIBUTION_REF: ${{ inputs.sha }}
       BUILD_NUMBER: ${{ inputs.build_number }}
-      FIREBASE_ANDROID_APP_ID: ${{ vars.FIREBASE_ANDROID_APP_ID }}
+      ANDROID_PACKAGE_NAME: dev.barrelmaker.obscura.dev
 
     steps:
       - name: Checkout tested commit
@@ -67,8 +67,7 @@ jobs:
             ANDROID_RELEASE_KEYSTORE_BASE64 \
             ANDROID_RELEASE_STORE_PASSWORD \
             ANDROID_RELEASE_KEY_ALIAS \
-            ANDROID_RELEASE_KEY_PASSWORD \
-            FIREBASE_ANDROID_APP_ID
+            ANDROID_RELEASE_KEY_PASSWORD
           do
             [[ -n "${!name:-}" ]] || {
               echo "error: required android-internal environment value $name is missing" >&2
@@ -87,8 +86,7 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
 
-          const expectedPackage = 'dev.barrelmaker.obscura';
-          const expectedAppId = process.env.FIREBASE_ANDROID_APP_ID;
+          const expectedPackage = process.env.ANDROID_PACKAGE_NAME;
           const config = JSON.parse(
             fs.readFileSync('android/app/google-services.json', 'utf8'),
           );
@@ -101,11 +99,6 @@ jobs:
           if (!client) {
             throw new Error(
               `Firebase config does not contain Android package ${expectedPackage}`,
-            );
-          }
-          if (client.client_info?.mobilesdk_app_id !== expectedAppId) {
-            throw new Error(
-              'Firebase config App ID does not match FIREBASE_ANDROID_APP_ID',
             );
           }
           NODE
@@ -121,8 +114,8 @@ jobs:
           }
           short_sha="$(git rev-parse --short=7 HEAD)"
           version_code="$BUILD_NUMBER"
-          version_name="1.0.0-internal.${version_code}+${short_sha}"
-          artifact_name="obscura-android-${version_code}-${short_sha}"
+          version_name="1.0.0-dev.${version_code}+${short_sha}"
+          artifact_name="obscura-dev-android-${version_code}-${short_sha}"
 
           {
             echo "sha=$sha"
@@ -134,12 +127,12 @@ jobs:
 
           mkdir -p dist
           {
-            echo "Obscura Android internal build ${version_name}"
+            echo "Obscura Dev Android internal build ${version_name}"
             echo
             git show -s --format='%s%n%nCommit: %H'
           } > dist/release-notes.txt
 
-      - name: Build signed distribution APK
+      - name: Build signed distribution AAB
         env:
           ANDROID_RELEASE_STORE_FILE: ${{ runner.temp }}/android-release.p12
           ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
@@ -149,34 +142,26 @@ jobs:
           just android-distribution
           '${{ steps.metadata.outputs.version_code }}'
           '${{ steps.metadata.outputs.version_name }}'
+          'dev'
 
-      - name: Verify and stage APK
+      - name: Verify and stage AAB
         id: verify
         env:
           ARTIFACT_NAME: ${{ steps.metadata.outputs.artifact_name }}
         run: |
           set -euo pipefail
-          source_apk="android/app/build/outputs/apk/release/app-universal-release.apk"
-          [[ -f "$source_apk" ]] || {
-            echo "error: universal release APK was not produced" >&2
+          source_aab="android/app/build/outputs/bundle/release/app-release.aab"
+          [[ -f "$source_aab" ]] || {
+            echo "error: release AAB was not produced" >&2
             exit 1
           }
 
           mkdir -p dist
-          cp "$source_apk" "dist/${ARTIFACT_NAME}.apk"
+          cp "$source_aab" "dist/${ARTIFACT_NAME}.aab"
 
-          apksigner="$(
-            find "$ANDROID_HOME/build-tools" -type f -name apksigner -print |
-              sort -V |
-              tail -n 1
-          )"
-          [[ -x "$apksigner" ]] || {
-            echo "error: apksigner was not found" >&2
-            exit 1
-          }
-          "$apksigner" verify --verbose --print-certs \
-            "dist/${ARTIFACT_NAME}.apk"
-          echo "apk_sha256=$(sha256sum "dist/${ARTIFACT_NAME}.apk" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          jarsigner -verify -verbose -certs "dist/${ARTIFACT_NAME}.aab" |
+            grep -q "jar verified."
+          echo "aab_sha256=$(sha256sum "dist/${ARTIFACT_NAME}.aab" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - name: Upload GitHub artifact
         uses: actions/upload-artifact@v7
@@ -187,7 +172,7 @@ jobs:
           retention-days: 30
 
   distribute:
-    name: Distribute signed APK
+    name: Upload to Google Play Internal
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -199,9 +184,9 @@ jobs:
       ARTIFACT_NAME: ${{ needs.build.outputs.artifact_name }}
       BUILD_SHA: ${{ needs.build.outputs.sha }}
       EXPECTED_REF: ${{ inputs.sha }}
-      EXPECTED_SHA256: ${{ needs.build.outputs.apk_sha256 }}
-      FIREBASE_ANDROID_APP_ID: ${{ vars.FIREBASE_ANDROID_APP_ID }}
-      FIREBASE_TESTER_GROUP: ${{ vars.FIREBASE_TESTER_GROUP }}
+      EXPECTED_SHA256: ${{ needs.build.outputs.aab_sha256 }}
+      VERSION_CODE: ${{ inputs.build_number }}
+      ANDROID_PACKAGE_NAME: dev.barrelmaker.obscura.dev
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
     steps:
@@ -225,8 +210,6 @@ jobs:
           for name in \
             ARTIFACT_NAME \
             EXPECTED_SHA256 \
-            FIREBASE_ANDROID_APP_ID \
-            FIREBASE_TESTER_GROUP \
             GCP_WORKLOAD_IDENTITY_PROVIDER \
             GCP_SERVICE_ACCOUNT
           do
@@ -235,7 +218,7 @@ jobs:
               exit 1
             }
           done
-          printf '%s  %s\n' "$EXPECTED_SHA256" "dist/${ARTIFACT_NAME}.apk" |
+          printf '%s  %s\n' "$EXPECTED_SHA256" "dist/${ARTIFACT_NAME}.aab" |
             sha256sum --check
           [[ -s dist/release-notes.txt ]] || {
             echo "error: release notes were not included in the build artifact" >&2
@@ -243,16 +226,61 @@ jobs:
           }
 
       - name: Authenticate to Google Cloud
+        id: auth
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
 
-      - name: Distribute to Firebase testers
-        run: >-
-          npx --yes firebase-tools@15.28.2
-          appdistribution:distribute
-          'dist/${{ env.ARTIFACT_NAME }}.apk'
-          --app '${{ env.FIREBASE_ANDROID_APP_ID }}'
-          --groups '${{ env.FIREBASE_TESTER_GROUP }}'
-          --release-notes-file dist/release-notes.txt
+      - name: Upload AAB to Google Play internal track
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          api="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${ANDROID_PACKAGE_NAME}"
+          upload_api="https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/${ANDROID_PACKAGE_NAME}"
+
+          edit_id="$(
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d '{}' \
+              "${api}/edits" | jq -er '.id'
+          )"
+
+          uploaded_code="$(
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"dist/${ARTIFACT_NAME}.aab" \
+              "${upload_api}/edits/${edit_id}/bundles?uploadType=media" | jq -er '.versionCode'
+          )"
+          [[ "$uploaded_code" == "$VERSION_CODE" ]] || {
+            echo "error: uploaded versionCode ($uploaded_code) does not match expected ($VERSION_CODE)" >&2
+            exit 1
+          }
+
+          notes="$(head -c 500 dist/release-notes.txt)"
+          track_payload="$(jq -n \
+            --arg code "$VERSION_CODE" \
+            --arg notes "$notes" \
+            '{
+              track: "internal",
+              releases: [{
+                status: "completed",
+                versionCodes: [$code],
+                releaseNotes: [{ language: "en-US", text: $notes }]
+              }]
+            }'
+          )"
+          curl -fsSL -X PUT \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$track_payload" \
+            "${api}/edits/${edit_id}/tracks/internal" >/dev/null
+
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            "${api}/edits/${edit_id}:commit" >/dev/null

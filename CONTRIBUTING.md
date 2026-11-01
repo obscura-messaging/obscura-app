@@ -33,15 +33,19 @@ or `just ios-build arm64`.
 
 - **Firebase.** Android needs `android/app/google-services.json`. When the
   file is missing, the Android recipes copy in a compile-only stub. For real
-  push, download the `dev.barrelmaker.obscura` config from Firebase into that
-  path. It is gitignored. Never commit it, or any Firebase Admin credential.
+  push, download the Firebase config (containing `dev.barrelmaker.obscura.dev`
+  and `dev.barrelmaker.obscura`) into that path. It is gitignored. Never commit
+  it, or any Firebase Admin credential.
 - **iOS.** The first build fetches the libsignal commit that `obscura-native`
   pins. It then builds the simulator FFI, the Swift package and the pods, and
   caches them (gitignored). Simulator builds do not exercise APNs, background
   delivery or release signing.
-- **Server.** Both apps use `https://obscura.barrelmaker.dev`; there is no
-  override. Migrations are not kept before the first public release, so a schema
-  change can require clearing app data.
+- **Environments (`dev` vs `prod`).** Builds default to `dev`
+  (`dev.barrelmaker.obscura.dev`, **Obscura Dev**, pointing at
+  `https://devscura.barrelmaker.dev`); passing `env=prod` selects production
+  (`dev.barrelmaker.obscura`, **Obscura**, pointing at
+  `https://obscura.barrelmaker.dev`). Migrations are not kept before the first
+  public release, so a schema change can require clearing app data.
 
 ### iOS device build with your own team
 

@@ -32,7 +32,7 @@ import java.util.Locale
 /** Owns the live client, OS lifecycle and notifications. The kit owns session persistence. */
 object ObscuraSession {
     private const val TAG = "ObscuraSession"
-    private const val API_URL = "https://obscura.barrelmaker.dev"
+    private const val API_URL = BuildConfig.OBSCURA_API_URL
     /** This device's name on the account, shown in device lists and on the primary when linking. */
     val deviceName: String = android.os.Build.MODEL
 

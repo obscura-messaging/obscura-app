@@ -4,9 +4,10 @@ import ObscuraKit
 
 final class KeychainSession: SessionStorage {
     private func query(accessGroup: String?) -> [String: Any] {
+        let bundleId = Bundle.main.bundleIdentifier ?? "dev.barrelmaker.obscura.dev"
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "dev.barrelmaker.obscura.session",
+            kSecAttrService as String: "\(bundleId).session",
             kSecAttrAccount as String: "session_data",
         ]
         if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
