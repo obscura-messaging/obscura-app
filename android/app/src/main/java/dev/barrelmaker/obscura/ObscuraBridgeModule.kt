@@ -1012,6 +1012,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         id: String,
         dataJson: String,
         sentAt: Double,
+        authorUserId: String,
         authorDeviceId: String,
         localMetadataJson: String?,
         promise: Promise,
@@ -1024,6 +1025,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
                         id = id,
                         data = dataJson,
                         sentAt = sentAt.toLong(),
+                        authorUserId = authorUserId,
                         authorDeviceId = authorDeviceId,
                         localMetadata = localMetadataJson,
                     )
@@ -1077,6 +1079,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
                 putString("id", e.id)
                 putString("data", e.data)
                 putDouble("sentAt", e.sentAt.toDouble())
+                putString("authorUserId", e.authorUserId)
                 putString("authorDeviceId", e.authorDeviceId)
                 putString("localMetadata", e.localMetadata)
             })
@@ -1124,23 +1127,15 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    /**
-     * `payload` crosses as a UTF-8 string. For an unknown `kind` the decoding is lossy, which is safe
-     * because the app discards such rows without reading the payload.
-     */
+    /** `payload` crosses as a UTF-8 string. */
     private fun inboxRowToMap(r: dev.barrelmaker.obscura.kit.stores.InboxRecord): WritableMap =
         Arguments.createMap().apply {
             putDouble("id", r.id.toDouble())
-            putString("kind", r.kind)
             putString("senderUserId", r.senderUserId)
             putString("senderDeviceId", r.senderDeviceId)
             putString("modelKey", r.modelKey)
             putString("entryId", r.entryId)
-            // Bound to a local first: `sentAt` is a nullable property from ANOTHER module, so
-            // Kotlin refuses to smart-cast it — the kit could, in principle, change it between the
-            // null check and the read.
-            val sentAt = r.sentAt
-            if (sentAt != null) putDouble("sentAt", sentAt.toDouble()) else putNull("sentAt")
+            putDouble("sentAt", r.sentAt.toDouble())
             putString("payload", String(r.payload))
         }
 

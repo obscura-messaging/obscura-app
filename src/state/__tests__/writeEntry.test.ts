@@ -32,9 +32,9 @@ describe('storing and sending', () => {
     const stored = await Obscura.entryAll('directMessage');
     expect(stored).toHaveLength(1);
     expect(stored[0].id).toBe(id);
-    // `_authorUserId` is stamped by `writeEntry`, not supplied by the caller.
+    expect(stored[0].authorUserId).toBe(SELF);
     expect(JSON.parse(stored[0].data))
-      .toEqual({ conversationId: convId, content: 'hi', _authorUserId: SELF });
+      .toEqual({ conversationId: convId, content: 'hi' });
 
     expect(bridge.__sent).toHaveLength(1);
     expect(bridge.__sent[0].recipientUserIds).toEqual([BOB]);
@@ -61,7 +61,8 @@ describe('storing and sending', () => {
     await writeEntry(args('story', data));
 
     const stored = await Obscura.entryAll('story');
-    expect(JSON.parse(stored[0].data)).toEqual({ ...data, _authorUserId: SELF });
+    expect(stored[0].authorUserId).toBe(SELF);
+    expect(JSON.parse(stored[0].data)).toEqual(data);
     expect(JSON.parse(bridge.__sent[0].payloadJson)).toEqual(data);
   });
 
@@ -157,9 +158,9 @@ describe('attribution', () => {
   it('always records this user as the author, whatever the data claims', async () => {
     const convId = [SELF, BOB].sort().join('_');
 
-    await writeEntry(args('pix', { ...PIX_MEDIA, conversationId: convId, _authorUserId: BOB }));
+    await writeEntry(args('pix', { ...PIX_MEDIA, conversationId: convId, authorUserId: BOB }));
 
-    expect(JSON.parse((await Obscura.entryAll('pix'))[0].data)._authorUserId).toBe(SELF);
+    expect((await Obscura.entryAll('pix'))[0].authorUserId).toBe(SELF);
   });
 });
 

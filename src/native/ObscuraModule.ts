@@ -18,20 +18,17 @@ export interface AttachmentRef {
   nonce: string;
 }
 
-/** One row of the kit's durable inbox. For an unknown `kind`, `payload` is lossy and never read. */
+/** One row of the kit's durable inbox. */
 export interface InboxRow {
   /** Monotonic per install: the drain order, not a message id. */
   id: number;
-  /** The payload arm, e.g. `APP_ENTRY`; `UNKNOWN` for an arm the kit does not know. */
-  kind: string;
   /** Server-stamped sender. */
   senderUserId: string;
   /** The device whose Signal session decrypted the row: attribution and the merge tie-break. */
-  senderDeviceId: string | null;
-  /** Null for every kind but `APP_ENTRY`. */
-  modelKey: string | null;
-  entryId: string | null;
-  sentAt: number | null;
+  senderDeviceId: string;
+  modelKey: string;
+  entryId: string;
+  sentAt: number;
   payload: string;
 }
 
@@ -39,6 +36,7 @@ export interface StoredEntry {
   id: string;
   data: string;
   sentAt: number;
+  authorUserId: string;
   authorDeviceId: string;
   localMetadata: string | null;
 }
@@ -138,8 +136,8 @@ export interface ObscuraBridge extends TurboModule, EventModule {
 
   /** A blind upsert. */
   entryPut(
-    model: string, id: string, dataJson: string, sentAt: number, authorDeviceId: string,
-    localMetadataJson: string | null,
+    model: string, id: string, dataJson: string, sentAt: number,
+    authorUserId: string, authorDeviceId: string, localMetadataJson: string | null,
   ): Promise<void>;
   entryGet(model: string, ids: string[]): Promise<StoredEntry[]>;
   entryAll(model: string): Promise<StoredEntry[]>;

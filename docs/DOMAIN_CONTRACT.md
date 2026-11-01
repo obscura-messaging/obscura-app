@@ -23,10 +23,11 @@ an undeclared model throws. Screen entry types derive from it. Field types are `
 (`?` means optional). A local write with a bad field throws, and a received
 entry with one is discarded as `invalid-fields`. Undeclared fields are allowed.
 
-An entry's author is `Entry.authorUserId`, never a payload field: a local write
+An entry's author is `Entry.authorUserId`, stored as a first-class column alongside
+`authorDeviceId` in the kit's entry store—never a payload field: a local write
 sets it to this user, and the drain sets it to the transport sender.
 `src/state/entryStore.ts` is the only code that reads or writes the kit's entry
-store for app models, and the only code that knows how the author is stored.
+store for app models.
 
 ## Audience
 
@@ -63,8 +64,8 @@ Friendship is not required; names come from the friend graph at render time.
 peek -> classify -> parse -> validate fields -> authorize -> merge -> entryPut -> consume
 ```
 
-A row that can never be processed is discarded with a reason: `unknown-kind`,
-`unknown-model`, `missing-fields`, `unparsable-payload`, `invalid-fields` or
+A row that can never be processed is discarded with a reason:
+`unknown-model`, `unparsable-payload`, `invalid-fields` or
 `unauthorized-sender`. A transient failure leaves the row pending, and a merge
 loser is consumed without a write. Nothing is drained until `getUserId` returns
 a value. The drain runs on cold start, reconnect, foreground and

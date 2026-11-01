@@ -99,7 +99,8 @@ RCT_EXTERN_METHOD(inboxDiscard:(NSArray *)ids reason:(NSString *)reason
 RCT_EXTERN_METHOD(inboxDepth:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 
 RCT_EXTERN_METHOD(entryPut:(NSString *)model id:(NSString *)id dataJson:(NSString *)dataJson
-                  sentAt:(nonnull NSNumber *)sentAt authorDeviceId:(NSString *)authorDeviceId
+                  sentAt:(nonnull NSNumber *)sentAt authorUserId:(NSString *)authorUserId
+                  authorDeviceId:(NSString *)authorDeviceId
                   localMetadataJson:(NSString * _Nullable)localMetadataJson
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(entryAll:(NSString *)model

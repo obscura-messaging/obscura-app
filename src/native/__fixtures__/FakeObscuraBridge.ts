@@ -117,6 +117,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
     id: string,
     dataJson: string,
     sentAt: number,
+    authorUserId: string,
     authorDeviceId: string,
     localMetadata: string | null,
   ): Promise<void> {
@@ -126,7 +127,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
       throw new Error('entryPut expects a JSON string across the bridge, got ' + typeof dataJson);
     }
     this.entryTable(model).set(id, {
-      id, data: dataJson, sentAt, authorDeviceId, localMetadata,
+      id, data: dataJson, sentAt, authorUserId, authorDeviceId, localMetadata,
     });
   }
 
@@ -189,7 +190,6 @@ export class FakeObscuraBridge implements ObscuraBridge {
     const full: FakeInboxRow = {
       id,
       envelopeId: `env_${id}`,
-      kind: 'APP_ENTRY',
       senderUserId: 'user_peer',
       senderDeviceId: 'device_peer',
       modelKey: 'directMessage',
@@ -201,7 +201,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
     if (existing) return { ...existing };
     this.nextInboxId += 1;
     this.inbox.push(full);
-    this.__emit({ type: 'messageReceived', model: full.modelKey ?? '' });
+    this.__emit({ type: 'messageReceived', model: full.modelKey });
     return full;
   }
 
