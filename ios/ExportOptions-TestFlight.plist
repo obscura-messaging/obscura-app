@@ -12,12 +12,12 @@
 	<string>KY4LCG34B8</string>
 	<key>provisioningProfiles</key>
 	<dict>
-		<key>dev.barrelmaker.obscura</key>
-		<string>Obscura App Store</string>
+		<key>dev.barrelmaker.obscura.dev</key>
+		<string>Obscura Dev App Store</string>
 	</dict>
 	<key>manageAppVersionAndBuildNumber</key>
 	<false/>
 	<key>testFlightInternalTestingOnly</key>
-	<false/>
+	<true/>
 </dict>
 </plist>

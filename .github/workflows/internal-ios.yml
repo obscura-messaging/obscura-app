@@ -70,6 +70,7 @@ jobs:
       - run: just install
 
       - name: Install distribution signing identity
+        id: signing
         env:
           IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
           IOS_DISTRIBUTION_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_PASSWORD }}
@@ -95,11 +96,13 @@ jobs:
             exit 1
           }
           /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' \
-            "$RUNNER_TEMP/profile.plist" | grep -F 'group.dev.barrelmaker.obscura' || {
-            echo "error: distribution profile is missing the Obscura App Group" >&2
+            "$RUNNER_TEMP/profile.plist" | grep -F "group.${APPLE_BUNDLE_ID}" || {
+            echo "error: distribution profile is missing the Obscura App Group (group.${APPLE_BUNDLE_ID})" >&2
             exit 1
           }
           profile_id="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/profile.plist")"
+          profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/profile.plist")"
+          echo "profile_name=$profile_name" >> "$GITHUB_OUTPUT"
           for profile_dir in \
             "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" \
             "$HOME/Library/MobileDevice/Provisioning Profiles"
@@ -131,25 +134,31 @@ jobs:
             exit 1
           }
           short_sha="$(git rev-parse --short=7 HEAD)"
-          artifact_name="obscura-ios-${BUILD_NUMBER}-${short_sha}"
+          artifact_name="obscura-dev-ios-${BUILD_NUMBER}-${short_sha}"
           {
             echo "sha=$sha"
             echo "artifact_name=$artifact_name"
           } >> "$GITHUB_OUTPUT"
           mkdir -p dist
           {
-            echo "Obscura iOS internal build ${RELEASE_VERSION} (${BUILD_NUMBER})"
+            echo "Obscura Dev iOS internal build ${RELEASE_VERSION} (${BUILD_NUMBER})"
             echo
             git show -s --format='%s%n%nCommit: %H'
           } > dist/release-notes.txt
 
       - name: Build and export device archive
+        env:
+          PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
         run: |
-          just ios-archive "$RUNNER_TEMP/Obscura.xcarchive" "$BUILD_NUMBER" "$RELEASE_VERSION"
+          just ios-archive "$RUNNER_TEMP/Obscura.xcarchive" "$BUILD_NUMBER" "$RELEASE_VERSION" "dev" "$PROFILE_NAME"
+          cp ios/ExportOptions-TestFlight.plist "$RUNNER_TEMP/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Delete :provisioningProfiles" "$RUNNER_TEMP/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$RUNNER_TEMP/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:${APPLE_BUNDLE_ID} string ${PROFILE_NAME}" "$RUNNER_TEMP/ExportOptions.plist"
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/Obscura.xcarchive" \
             -exportPath "$RUNNER_TEMP/export" \
-            -exportOptionsPlist ios/ExportOptions-TestFlight.plist
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
 
       - name: Verify and stage IPA
         id: stage

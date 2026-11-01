@@ -56,30 +56,25 @@ lint:
 check: test typecheck lint
     ./scripts/check-native-doc-links.sh
 
-# Create a compile-only Firebase config when no real config exists.
+# Create or refresh the compile-only Firebase stub when no real config exists.
 android-config:
-    @if [[ ! -f android/app/google-services.json ]]; then cp android/app/google-services.stub.json android/app/google-services.json; echo "Created ignored Firebase stub for compile-only builds."; else echo "Using existing android/app/google-services.json."; fi
+    @if [[ ! -f android/app/google-services.json ]] || grep -q '"project_id": "local-stub"' android/app/google-services.json; then cp android/app/google-services.stub.json android/app/google-services.json; echo "Prepared Firebase stub for compile-only builds."; else echo "Using existing android/app/google-services.json."; fi
 
 # Run the Android app.
 android-run: android-config ensure-node-modules
     ./scripts/run-with-android-env.sh npm run android
 
-# Internal release assembler shared by compile-only and distribution builds.
-[private]
-android-assemble-release architectures minify distribution version_code version_name: android-config ensure-node-modules
-    architectures={{quote(architectures)}}; minify={{quote(minify)}}; distribution={{quote(distribution)}}; version_code={{quote(version_code)}}; version_name={{quote(version_name)}}; args=("-PenableProguardInReleaseBuilds=$minify"); [[ -z "$architectures" ]] || args+=("-PreactNativeArchitectures=$architectures"); if [[ "$distribution" == "true" ]]; then [[ "$version_code" =~ ^[1-9][0-9]*$ ]] || { echo "error: distribution version code must be a positive integer" >&2; exit 1; }; [[ -n "$version_name" ]] || { echo "error: distribution version name is required" >&2; exit 1; }; args+=("-PobscuraDistributionBuild=true" "-PobscuraVersionCode=$version_code" "-PobscuraVersionName=$version_name"); fi; ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:assembleRelease --parallel "${args[@]}"
-
-# Assemble a compile-only Android release APK. Pass an architecture list and
-# false to skip R8 for a faster build:
+# Assemble a compile-only Android release APK (env: dev or prod). Pass an
+# architecture list and false to skip R8 for a faster build:
 # just android-release arm64-v8a false
-android-release architectures="" minify="true":
-    just android-assemble-release {{quote(architectures)}} {{quote(minify)}} false '' ''
+android-release architectures="" minify="true" env="dev": android-config ensure-node-modules
+    architectures={{quote(architectures)}}; minify={{quote(minify)}}; env={{quote(env)}}; args=("-PenableProguardInReleaseBuilds=$minify" "-PobscuraEnv=$env"); [[ -z "$architectures" ]] || args+=("-PreactNativeArchitectures=$architectures"); ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:assembleRelease --parallel "${args[@]}"
 
-# Assemble a signed, minified universal APK with real Firebase configuration.
+# Bundle a signed, minified Android App Bundle (.aab) with real Firebase configuration.
 # Signing credentials are read from android/keystore.properties or the
 # ANDROID_RELEASE_* environment variables.
-android-distribution version_code version_name:
-    just android-assemble-release '' true true {{quote(version_code)}} {{quote(version_name)}}
+android-distribution version_code version_name env="dev": android-config ensure-node-modules
+    version_code={{quote(version_code)}}; version_name={{quote(version_name)}}; env={{quote(env)}}; [[ "$version_code" =~ ^[1-9][0-9]*$ ]] || { echo "error: distribution version code must be a positive integer" >&2; exit 1; }; [[ -n "$version_name" ]] || { echo "error: distribution version name is required" >&2; exit 1; }; ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:bundleRelease --parallel -PenableProguardInReleaseBuilds=true -PobscuraDistributionBuild=true -PobscuraEnv="$env" -PobscuraVersionCode="$version_code" -PobscuraVersionName="$version_name"
 
 # Clean Android build outputs.
 android-clean: ensure-node-modules
@@ -93,11 +88,11 @@ ios-prepare libsignal_target="ios-sim": ensure-node-modules
     ./obscura-native/swift/dev.sh prepare
     cd ios && pod install
 
-# Build the iOS app for a generic simulator. Pass an architecture for a faster
-# compile-only build, for example: just ios-build arm64
-ios-build architecture="": ios-prepare
-    architecture={{quote(architecture)}}; args=(COMPILER_INDEX_STORE_ENABLE=NO); [[ -z "$architecture" ]] || args+=(ARCHS="$architecture" ONLY_ACTIVE_ARCH=YES); GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura -destination 'generic/platform=iOS Simulator' -configuration Debug CODE_SIGNING_ALLOWED=NO "${args[@]}" build
+# Build the iOS app for a generic simulator (env: dev or prod). Pass an
+# architecture for a faster compile-only build, for example: just ios-build arm64
+ios-build architecture="" env="dev": ios-prepare
+    architecture={{quote(architecture)}}; env={{quote(env)}}; if [[ "$env" == "prod" ]]; then bundle_id="dev.barrelmaker.obscura"; display_name="Obscura"; api_host="obscura.barrelmaker.dev"; elif [[ "$env" == "dev" ]]; then bundle_id="dev.barrelmaker.obscura.dev"; display_name="Obscura Dev"; api_host="devscura.barrelmaker.dev"; else echo "error: env must be 'dev' or 'prod'" >&2; exit 1; fi; args=(COMPILER_INDEX_STORE_ENABLE=NO PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" OBSCURA_DISPLAY_NAME="$display_name" OBSCURA_API_HOST="$api_host"); [[ -z "$architecture" ]] || args+=(ARCHS="$architecture" ONLY_ACTIVE_ARCH=YES); GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura -destination 'generic/platform=iOS Simulator' -configuration Debug CODE_SIGNING_ALLOWED=NO "${args[@]}" build
 
-# Archive the production-bundle-ID device build for App Store Connect/TestFlight.
-ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="": (ios-prepare "ios-device")
-    build_number={{quote(build_number)}}; version={{quote(version)}}; args=(); [[ -z "$build_number" ]] || args+=(CURRENT_PROJECT_VERSION="$build_number"); [[ -z "$version" ]] || args+=(MARKETING_VERSION="$version"); GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura -configuration Release -destination 'generic/platform=iOS' -archivePath {{quote(archive_path)}} "${args[@]}" archive
+# Archive the iOS device build for App Store Connect / TestFlight (env: dev or prod).
+ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="" env="dev" profile_specifier="": (ios-prepare "ios-device")
+    build_number={{quote(build_number)}}; version={{quote(version)}}; env={{quote(env)}}; profile_specifier={{quote(profile_specifier)}}; if [[ "$env" == "prod" ]]; then bundle_id="dev.barrelmaker.obscura"; display_name="Obscura"; api_host="obscura.barrelmaker.dev"; default_profile="Obscura App Store"; elif [[ "$env" == "dev" ]]; then bundle_id="dev.barrelmaker.obscura.dev"; display_name="Obscura Dev"; api_host="devscura.barrelmaker.dev"; default_profile="Obscura Dev App Store"; else echo "error: env must be 'dev' or 'prod'" >&2; exit 1; fi; args=(PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" OBSCURA_DISPLAY_NAME="$display_name" OBSCURA_API_HOST="$api_host" PROVISIONING_PROFILE_SPECIFIER="${profile_specifier:-$default_profile}"); [[ -z "$build_number" ]] || args+=(CURRENT_PROJECT_VERSION="$build_number"); [[ -z "$version" ]] || args+=(MARKETING_VERSION="$version"); GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura -configuration Release -destination 'generic/platform=iOS' -archivePath {{quote(archive_path)}} "${args[@]}" archive

@@ -27,6 +27,15 @@ def releaseSigningConfigured =
 
 def distributionBuild =
     (findProperty("obscuraDistributionBuild") ?: "false").toBoolean()
+def obscuraEnv =
+    (findProperty("obscuraEnv") ?: "dev").toString()
+if (obscuraEnv != "dev" && obscuraEnv != "prod") {
+    throw new GradleException("obscuraEnv must be 'dev' or 'prod' (found '${obscuraEnv}')")
+}
+def isProdEnv = obscuraEnv == "prod"
+def obscuraAppId = isProdEnv ? "dev.barrelmaker.obscura" : "dev.barrelmaker.obscura.dev"
+def obscuraAppName = isProdEnv ? "Obscura" : "Obscura Dev"
+def obscuraApiUrl = isProdEnv ? "https://obscura.barrelmaker.dev" : "https://devscura.barrelmaker.dev"
 def obscuraVersionCode =
     (findProperty("obscuraVersionCode") ?: "1").toString().toInteger()
 def obscuraVersionName =
@@ -128,12 +137,17 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace "dev.barrelmaker.obscura"
+    buildFeatures {
+        buildConfig true
+    }
     defaultConfig {
-        applicationId "dev.barrelmaker.obscura"
+        applicationId obscuraAppId
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode obscuraVersionCode
         versionName obscuraVersionName
+        resValue "string", "app_name", obscuraAppName
+        buildConfigField "String", "OBSCURA_API_URL", "\"${obscuraApiUrl}\""
     }
 
     compileOptions {
@@ -169,11 +183,10 @@ android {
             ]
         }
     }
-    // Per-ABI APKs cut sideload size ~4x. Keep the universal APK around so
-    // existing install scripts and CI continue to work.
+    // Per-ABI APKs cut sideload size ~4x. Disable ABI splits when building an AAB bundle.
     splits {
         abi {
-            enable true
+            enable !gradle.startParameter.taskNames.any { it.toLowerCase().contains("bundle") }
             reset()
             include(*targetArchitectures)
             universalApk targetArchitectures.size() > 1

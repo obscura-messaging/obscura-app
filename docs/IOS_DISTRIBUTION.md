@@ -16,9 +16,12 @@ and promotion flow.
 - Testers can install a build only after Apple finishes processing it. Assign
   it to an internal TestFlight group, or enable automatic distribution for the
   group. Internal testers must be App Store Connect users.
-- `ios/ExportOptions-TestFlight.plist` sets `testFlightInternalTestingOnly` to
-  `false`. The same build can later go to external testing (which may need
-  Apple's beta review) or to App Store review. Builds expire after 90 days.
+- Internal builds target the `dev` environment (`dev.barrelmaker.obscura.dev`,
+  display name **Obscura Dev**, pointing at `https://devscura.barrelmaker.dev`),
+  and `ios/ExportOptions-TestFlight.plist` sets
+  `testFlightInternalTestingOnly: true` so a `devscura` build cannot be
+  submitted to external review or the public App Store. Builds expire after 90
+  days.
 - **Export compliance.** For the first build, the Account Holder completed
   Apple's questionnaire, and App Store Connect recorded
   `usesNonExemptEncryption: false`. `ITSAppUsesNonExemptEncryption = NO` in
@@ -27,10 +30,11 @@ and promotion flow.
 
 ## Apple signing
 
-The bundle ID is `dev.barrelmaker.obscura`, the team is `KY4LCG34B8`, and the
-App Group is `group.dev.barrelmaker.obscura`. Release builds use an Apple
-Distribution certificate with the `Obscura App Store` profile. Development
-certificates cannot upload to TestFlight.
+Internal builds use bundle ID `dev.barrelmaker.obscura.dev` and App Group
+`group.dev.barrelmaker.obscura.dev` (production uses `dev.barrelmaker.obscura`
+and `group.dev.barrelmaker.obscura`), under team `KY4LCG34B8`. Release builds
+use an Apple Distribution certificate with an App Store provisioning profile.
+Development certificates cannot upload to TestFlight.
 
 - Back up the distribution identity, encrypted, outside GitHub. Keep its export
   password in a password manager.
