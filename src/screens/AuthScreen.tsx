@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { SafeAreaView, View, Text, TextInput, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { MIN_PASSWORD_LENGTH, credentialsProblem, logIn, register } from '../state/login';
 import { KeyboardScreen } from '../components/KeyboardScreen';
+import { LinkThisDevice } from './LinkThisDevice';
 import { errorMessage } from '../utils/log';
 import { s, colors } from '../styles';
 
@@ -9,6 +10,7 @@ export function AuthScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState('');
+  const [linking, setLinking] = useState(false);
 
   const submit = async (progress: string, action: () => Promise<void>) => {
     const problem = credentialsProblem(username, password);
@@ -18,9 +20,21 @@ export function AuthScreen() {
   };
 
   const onLogIn = () => submit('Logging in...', async () => {
-    if (!(await logIn(username, password))) setStatus('Wrong username or password');
+    switch (await logIn(username, password)) {
+      case 'invalidCredentials': setStatus('Wrong username or password'); return;
+      case 'linkRequired': setStatus(''); setLinking(true); return;
+      case 'signedIn': return;
+    }
   });
   const onRegister = () => submit('Registering...', () => register(username, password));
+
+  if (linking) {
+    return (
+      <SafeAreaView style={s.container}>
+        <LinkThisDevice username={username} password={password} onBack={() => setLinking(false)} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={s.container}>

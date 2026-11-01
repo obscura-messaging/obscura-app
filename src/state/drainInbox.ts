@@ -40,9 +40,7 @@ async function drainBatch(limit: number): Promise<DrainResult> {
   }
 
   const named = groupBy(rows.flatMap((r) =>
-    r.modelKey !== null && r.entryId !== null && MODELS.has(r.modelKey)
-      ? [[r.modelKey, r.entryId] as const]
-      : []));
+    MODELS.has(r.modelKey) ? [[r.modelKey, r.entryId] as const] : []));
   const state = new Map<string, Map<string, Entry>>();
   for (const [model, ids] of named) {
     state.set(model, new Map((await readEntriesById(model, ids)).map((e) => [e.id, e])));

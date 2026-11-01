@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
-  KeyboardAvoidingView, Platform, Alert, StyleSheet,
+  KeyboardAvoidingView, Platform, StyleSheet,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Obscura, type ConnectionState } from '../native/ObscuraModule';
 import { errorMessage, logError, getJsLog } from '../utils/log';
 import { toast } from '../components/Toast';
+import { confirm } from '../components/confirm';
+import type { RootStackParamList } from '../navigation/types';
 import { useSession, useIdentity, useModelEntries, saveEntry, logout } from '../state/store';
 import { profileEntryId } from '../models/schema';
 import { displayNameFor } from '../domain/friends';
@@ -21,6 +25,7 @@ const CONNECTION_LABELS: Record<ConnectionState, { color: string; label: string 
 const DEBUG_LOG_POLL_MS = 2000;
 
 export function ProfileScreen() {
+  const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { myUserId, myUsername, connState } = useSession();
   const identity = useIdentity();
   const profiles = useModelEntries('profile');
@@ -67,11 +72,10 @@ export function ProfileScreen() {
     }
   };
 
-  const confirmLogout = () => {
-    Alert.alert('Log out?', 'You’ll need your username and password to sign back in.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Log out', style: 'destructive', onPress: () => { logout(); } },
-    ]);
+  const confirmLogout = async () => {
+    if (await confirm('Log out?', 'You’ll need your username and password to sign back in.', 'Log out', true)) {
+      await logout();
+    }
   };
 
   // The heading is the friend-graph name; `displayName` is content its owner chose.
@@ -118,6 +122,10 @@ export function ProfileScreen() {
         <Text style={pf.settingsLabel}>{myUsername}</Text>
         <Text style={pf.hint}>{myUserId.slice(0, 16)}...</Text>
 
+        <TouchableOpacity style={pf.menuBtn} onPress={() => nav.navigate('Devices')}>
+          <Text style={pf.codeBtnText}>Devices</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={pf.debugToggle} onPress={() => setShowLog(!showLog)}>
           <Text style={pf.codeBtnText}>{showLog ? 'Hide debug log' : 'Show debug log'}</Text>
         </TouchableOpacity>
@@ -154,6 +162,7 @@ const pf = StyleSheet.create({
   statusText: { color: colors.text, fontSize: 15, fontWeight: '600' },
   settingsLabel: { color: colors.text, fontSize: 18, fontWeight: '600' },
   hint: { color: colors.textMuted, fontSize: 12, marginTop: 4, marginBottom: 12 },
+  menuBtn: { backgroundColor: colors.surface, borderRadius: 12, padding: 14, alignItems: 'center' },
   debugToggle: { backgroundColor: colors.surface, borderRadius: 12, padding: 14, alignItems: 'center', marginBottom: 12, marginTop: 16 },
   codeBtnText: { color: colors.accent, fontWeight: '600' },
   logBox: { marginTop: 8 },

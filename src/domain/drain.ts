@@ -12,9 +12,7 @@ import type { ModelDeclaration } from './model';
 
 /** Why a row could not be processed. Carried into `inboxDiscard` and the log. */
 export type DiscardReason =
-  | 'unknown-kind'
   | 'unknown-model'
-  | 'missing-fields'
   | 'invalid-fields'
   | 'unparsable-payload'
   | 'unauthorized-sender';
@@ -85,18 +83,8 @@ export function planDrain(
   const discard = (id: number, reason: DiscardReason) => plan.discard.push({ id, reason });
 
   for (const row of rows) {
-    if (row.kind !== 'APP_ENTRY') { discard(row.id, 'unknown-kind'); continue; }
-
-    const rules = row.modelKey === null ? undefined : knownModels.get(row.modelKey);
-    if (row.modelKey === null || rules === undefined) { discard(row.id, 'unknown-model'); continue; }
-
-    if (
-      row.entryId === null || row.sentAt === null ||
-      row.senderDeviceId === null || row.senderUserId === ''
-    ) {
-      discard(row.id, 'missing-fields');
-      continue;
-    }
+    const rules = knownModels.get(row.modelKey);
+    if (rules === undefined) { discard(row.id, 'unknown-model'); continue; }
 
     // Retrying an unreadable payload fails the same way forever, so it is discarded, not kept.
     const data = parseObject(row.payload);

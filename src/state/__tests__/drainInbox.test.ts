@@ -31,7 +31,7 @@ function deliver(over: Partial<Parameters<typeof bridge.__deliverInbox>[0]> = {}
 
 describe('draining', () => {
   it('reads only the entries its batch names, never a whole model', async () => {
-    await Obscura.entryPut('directMessage', 'dm_old', '{}', 1, 'd', null);
+    await Obscura.entryPut('directMessage', 'dm_old', '{}', 1, SELF, 'd', null);
     deliver({ modelKey: 'directMessage', entryId: 'dm_1' });
     const start = bridge.__calls.length;
 
@@ -51,7 +51,8 @@ describe('draining', () => {
     const stored = await Obscura.entryAll('directMessage');
     expect(stored).toHaveLength(1);
     expect(JSON.parse(stored[0].data))
-      .toEqual({ conversationId: CONV, content: 'hello', _authorUserId: PEER });
+      .toEqual({ conversationId: CONV, content: 'hello' });
+    expect(stored[0].authorUserId).toBe(PEER);
   });
 
   it('preserves the authenticated sender device as the stored tie-break', async () => {
@@ -100,7 +101,7 @@ describe('the effect ORDER', () => {
    */
   it('still sees the real consume when the batch also discards', async () => {
     deliver({ entryId: 'dm_1' });
-    bridge.__deliverInbox({ kind: 'UNKNOWN', modelKey: null, entryId: null, payload: 'x' });
+    bridge.__deliverInbox({ modelKey: 'unknownModel', payload: '{}' });
 
     await drainInbox();
 
@@ -133,37 +134,36 @@ describe('the effect ORDER', () => {
 
 describe('rows the app cannot process', () => {
   /** An unprocessable row is discarded, not skipped; a skipped row would block the queue forever. */
-  it('discards an unknown kind and empties the inbox', async () => {
-    bridge.__deliverInbox({ kind: 'SOMETHING_NEWER', modelKey: null, entryId: null, payload: 'opaque' });
+  it('discards an unknown model and empties the inbox', async () => {
+    bridge.__deliverInbox({ modelKey: 'somethingNewer', payload: '{}' });
 
     const result = await drainInbox();
 
     expect(result.discarded).toBe(1);
     expect(await Obscura.inboxDepth()).toBe(0);
-    expect(bridge.__discarded).toEqual([{ ids: [expect.any(Number)], reason: 'unknown-kind' }]);
+    expect(bridge.__discarded).toEqual([{ ids: [expect.any(Number)], reason: 'unknown-model' }]);
   });
 
   it('discards with a reason the kit can log, grouped by reason', async () => {
-    bridge.__deliverInbox({ kind: 'UNKNOWN_A', modelKey: null, entryId: null, payload: 'x' });
-    bridge.__deliverInbox({ kind: 'UNKNOWN_B', modelKey: null, entryId: null, payload: 'y' });
-    bridge.__deliverInbox({ modelKey: 'notAModel', payload: '{}' });
+    bridge.__deliverInbox({ modelKey: 'unknownA', payload: '{}' });
+    bridge.__deliverInbox({ modelKey: 'unknownB', payload: '{}' });
+    bridge.__deliverInbox({ modelKey: 'story', payload: 'not json' });
 
     await drainInbox();
 
     const reasons = bridge.__discarded.map((d) => d.reason).sort();
-    expect(reasons).toEqual(['unknown-kind', 'unknown-model']);
-    // Two unknown-kind rows, one call.
-    expect(bridge.__discarded.find((d) => d.reason === 'unknown-kind')?.ids).toHaveLength(2);
+    expect(reasons).toEqual(['unknown-model', 'unparsable-payload']);
+    expect(bridge.__discarded.find((d) => d.reason === 'unknown-model')?.ids).toHaveLength(2);
   });
 
   /** A discard is data loss, so the app logs it too, not only the kit. */
   it('surfaces the discard app-side, not only to the kit', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    bridge.__deliverInbox({ kind: 'UNKNOWN', modelKey: null, entryId: null, payload: 'x' });
+    bridge.__deliverInbox({ modelKey: 'unknownModel', payload: '{}' });
 
     await drainInbox();
 
-    expect(warn.mock.calls.flat().join('\n')).toContain('unknown-kind');
+    expect(warn.mock.calls.flat().join('\n')).toContain('unknown-model');
     warn.mockRestore();
   });
 
@@ -187,7 +187,7 @@ describe('rows the app cannot process', () => {
 
   it('processes the good rows in a batch that also contains bad ones', async () => {
     deliver({ entryId: 'ok_1' });
-    bridge.__deliverInbox({ kind: 'UNKNOWN', modelKey: null, entryId: null, payload: 'x' });
+    bridge.__deliverInbox({ modelKey: 'unknownModel', payload: '{}' });
     deliver({ entryId: 'ok_2' });
 
     const result = await drainInbox();
@@ -249,12 +249,12 @@ describe('merging against what is already stored', () => {
   /** Pix and messages are append-only, so the other participant cannot change what this side sent. */
   it('ignores the other participant rewriting a pix or message', async () => {
     await Obscura.entryPut(
-      'pix', 'p', JSON.stringify({ ...PIX_MEDIA, conversationId: CONV, caption: 'mine', _authorUserId: SELF }),
-      1_000, 'device_mine', null,
+      'pix', 'p', JSON.stringify({ ...PIX_MEDIA, conversationId: CONV, caption: 'mine' }),
+      1_000, SELF, 'device_mine', null,
     );
     await Obscura.entryPut(
-      'directMessage', 'dm', JSON.stringify({ conversationId: CONV, content: 'what I said', _authorUserId: SELF }),
-      1_000, 'device_mine', null,
+      'directMessage', 'dm', JSON.stringify({ conversationId: CONV, content: 'what I said' }),
+      1_000, SELF, 'device_mine', null,
     );
     deliver({
       modelKey: 'pix', entryId: 'p', sentAt: 9_000,
@@ -306,7 +306,7 @@ describe('draining fully', () => {
   });
 
   it('terminates on an inbox of only undrainable rows', async () => {
-    bridge.__deliverInbox({ kind: 'UNKNOWN', modelKey: null, entryId: null, payload: 'x' });
+    bridge.__deliverInbox({ modelKey: 'unknownModel', payload: 'x' });
 
     const result = await drainInboxFully(5);
 

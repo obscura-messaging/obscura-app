@@ -9,6 +9,7 @@ import type { PixStatus } from '../domain/pix';
 import {
   useSession, useModelEntries, useAcceptedFriends, usePendingFriends, refreshFriends,
 } from '../state/store';
+import { primaryOnly } from '../state/devices';
 import { StoriesRow } from './StoriesScreen';
 import { Avatar } from '../components/Avatar';
 import { toast } from '../components/Toast';
@@ -34,23 +35,34 @@ function PixIcon({ status, unopened, friend }: { status: PixStatus | undefined; 
   }
 }
 
-function PendingRow({ friend, accepting, onAccept }: { friend: Friend; accepting: boolean; onAccept?: () => void }) {
+interface PendingRowProps {
+  friend: Friend;
+  accepting: boolean;
+  /** Only the primary accepts; null until the session loads. */
+  isPrimary: boolean | null;
+  onAccept?: () => void;
+}
+
+function PendingRow({ friend, accepting, isPrimary, onAccept }: PendingRowProps) {
   const received = friend.status === 'pending_received';
+  const actionable = received && isPrimary === true;
   const content = (
     <>
       <Avatar name={friend.username} size={44} background={colors.surfaceMuted} color={colors.text} />
       <View style={cl.info}>
         <Text style={cl.username}>{friend.username}</Text>
-        <Text style={cl.preview}>{received ? 'Wants to be friends' : 'Request sent'}</Text>
+        <Text style={cl.preview}>
+          {!received ? 'Request sent' : isPrimary === false ? 'Wants to be friends · accept on your primary' : 'Wants to be friends'}
+        </Text>
       </View>
-      {received && (
+      {actionable && (
         <View style={cl.acceptBtn}>
           <Text style={cl.acceptBtnText}>{accepting ? 'Accepting…' : 'Accept'}</Text>
         </View>
       )}
     </>
   );
-  if (!received) return <View style={cl.row}>{content}</View>;
+  if (!actionable) return <View style={cl.row}>{content}</View>;
   return (
     <Pressable
       style={cl.row}
@@ -68,7 +80,7 @@ function PendingRow({ friend, accepting, onAccept }: { friend: Friend; accepting
 export function ChatListScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
-  const { myUserId } = useSession();
+  const { myUserId, isPrimary } = useSession();
   const friends = useAcceptedFriends();
   const pending = usePendingFriends();
   const messages = useModelEntries('directMessage');
@@ -83,7 +95,7 @@ export function ChatListScreen() {
   const accept = async (friend: Friend) => {
     setAcceptingUserId(friend.userId);
     try {
-      await Obscura.acceptFriend(friend.userId);
+      await primaryOnly(() => Obscura.acceptFriend(friend.userId));
       await refreshFriends();
       toast.success(`You and ${friend.username} are now friends`);
     } catch (e) {
@@ -106,6 +118,7 @@ export function ChatListScreen() {
           key={f.userId}
           friend={f}
           accepting={acceptingUserId === f.userId}
+          isPrimary={isPrimary}
           onAccept={acceptingUserId === null ? () => accept(f) : undefined}
         />
       ))}

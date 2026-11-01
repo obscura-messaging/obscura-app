@@ -33,6 +33,8 @@ import java.util.Locale
 object ObscuraSession {
     private const val TAG = "ObscuraSession"
     private const val API_URL = "https://obscura.barrelmaker.dev"
+    /** This device's name on the account, shown in device lists and on the primary when linking. */
+    val deviceName: String = android.os.Build.MODEL
 
     interface EventSink {
         fun onConnectionChanged(state: ConnectionState)
@@ -56,6 +58,7 @@ object ObscuraSession {
 
     @Volatile var client: ObscuraClient? = null
         private set
+    @Volatile private var clientUsername: String? = null
     @Volatile var appInForeground =
         ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
         private set
@@ -67,7 +70,7 @@ object ObscuraSession {
         override fun ackFailed(envelopeId: String, reason: String) { Log.w(TAG, "ack failed $envelopeId: $reason") }
         override fun tokenRefreshFailed(attempt: Int, reason: String) { Log.e(TAG, "token refresh failed ($attempt): $reason") }
         override fun preKeyReplenishFailed(reason: String) { Log.w(TAG, "prekey replenish failed: $reason") }
-        override fun identityChanged(address: String) { Log.w(TAG, "identity changed: $address") }
+        override fun identityChanged(userId: String) { Log.w(TAG, "identity changed: $userId") }
         override fun databaseError(store: String, operation: String, reason: String) { Log.e(TAG, "db error $store.$operation: $reason") }
     }
 
@@ -117,11 +120,21 @@ object ObscuraSession {
         return buildClient(username)
     }
 
+    suspend fun reuseOrCreateClient(username: String): ObscuraClient {
+        restoreJob?.cancelAndJoin()
+        restoreJob = null
+        val existing = client
+        if (existing != null && clientUsername == username.lowercase(Locale.ROOT) && existing.authState.value == AuthState.LOGGED_OUT) {
+            return existing
+        }
+        return createClient(username)
+    }
+
     private fun buildClient(username: String): ObscuraClient {
         if (!Regex("^[a-zA-Z0-9_]{3,50}$").matches(username)) {
             throw ObscuraError.InvalidArgument("Invalid username")
         }
-        destroyClient()
+        destroyClient(notifySink = false)
         // The server treats usernames case-insensitively; storage must identify the same account.
         val storageName = username.lowercase(Locale.ROOT)
         val dbName = "obscura_$storageName.db"
@@ -136,12 +149,13 @@ object ObscuraSession {
             openDatabase(storageName, dbName)
         }
         return ObscuraClient(
-            ObscuraConfig(apiUrl = API_URL, deviceName = android.os.Build.MODEL),
+            ObscuraConfig(apiUrl = API_URL, deviceName = deviceName),
             driver = driver,
             sessionStorage = sessionStorage,
         ).also {
             it.logger = logger
             client = it
+            clientUsername = storageName
             startCollectors(it)
         }
     }
@@ -167,11 +181,16 @@ object ObscuraSession {
                 it.message?.contains("file is not a database") == true
         }
 
-    fun destroyClient() {
+    fun destroyClient(notifySink: Boolean = true) {
         collectorJobs.forEach { it.cancel() }
         collectorJobs.clear()
         client?.disconnect()
         client = null
+        clientUsername = null
+        if (notifySink) {
+            sink?.onAuthStateChanged(AuthState.LOGGED_OUT)
+            sink?.onConnectionChanged(ConnectionState.DISCONNECTED)
+        }
     }
 
     suspend fun waitForRestore() {

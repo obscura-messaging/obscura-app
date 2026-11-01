@@ -5,7 +5,7 @@ const bridge = getFakeBridge();
 
 describe('the double is actually installed', () => {
   it('resolves real values', async () => {
-    await Obscura.entryPut('directMessage', 'dm_1', JSON.stringify({ content: 'hi' }), 1_000, 'device_a', null);
+    await Obscura.entryPut('directMessage', 'dm_1', JSON.stringify({ content: 'hi' }), 1_000, 'u_alice', 'device_a', null);
 
     const stored = await Obscura.entryAll('directMessage');
     expect(stored).toHaveLength(1);
@@ -40,12 +40,13 @@ describe('the double is actually installed', () => {
 
 describe('the JSON boundary', () => {
   it('round-trips a payload the kit never parses', async () => {
-    const data = { conversationId: 'a_b', content: 'hello', _authorUserId: 'u_alice' };
+    const data = { conversationId: 'a_b', content: 'hello' };
 
-    await Obscura.entryPut('directMessage', 'dm_1', JSON.stringify(data), 1_000, 'device_a', null);
+    await Obscura.entryPut('directMessage', 'dm_1', JSON.stringify(data), 1_000, 'u_alice', 'device_a', null);
 
     const [stored] = await Obscura.entryAll('directMessage');
     expect(JSON.parse(stored.data)).toEqual(data);
+    expect(stored.authorUserId).toBe('u_alice');
     expect(stored.authorDeviceId).toBe('device_a');
   });
 
@@ -53,7 +54,7 @@ describe('the JSON boundary', () => {
     const captionMeta = JSON.stringify({ style: 'bold', x: 0.5, colour: '#fff' });
     const data = { content: 'sunset 🌅', captionMeta, tags: ['a', 'b'], meta: { nested: true } };
 
-    await Obscura.entryPut('story', 's_1', JSON.stringify(data), 2_000, 'device_a', null);
+    await Obscura.entryPut('story', 's_1', JSON.stringify(data), 2_000, 'u_alice', 'device_a', null);
 
     const [stored] = await Obscura.entryAll('story');
     expect(JSON.parse(stored.data)).toEqual(data);
@@ -63,15 +64,15 @@ describe('the JSON boundary', () => {
     await expect(
       // @ts-expect-error — deliberately passing the wrong type; TS would normally stop this, but the
       // real bridge is untyped `any` at runtime, which is exactly why the double checks.
-      Obscura.entryPut('story', 's_1', { notAString: true }, 1_000, 'device_a', null),
+      Obscura.entryPut('story', 's_1', { notAString: true }, 1_000, 'u_alice', 'device_a', null),
     ).rejects.toThrow(/JSON string/);
   });
 });
 
 describe('the entry store', () => {
   it('keeps models separate', async () => {
-    await Obscura.entryPut('directMessage', 'a', '{}', 1, 'd', null);
-    await Obscura.entryPut('story', 'b', '{}', 1, 'd', null);
+    await Obscura.entryPut('directMessage', 'a', '{}', 1, 'u', 'd', null);
+    await Obscura.entryPut('story', 'b', '{}', 1, 'u', 'd', null);
 
     expect(await Obscura.entryAll('directMessage')).toHaveLength(1);
     expect(await Obscura.entryAll('story')).toHaveLength(1);
@@ -79,15 +80,15 @@ describe('the entry store', () => {
   });
 
   it('reads exactly the named entries through the bridge', async () => {
-    await Obscura.entryPut('directMessage', 'a', '{}', 1, 'd', null);
-    await Obscura.entryPut('directMessage', 'b', '{}', 1, 'd', null);
+    await Obscura.entryPut('directMessage', 'a', '{}', 1, 'u', 'd', null);
+    await Obscura.entryPut('directMessage', 'b', '{}', 1, 'u', 'd', null);
 
     expect((await Obscura.entryGet('directMessage', ['b', 'missing'])).map((e) => e.id)).toEqual(['b']);
   });
 
   it('erases the named entries through the bridge and leaves the rest', async () => {
-    await Obscura.entryPut('directMessage', 'keep', '{}', 1, 'd', null);
-    await Obscura.entryPut('directMessage', 'gone', '{}', 1, 'd', null);
+    await Obscura.entryPut('directMessage', 'keep', '{}', 1, 'u', 'd', null);
+    await Obscura.entryPut('directMessage', 'gone', '{}', 1, 'u', 'd', null);
 
     await Obscura.entryErase('directMessage', ['gone']);
 
@@ -101,8 +102,8 @@ describe('the entry store', () => {
    * would hide an app that forgot to.
    */
   it('is a blind upsert — an older write overwrites a newer one', async () => {
-    await Obscura.entryPut('pix', 'p', JSON.stringify({ v: 'new' }), 9_000, 'd', null);
-    await Obscura.entryPut('pix', 'p', JSON.stringify({ v: 'old' }), 1_000, 'd', null);
+    await Obscura.entryPut('pix', 'p', JSON.stringify({ v: 'new' }), 9_000, 'u', 'd', null);
+    await Obscura.entryPut('pix', 'p', JSON.stringify({ v: 'old' }), 1_000, 'u', 'd', null);
 
     const [stored] = await Obscura.entryAll('pix');
     expect(JSON.parse(stored.data)).toEqual({ v: 'old' });
@@ -134,11 +135,11 @@ describe('the inbox', () => {
 
   /** Data loss chosen out loud: the reason must reach the kit, which logs it as a security event. */
   it('carries a reason into discard', async () => {
-    const row = bridge.__deliverInbox({ kind: 'UNKNOWN', payload: 'x' });
+    const row = bridge.__deliverInbox({ modelKey: 'unknownModel', payload: 'x' });
 
-    await Obscura.inboxDiscard([row.id], 'unknown-kind');
+    await Obscura.inboxDiscard([row.id], 'unknown-model');
 
-    expect(bridge.__discarded).toEqual([{ ids: [row.id], reason: 'unknown-kind' }]);
+    expect(bridge.__discarded).toEqual([{ ids: [row.id], reason: 'unknown-model' }]);
     expect(await Obscura.inboxDepth()).toBe(0);
   });
 });
@@ -158,7 +159,47 @@ describe('failures', () => {
   it('fails only the next call, so a suite is not poisoned by one injection', async () => {
     bridge.__failNext('entryPut', 'ENTRY_PUT_ERROR');
 
-    await expect(Obscura.entryPut('story', 'a', '{}', 1, 'd', null)).rejects.toThrow();
-    await expect(Obscura.entryPut('story', 'b', '{}', 1, 'd', null)).resolves.toBeUndefined();
+    await expect(Obscura.entryPut('story', 'a', '{}', 1, 'u', 'd', null)).rejects.toThrow();
+    await expect(Obscura.entryPut('story', 'b', '{}', 1, 'u', 'd', null)).resolves.toBeUndefined();
+  });
+});
+
+describe('multi-device', () => {
+  it('waits only on a link that beginLink opened, and only once', async () => {
+    await expect(Obscura.completeLink()).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+
+    await Obscura.beginLink('alice', 'password-1234');
+    const waiting = Obscura.completeLink();
+    await expect(Obscura.completeLink()).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+
+    bridge.__approvePendingLink();
+    await waiting;
+    expect(await Obscura.isPrimary()).toBe(false);
+  });
+
+  it('refuses primary-only calls on a linked device', async () => {
+    bridge.__authenticate();
+    bridge.__setPrimary(false);
+
+    for (const call of [
+      () => Obscura.approveLink('code'),
+      () => Obscura.addFriendByCode('u:name'),
+      () => Obscura.acceptFriend('u'),
+      () => Obscura.removeFriend('u'),
+      () => Obscura.unlinkDevice('device_other'),
+    ]) await expect(call()).rejects.toMatchObject({ code: 'NOT_PRIMARY' });
+  });
+
+  it('lets the primary unlink another device but not itself', async () => {
+    bridge.__authenticate();
+    bridge.__setDevices([
+      { deviceId: 'device_self', name: 'Phone', isPrimary: true, isThisDevice: true },
+      { deviceId: 'device_other', name: null, isPrimary: false, isThisDevice: false },
+    ]);
+
+    await expect(Obscura.unlinkDevice('device_self')).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+    await Obscura.unlinkDevice('device_other');
+
+    expect((await Obscura.getDevices()).map((d) => d.deviceId)).toEqual(['device_self']);
   });
 });

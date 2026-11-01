@@ -8,7 +8,7 @@ and `iOS Debug Build` pass on a branch that is up to date with `main`.
 | For | Needs |
 | --- | --- |
 | All work | [`just`](https://github.com/casey/just), Git, Node 22.11+ ([`.nvmrc`](.nvmrc)) |
-| Android | JDK 21, Android SDK 36, NDK `27.1.12297006` |
+| Android | JDK 21, Android SDK 37, NDK `27.1.12297006` |
 | iOS | macOS, Xcode, `rustup`, `protoc`, CocoaPods 1.17.0 |
 
 On macOS: `brew install just protobuf`, then

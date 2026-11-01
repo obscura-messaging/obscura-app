@@ -7,6 +7,8 @@ import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.ConnectionState
+import dev.barrelmaker.obscura.kit.DeviceInfo
+import dev.barrelmaker.obscura.kit.LinkRequest
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.SendReport
@@ -18,7 +20,6 @@ import dev.barrelmaker.obscura.kit.stores.StoredEntry
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.sync.Mutex
-import org.json.JSONObject
 
 private const val TAG = "ObscuraBridge"
 
@@ -68,6 +69,11 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     private val authMutex = Mutex()
     private val typingJobs = mutableMapOf<String, Job>()
 
+    /** The link this device is waiting on. Its secrets never cross to JS, which holds only the code. */
+    private class PendingLink(val client: ObscuraClient, val request: LinkRequest)
+    @Volatile private var pendingLink: PendingLink? = null
+    @Volatile private var linkJob: Job? = null
+
     private val client: ObscuraClient?
         get() = ObscuraSession.client
 
@@ -83,14 +89,14 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         if (t is ObscuraError) reject(t.code, t.message, t) else reject(fallbackCode, t.message, t)
     }
 
-    private fun authenticate(promise: Promise, code: String, operation: suspend () -> Any?) {
+    private fun authenticate(promise: Promise, code: String, operation: suspend () -> Any?): Job? {
         if (!authMutex.tryLock()) {
             promise.rejectKit(code, ObscuraError.InvalidArgument("Authentication already in progress"))
-            return
+            return null
         }
-        scope.launch {
+        return scope.launch {
             try { promise.resolve(operation()) }
-            catch (e: CancellationException) { throw e }
+            catch (e: CancellationException) { promise.reject("CANCELLED", "Cancelled", e); throw e }
             catch (e: Exception) { promise.rejectKit(code, e) }
             finally { authMutex.unlock() }
         }
@@ -192,8 +198,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    /** Fired after a successful local CRUD on a model. Lets screens re-query reactively. */
-
     // ─── Auth ───────────────────────────────────────────────────────────────
 
     @ReactMethod
@@ -209,7 +213,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         authenticate(promise, "LOGIN_ERROR") {
             when (ObscuraSession.createClient(username).login(username, password)) {
                 LoginScenario.EXISTING_DEVICE -> "existingDevice"
-                LoginScenario.NEW_DEVICE -> "newDevice"
+                LoginScenario.LINK_REQUIRED -> "linkRequired"
                 LoginScenario.DEVICE_MISMATCH -> "deviceMismatch"
                 LoginScenario.INVALID_CREDENTIALS -> "invalidCredentials"
             }
@@ -217,10 +221,48 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun loginAndProvision(username: String, password: String, promise: Promise) {
-        authenticate(promise, "PROVISION_ERROR") {
-            ObscuraSession.createClient(username).loginAndProvision(username, password)
+    fun resetAccount(username: String, password: String, promise: Promise) {
+        authenticate(promise, "RESET_ERROR") {
+            ObscuraSession.createClient(username).resetAccount(username, password)
             null
+        }
+    }
+
+    @ReactMethod
+    fun beginLink(username: String, password: String, promise: Promise) {
+        pendingLink = null
+        linkJob = authenticate(promise, "LINK_ERROR") {
+            val c = ObscuraSession.reuseOrCreateClient(username)
+            val request = c.beginLink(username, password, ObscuraSession.deviceName)
+            pendingLink = PendingLink(c, request)
+            request.code
+        }
+    }
+
+    /** Cancellable with [cancelLink]; the kit bounds the wait by the link session's expiry. */
+    @ReactMethod
+    fun completeLink(promise: Promise) {
+        val pending = pendingLink
+        pendingLink = null
+        if (pending == null || pending.client !== client) {
+            promise.rejectKit("LINK_ERROR", ObscuraError.InvalidArgument("No link in progress"))
+            return
+        }
+        linkJob = authenticate(promise, "LINK_ERROR") {
+            pending.client.completeLink(pending.request)
+            null
+        }
+    }
+
+    /** Resolves once a waiting [completeLink] has settled, so the next auth call does not race it. */
+    @ReactMethod
+    fun cancelLink(promise: Promise) {
+        pendingLink = null
+        val job = linkJob
+        linkJob = null
+        scope.launch {
+            job?.cancelAndJoin()
+            promise.resolve(null)
         }
     }
 
@@ -264,8 +306,11 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun getConnectionState(promise: Promise) {
-        val state = client?.connectionState?.value ?: ConnectionState.DISCONNECTED
-        promise.resolve(state.toJsString())
+        scope.launch {
+            ObscuraSession.waitForRestore()
+            val state = client?.connectionState?.value ?: ConnectionState.DISCONNECTED
+            promise.resolve(state.toJsString())
+        }
     }
 
     @ReactMethod
@@ -292,9 +337,83 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    @ReactMethod fun getUserId(promise: Promise) { promise.resolve(client?.userId) }
-    @ReactMethod fun getUsername(promise: Promise) { promise.resolve(client?.username) }
-    @ReactMethod fun getDeviceId(promise: Promise) { promise.resolve(client?.deviceId) }
+    @ReactMethod
+    fun getUserId(promise: Promise) {
+        scope.launch {
+            ObscuraSession.waitForRestore()
+            promise.resolve(client?.userId)
+        }
+    }
+
+    @ReactMethod
+    fun getUsername(promise: Promise) {
+        scope.launch {
+            ObscuraSession.waitForRestore()
+            promise.resolve(client?.username)
+        }
+    }
+
+    @ReactMethod
+    fun getDeviceId(promise: Promise) {
+        scope.launch {
+            ObscuraSession.waitForRestore()
+            promise.resolve(client?.deviceId)
+        }
+    }
+
+    @ReactMethod
+    fun isPrimary(promise: Promise) {
+        scope.launch {
+            ObscuraSession.waitForRestore()
+            try { promise.resolve(client?.isPrimary() ?: false) }
+            catch (e: Exception) { promise.rejectKit("IS_PRIMARY_ERROR", e) }
+        }
+    }
+
+    // ─── Devices ────────────────────────────────────────────────────────────
+
+    @ReactMethod
+    fun linkCodeDeviceName(code: String, promise: Promise) {
+        try { promise.resolve(ObscuraClient.linkCodeDeviceName(code)) }
+        catch (e: Exception) { promise.rejectKit("LINK_CODE_ERROR", e) }
+    }
+
+    @ReactMethod
+    fun approveLink(code: String, promise: Promise) {
+        scope.launch {
+            try {
+                requireClient().approveLink(code)
+                promise.resolve(null)
+            } catch (e: Exception) {
+                promise.rejectKit("APPROVE_LINK_ERROR", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun getDevices(promise: Promise) {
+        scope.launch {
+            try {
+                val arr = Arguments.createArray()
+                for (d in requireClient().devices()) arr.pushMap(deviceToMap(d))
+                promise.resolve(arr)
+            } catch (e: Exception) {
+                promise.rejectKit("GET_DEVICES_ERROR", e)
+            }
+        }
+    }
+
+    /** Unlinking this device wipes it, so the host releases the client as [wipeDevice] does. */
+    @ReactMethod
+    fun unlinkDevice(deviceId: String, promise: Promise) {
+        authenticate(promise, "UNLINK_ERROR") {
+            val c = requireClient()
+            val self = deviceId == c.deviceId
+            c.unlinkDevice(deviceId)
+            if (self) ObscuraSession.destroyClient()
+            null
+        }
+    }
 
     // ─── Friends ────────────────────────────────────────────────────────────
 
@@ -812,6 +931,14 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     // ─── Marshallers ────────────────────────────────────────────────────────
 
+    private fun deviceToMap(d: DeviceInfo): WritableMap =
+        Arguments.createMap().apply {
+            putString("deviceId", d.deviceId)
+            putString("name", d.name)
+            putBoolean("isPrimary", d.isPrimary)
+            putBoolean("isThisDevice", d.isThisDevice)
+        }
+
     private fun friendToMap(f: FriendData, status: String): WritableMap =
         Arguments.createMap().apply {
             putString("userId", f.userId)
@@ -882,6 +1009,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         id: String,
         dataJson: String,
         sentAt: Double,
+        authorUserId: String,
         authorDeviceId: String,
         localMetadataJson: String?,
         promise: Promise,
@@ -894,6 +1022,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
                         id = id,
                         data = dataJson,
                         sentAt = sentAt.toLong(),
+                        authorUserId = authorUserId,
                         authorDeviceId = authorDeviceId,
                         localMetadata = localMetadataJson,
                     )
@@ -947,6 +1076,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
                 putString("id", e.id)
                 putString("data", e.data)
                 putDouble("sentAt", e.sentAt.toDouble())
+                putString("authorUserId", e.authorUserId)
                 putString("authorDeviceId", e.authorDeviceId)
                 putString("localMetadata", e.localMetadata)
             })
@@ -986,7 +1116,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
                     entryId = entryId,
                     sentAt = sentAt.toLong(),
                     payload = payloadJson.toByteArray(),
-                    acceptedDeviceIds = emptySet(),
                 )
                 promise.resolve(sendReportToMap(report))
             } catch (e: Exception) {
@@ -995,23 +1124,15 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    /**
-     * `payload` crosses as a UTF-8 string. For an unknown `kind` the decoding is lossy, which is safe
-     * because the app discards such rows without reading the payload.
-     */
+    /** `payload` crosses as a UTF-8 string. */
     private fun inboxRowToMap(r: dev.barrelmaker.obscura.kit.stores.InboxRecord): WritableMap =
         Arguments.createMap().apply {
             putDouble("id", r.id.toDouble())
-            putString("kind", r.kind)
             putString("senderUserId", r.senderUserId)
             putString("senderDeviceId", r.senderDeviceId)
             putString("modelKey", r.modelKey)
             putString("entryId", r.entryId)
-            // Bound to a local first: `sentAt` is a nullable property from ANOTHER module, so
-            // Kotlin refuses to smart-cast it — the kit could, in principle, change it between the
-            // null check and the read.
-            val sentAt = r.sentAt
-            if (sentAt != null) putDouble("sentAt", sentAt.toDouble()) else putNull("sentAt")
+            putDouble("sentAt", r.sentAt.toDouble())
             putString("payload", String(r.payload))
         }
 
@@ -1025,26 +1146,4 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     private fun ReadableArray.toStringList(): List<String> =
         (0 until size()).mapNotNull { getString(it) }
-
-    private fun jsonStringToMap(jsonStr: String): Map<String, Any?> {
-        val map = mutableMapOf<String, Any?>()
-        try {
-            val json = JSONObject(jsonStr)
-            for (key in json.keys()) {
-                map[key] = when {
-                    json.isNull(key) -> null
-                    else -> {
-                        val v = json.get(key)
-                        when (v) {
-                            is String -> v
-                            is Number -> if (v.toDouble() == v.toLong().toDouble()) v.toLong() else v.toDouble()
-                            is Boolean -> v
-                            else -> v.toString()
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-        return map
-    }
 }

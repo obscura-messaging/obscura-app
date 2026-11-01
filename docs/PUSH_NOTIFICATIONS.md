@@ -23,14 +23,14 @@ content persists in OS databases and backups.
 | Layer | Responsibility |
 | --- | --- |
 | Server | Stores one token per device. Sends a silent wake when that device's queue changes. |
-| Kit | Registers the token and processes pending envelopes ([Push](https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md#typing-attachments-and-push)). Never posts a notification. |
+| Kit | Registers the token and processes pending envelopes ([Push](https://github.com/obscura-messaging/obscura-native/blob/6f895145d2df7cbe350ac791d428383ff97155f0/docs/KIT_API.md#typing-attachments-and-push)). Never posts a notification. |
 | Native host | Receives the wake, restores the session, drains, and posts generic copy while the app is backgrounded. |
 | TypeScript app | Requests permission and registers every token it receives. |
 
 ## Server contract
 
 ```text
-PUT /v1/push-tokens
+PUT /v1/push-token
 Authorization: Bearer <device-scoped JWT>
 Body: { "token": "<fcm-token>" }
 ```

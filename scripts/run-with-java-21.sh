@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -z "${JAVA_HOME:-}" && "$(uname -s)" == "Darwin" ]]; then
-  JAVA_HOME="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
+if [[ -z "${JAVA_HOME:-}" ]]; then
+  case "$(uname -s)" in
+    Darwin)
+      JAVA_HOME="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
+      ;;
+    Linux)
+      if command -v java >/dev/null 2>&1; then
+        JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
+      fi
+      ;;
+  esac
   export JAVA_HOME
 fi
 

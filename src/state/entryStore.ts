@@ -4,14 +4,11 @@ import type { Entry } from '../domain/merge';
 import { logError } from '../utils/log';
 
 /**
- * The only module that knows how entries are stored in the kit.
+ * The only module that reads or writes the kit's entry store.
  *
- * The kit has no author column, so the author travels inside `data` under `_authorUserId`, and the
- * outbox mark travels in `localMetadata`. Outside this module an entry's `data` is exactly what
- * peers send.
+ * An entry's `data` is stored verbatim; the outbox mark travels in `localMetadata`.
  */
 
-const AUTHOR_KEY = '_authorUserId';
 const UNDELIVERED_METADATA = JSON.stringify({ undelivered: true });
 
 export interface StoredRow extends Entry {
@@ -39,8 +36,9 @@ export function putEntry(model: string, entry: Entry, undelivered = false): Prom
   return Obscura.entryPut(
     model,
     entry.id,
-    JSON.stringify({ ...entry.data, [AUTHOR_KEY]: entry.authorUserId }),
+    JSON.stringify(entry.data),
     entry.sentAt,
+    entry.authorUserId,
     entry.authorDeviceId,
     undelivered ? UNDELIVERED_METADATA : null,
   );
@@ -48,7 +46,7 @@ export function putEntry(model: string, entry: Entry, undelivered = false): Prom
 
 /** Record an erased entry's `erasedKey`, so a replayed write for it is not stored again. */
 export function putErasedMarker(key: string, erasedAt: number): Promise<void> {
-  return Obscura.entryPut(ERASED_MODEL, key, '{}', erasedAt, '', null);
+  return Obscura.entryPut(ERASED_MODEL, key, '{}', erasedAt, '', '', null);
 }
 
 /** The given erased keys that have a marker. */
@@ -78,16 +76,15 @@ function decode(e: StoredEntry): StoredRow {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error(`entry ${e.id} is not a JSON object`);
   }
-  const { [AUTHOR_KEY]: authorUserId, ...data } = parsed as Record<string, unknown>;
-  if (typeof authorUserId !== 'string' || authorUserId === '') {
+  if (e.authorUserId === '') {
     throw new Error(`entry ${e.id} has no author`);
   }
   return {
     id: e.id,
     sentAt: e.sentAt,
-    authorUserId,
+    authorUserId: e.authorUserId,
     authorDeviceId: e.authorDeviceId,
-    data,
+    data: parsed as Record<string, unknown>,
     undelivered: e.localMetadata === UNDELIVERED_METADATA,
   };
 }

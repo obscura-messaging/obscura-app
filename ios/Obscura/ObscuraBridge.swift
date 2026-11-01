@@ -18,6 +18,14 @@ final class ObscuraBridge: RCTEventEmitter {
     /// Active typing observations, keyed by conversationId.
     private var typingTasks: [String: Task<Void, Never>] = [:]
 
+    /// The link this device is waiting on. Its secrets never cross to JS, which holds only the code.
+    private struct PendingLink {
+        let client: ObscuraClient
+        let request: LinkRequest
+    }
+    private var pendingLink: PendingLink?
+    private var linkTask: Task<Void, Never>?
+
     /// Consume-once cold-start deep-link target. Notification callbacks do not
     /// populate it until iOS push delivery is implemented.
     static var pendingLaunchScreen: String?
@@ -117,17 +125,19 @@ final class ObscuraBridge: RCTEventEmitter {
         get async throws { try await ObscuraSession.shared.readyClient() }
     }
 
+    @discardableResult
     private func authenticate(_ resolve: @escaping RCTPromiseResolveBlock,
                               _ reject: @escaping RCTPromiseRejectBlock,
-                              _ code: String, _ operation: @escaping () async throws -> Any?) {
+                              _ code: String, _ operation: @escaping () async throws -> Any?) -> Task<Void, Never>? {
         guard !authenticating else {
             rejectKit(reject, code, ObscuraError.invalidArgument("Authentication already in progress"))
-            return
+            return nil
         }
         authenticating = true
-        Task {
+        return Task {
             defer { authenticating = false }
             do { resolve(try await operation()) }
+            catch where Task.isCancelled { reject("CANCELLED", "Cancelled", error) }
             catch { rejectKit(reject, code, error) }
         }
     }
@@ -143,7 +153,7 @@ extension ObscuraBridge {
                       rejecter reject: @escaping RCTPromiseRejectBlock) {
         authenticate(resolve, reject, "REGISTER_ERROR") {
             let c = try ObscuraSession.shared.makeUserClient(username: username)
-            try await ObscuraSession.shared.replaceClient(c)
+            try await ObscuraSession.shared.replaceClient(c, username: username)
             try await c.register(username, password)
             return nil
         }
@@ -155,25 +165,68 @@ extension ObscuraBridge {
                rejecter reject: @escaping RCTPromiseRejectBlock) {
         authenticate(resolve, reject, "LOGIN_ERROR") {
             let c = try ObscuraSession.shared.makeUserClient(username: username)
-            try await ObscuraSession.shared.replaceClient(c)
+            try await ObscuraSession.shared.replaceClient(c, username: username)
             switch try await c.login(username, password) {
             case .existingDevice: return "existingDevice"
-            case .newDevice: return "newDevice"
+            case .linkRequired: return "linkRequired"
             case .deviceMismatch: return "deviceMismatch"
             case .invalidCredentials: return "invalidCredentials"
             }
         }
     }
 
-    @objc(loginAndProvision:password:resolver:rejecter:)
-    func loginAndProvision(_ username: String, password: String,
-                           resolver resolve: @escaping RCTPromiseResolveBlock,
-                           rejecter reject: @escaping RCTPromiseRejectBlock) {
-        authenticate(resolve, reject, "PROVISION_ERROR") {
+    @objc(resetAccount:password:resolver:rejecter:)
+    func resetAccount(_ username: String, password: String,
+                      resolver resolve: @escaping RCTPromiseResolveBlock,
+                      rejecter reject: @escaping RCTPromiseRejectBlock) {
+        authenticate(resolve, reject, "RESET_ERROR") {
             let c = try ObscuraSession.shared.makeUserClient(username: username)
-            try await ObscuraSession.shared.replaceClient(c)
-            try await c.loginAndProvision(username, password)
+            try await ObscuraSession.shared.replaceClient(c, username: username)
+            try await c.resetAccount(username, password)
             return nil
+        }
+    }
+
+    @objc(beginLink:password:resolver:rejecter:)
+    func beginLink(_ username: String, password: String,
+                   resolver resolve: @escaping RCTPromiseResolveBlock,
+                   rejecter reject: @escaping RCTPromiseRejectBlock) {
+        pendingLink = nil
+        linkTask = authenticate(resolve, reject, "LINK_ERROR") {
+            let c = try await ObscuraSession.shared.reuseOrReplaceClient(username: username)
+            let request = try await c.beginLink(username, password, deviceName: ObscuraSession.shared.deviceName)
+            self.pendingLink = PendingLink(client: c, request: request)
+            return request.code
+        }
+    }
+
+    /// Cancellable with `cancelLink`; the kit bounds the wait by the link session's expiry.
+    @objc(completeLink:rejecter:)
+    func completeLink(_ resolve: @escaping RCTPromiseResolveBlock,
+                      rejecter reject: @escaping RCTPromiseRejectBlock) {
+        let pending = pendingLink
+        pendingLink = nil
+        guard let pending, pending.client === ObscuraSession.shared.client else {
+            rejectKit(reject, "LINK_ERROR", ObscuraError.invalidArgument("No link in progress"))
+            return
+        }
+        linkTask = authenticate(resolve, reject, "LINK_ERROR") {
+            try await pending.client.completeLink(pending.request)
+            return nil
+        }
+    }
+
+    /// Resolves once a waiting `completeLink` has settled, so the next auth call does not race it.
+    @objc(cancelLink:rejecter:)
+    func cancelLink(_ resolve: @escaping RCTPromiseResolveBlock,
+                    rejecter reject: @escaping RCTPromiseRejectBlock) {
+        pendingLink = nil
+        let task = linkTask
+        linkTask = nil
+        task?.cancel()
+        Task {
+            await task?.value
+            resolve(nil)
         }
     }
 
@@ -248,6 +301,66 @@ extension ObscuraBridge {
         Task {
             await ObscuraSession.shared.waitForRestore()
             resolve(await ObscuraSession.shared.client?.deviceId)
+        }
+    }
+
+    @objc(isPrimary:rejecter:)
+    func isPrimary(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            await ObscuraSession.shared.waitForRestore()
+            do { resolve(try await ObscuraSession.shared.client?.isPrimary ?? false) }
+            catch { rejectKit(reject, "IS_PRIMARY_ERROR", error) }
+        }
+    }
+}
+
+// MARK: - Devices
+
+extension ObscuraBridge {
+
+    @objc(linkCodeDeviceName:resolver:rejecter:)
+    func linkCodeDeviceName(_ code: String,
+                            resolver resolve: @escaping RCTPromiseResolveBlock,
+                            rejecter reject: @escaping RCTPromiseRejectBlock) {
+        do { resolve(try ObscuraClient.linkCodeDeviceName(code)) }
+        catch { rejectKit(reject, "LINK_CODE_ERROR", error) }
+    }
+
+    @objc(approveLink:resolver:rejecter:)
+    func approveLink(_ code: String,
+                     resolver resolve: @escaping RCTPromiseResolveBlock,
+                     rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            do { try await client.approveLink(code); resolve(nil) }
+            catch { rejectKit(reject, "APPROVE_LINK_ERROR", error) }
+        }
+    }
+
+    @objc(getDevices:rejecter:)
+    func getDevices(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            do {
+                resolve(try await client.devices().map {
+                    ["deviceId": $0.deviceId, "name": $0.name as Any, "isPrimary": $0.isPrimary,
+                     "isThisDevice": $0.isThisDevice]
+                })
+            } catch {
+                rejectKit(reject, "GET_DEVICES_ERROR", error)
+            }
+        }
+    }
+
+    /// Unlinking this device wipes it, so the host releases the client as `wipeDevice` does.
+    @objc(unlinkDevice:resolver:rejecter:)
+    func unlinkDevice(_ deviceId: String,
+                      resolver resolve: @escaping RCTPromiseResolveBlock,
+                      rejecter reject: @escaping RCTPromiseRejectBlock) {
+        authenticate(resolve, reject, "UNLINK_ERROR") {
+            let c = try await self.client
+            let isThisDevice = await c.deviceId == deviceId
+            try await c.unlinkDevice(deviceId)
+            if isThisDevice { ObscuraSession.shared.discardClient() }
+            return nil
         }
     }
 }
@@ -383,16 +496,16 @@ extension ObscuraBridge {
         }
     }
 
-    @objc(entryPut:id:dataJson:sentAt:authorDeviceId:localMetadataJson:resolver:rejecter:)
+    @objc(entryPut:id:dataJson:sentAt:authorUserId:authorDeviceId:localMetadataJson:resolver:rejecter:)
     func entryPut(_ model: String, id: String, dataJson: String, sentAt: NSNumber,
-                  authorDeviceId: String, localMetadataJson: String?,
+                  authorUserId: String, authorDeviceId: String, localMetadataJson: String?,
                   resolver resolve: @escaping RCTPromiseResolveBlock,
                   rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
                 try await client.entries.put(model: model, entry: StoredEntry(
                     id: id, data: dataJson,
-                    sentAt: sentAt.uint64Value, authorDeviceId: authorDeviceId,
+                    sentAt: sentAt.uint64Value, authorUserId: authorUserId, authorDeviceId: authorDeviceId,
                     localMetadata: localMetadataJson
                 ))
                 resolve(nil)
@@ -445,7 +558,8 @@ extension ObscuraBridge {
     }
 
     static func entryDict(_ e: StoredEntry) -> [String: Any] {
-        ["id": e.id, "data": e.data, "sentAt": Double(e.sentAt), "authorDeviceId": e.authorDeviceId,
+        ["id": e.id, "data": e.data, "sentAt": Double(e.sentAt),
+         "authorUserId": e.authorUserId, "authorDeviceId": e.authorDeviceId,
          "localMetadata": e.localMetadata as Any]
     }
 
@@ -468,7 +582,7 @@ extension ObscuraBridge {
             do {
                 let report = try await client.send(
                     to: recipientUserIds, modelKey: modelKey, entryId: entryId,
-                    sentAt: sentAt.uint64Value, payload: Data(payloadJson.utf8), acceptedDeviceIds: []
+                    sentAt: sentAt.uint64Value, payload: Data(payloadJson.utf8)
                 )
                 resolve(ObscuraBridge.sendReportDict(report))
             } catch {
@@ -477,17 +591,15 @@ extension ObscuraBridge {
         }
     }
 
-    /// `payload` crosses as a UTF-8 string. For an unknown `kind` the decoding is lossy, which is
-    /// safe because the app discards such rows without reading the payload.
+    /// `payload` crosses as a UTF-8 string.
     static func inboxRowDict(_ r: InboxRecord) -> [String: Any] {
         [
             "id": Double(r.id),
-            "kind": r.kind,
             "senderUserId": r.senderUserId,
-            "senderDeviceId": r.senderDeviceId as Any,
-            "modelKey": r.modelKey as Any,
-            "entryId": r.entryId as Any,
-            "sentAt": r.sentAt.map { Double($0) } as Any,
+            "senderDeviceId": r.senderDeviceId,
+            "modelKey": r.modelKey,
+            "entryId": r.entryId,
+            "sentAt": Double(r.sentAt),
             "payload": String(decoding: r.payload, as: UTF8.self),
         ]
     }

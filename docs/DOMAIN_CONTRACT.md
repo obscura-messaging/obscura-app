@@ -2,7 +2,7 @@
 
 These are the semantics the app owns in `src/models/`, `src/domain/` and
 `src/state/`. The kit only stores and sends opaque bytes
-([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/41395061762b37da748618f34bbac3221e537883/docs/KIT_API.md)).
+([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/6f895145d2df7cbe350ac791d428383ff97155f0/docs/KIT_API.md)).
 
 ## Models
 
@@ -23,10 +23,11 @@ an undeclared model throws. Screen entry types derive from it. Field types are `
 (`?` means optional). A local write with a bad field throws, and a received
 entry with one is discarded as `invalid-fields`. Undeclared fields are allowed.
 
-An entry's author is `Entry.authorUserId`, never a payload field: a local write
+An entry's author is `Entry.authorUserId`, stored as a first-class column alongside
+`authorDeviceId` in the kit's entry store—never a payload field: a local write
 sets it to this user, and the drain sets it to the transport sender.
 `src/state/entryStore.ts` is the only code that reads or writes the kit's entry
-store for app models, and the only code that knows how the author is stored.
+store for app models.
 
 ## Audience
 
@@ -63,8 +64,8 @@ Friendship is not required; names come from the friend graph at render time.
 peek -> classify -> parse -> validate fields -> authorize -> merge -> entryPut -> consume
 ```
 
-A row that can never be processed is discarded with a reason: `unknown-kind`,
-`unknown-model`, `missing-fields`, `unparsable-payload`, `invalid-fields` or
+A row that can never be processed is discarded with a reason:
+`unknown-model`, `unparsable-payload`, `invalid-fields` or
 `unauthorized-sender`. A transient failure leaves the row pending, and a merge
 loser is consumed without a write. Nothing is drained until `getUserId` returns
 a value. The drain runs on cold start, reconnect, foreground and
@@ -120,3 +121,21 @@ The rules for `directMessage` and `pix` are in `src/domain/seen.ts` and
   row hides an expired story until the sweep erases it.
 - **Sweep.** `src/state/expiry.ts` runs on cold start, reconnect, foreground and
   every 30 s while signed in.
+
+## Devices
+
+An account has one primary device, the first one provisioned, and any number of
+linked devices that share its identity. Only the primary adds, accepts and
+removes friends, links devices and unlinks other devices; a linked device hides
+those actions and treats `NOT_PRIMARY` as proof that it is not the primary
+(`src/state/devices.ts`). A linked device is never promoted: losing the primary
+means resetting the account, which signs out every device and shows friends a
+safety-number change.
+
+`src/state/login.ts` drives sign-in: registration and account reset provision
+this device as the primary, existing devices sign in directly, and an
+unprovisioned device on an existing account links via the primary. The new
+device shows
+its link code as a QR code (`obscura:link:<code>`, `src/domain/qr.ts`); the
+primary scans or pastes it, sees the device name the kit reads from the code
+and approves it. The app never parses the code itself.

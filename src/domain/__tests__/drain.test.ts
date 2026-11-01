@@ -26,7 +26,6 @@ let nextId = 1;
 function row(over: Partial<InboxRow> = {}): InboxRow {
   return {
     id: nextId++,
-    kind: 'APP_ENTRY',
     modelKey: 'directMessage',
     entryId: `entry_${nextId}`,
     sentAt: 1_000,
@@ -83,7 +82,7 @@ describe('attribution — who an entry is from', () => {
       modelKey: 'story',
       entryId: 's_1',
       senderUserId: STRANGER,
-      payload: JSON.stringify({ content: 'x', _authorUserId: 'uAlice', authorUsername: 'alice' }),
+      payload: JSON.stringify({ content: 'x', authorUserId: 'uAlice', authorUsername: 'alice' }),
     });
 
     const plan = planDrain([r], models, empty, SELF);
@@ -203,16 +202,6 @@ describe('authorization — who may write what', () => {
 });
 
 describe('rows the app cannot process', () => {
-  /** The kit inboxes unknown arms; the app cannot read them either, so it discards them. */
-  it('discards an unknown kind rather than skipping it', () => {
-    const r = row({ kind: 'UNKNOWN', modelKey: null, entryId: null });
-
-    const plan = planDrain([r], models, empty, SELF);
-
-    expect(plan.discard).toEqual([{ id: r.id, reason: 'unknown-kind' }]);
-    expect(plan.consume).toEqual([]);
-  });
-
   it('discards a model this version of the app does not know', () => {
     const r = row({ modelKey: 'somethingNewer' });
 
@@ -230,37 +219,14 @@ describe('rows the app cannot process', () => {
   });
 
   /**
-   * `senderDeviceId` is the REPLACE tie-break. Without it two devices receiving the same writes in
-   * different orders converge to different states.
-   */
-  it('discards a row with no authenticated sender device', () => {
-    const r = row({ senderDeviceId: null });
-
-    const plan = planDrain([r], models, empty, SELF);
-
-    expect(plan.discard).toEqual([{ id: r.id, reason: 'missing-fields' }]);
-  });
-
-  /** No authenticated user means nothing to authorize against and nobody to attribute the entry to. */
-  it('discards a row with no authenticated sender user', () => {
-    const r = row({ senderUserId: '' });
-
-    expect(planDrain([r], models, empty, SELF).discard).toEqual([
-      { id: r.id, reason: 'missing-fields' },
-    ]);
-  });
-
-  /**
    * Every row is consumed or discarded. There is no skip cursor, so a row that is neither stays at
    * the head of the queue forever.
    */
   it('accounts for every row — nothing is silently skipped', () => {
     const rows = [
       row({ entryId: 'ok_1' }),
-      row({ kind: 'UNKNOWN' }),
       row({ modelKey: 'unknownModel' }),
       row({ payload: 'not json' }),
-      row({ senderDeviceId: null }),
       row({ senderUserId: STRANGER }),
       row({ entryId: 'ok_2' }),
     ];
