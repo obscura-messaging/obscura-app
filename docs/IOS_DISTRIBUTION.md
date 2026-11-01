@@ -6,7 +6,8 @@ The Android release workflow also starts this one, after the same verification
 exports a signed IPA. It keeps the IPA and dSYMs as a GitHub artifact for 30
 days. A second job verifies the IPA and uploads it to App Store Connect for
 internal TestFlight. There is no tag and no store release. The marketing
-version is `1.0`, and the build number is 1000 plus the release run number. An
+version comes from `package.json` (`1.0.0`), and the build number is 1000 plus
+the release run number. An
 uploaded build cannot be replaced under the same version and build, so retry the
 failed jobs or start a new run. A store release will need its own versioning
 and promotion flow.

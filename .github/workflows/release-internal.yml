@@ -20,6 +20,7 @@ jobs:
     outputs:
       sha: ${{ steps.release.outputs.sha }}
       build_number: ${{ steps.release.outputs.build_number }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -40,6 +41,7 @@ jobs:
     with:
       sha: ${{ needs.verify.outputs.sha }}
       build_number: ${{ needs.verify.outputs.build_number }}
+      version: ${{ needs.verify.outputs.version }}
     secrets: inherit
 
   ios:
@@ -48,5 +50,5 @@ jobs:
     with:
       sha: ${{ needs.verify.outputs.sha }}
       build_number: ${{ needs.verify.outputs.build_number }}
-      version: '1.0'
+      version: ${{ needs.verify.outputs.version }}
     secrets: inherit

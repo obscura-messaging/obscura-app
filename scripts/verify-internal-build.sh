@@ -42,7 +42,17 @@ if (( build_number > 2100000000 )); then
     echo "error: Android version code exceeds the supported limit" >&2
     exit 1
 fi
+if [[ ! -f package.json ]]; then
+    echo "error: package.json is missing" >&2
+    exit 1
+fi
+version="$(node -p "require('./package.json').version")"
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "error: package.json version must be X.Y.Z SemVer (found '$version')" >&2
+    exit 1
+fi
 {
     echo "sha=$sha"
     echo "build_number=$build_number"
+    echo "version=$version"
 } >> "$GITHUB_OUTPUT"

@@ -9,6 +9,9 @@ on:
       build_number:
         required: true
         type: string
+      version:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -26,6 +29,7 @@ jobs:
     env:
       DISTRIBUTION_REF: ${{ inputs.sha }}
       BUILD_NUMBER: ${{ inputs.build_number }}
+      RELEASE_VERSION: ${{ inputs.version }}
       ANDROID_PACKAGE_NAME: dev.barrelmaker.obscura.dev
 
     steps:
@@ -114,7 +118,7 @@ jobs:
           }
           short_sha="$(git rev-parse --short=7 HEAD)"
           version_code="$BUILD_NUMBER"
-          version_name="1.0.0-dev.${version_code}+${short_sha}"
+          version_name="$RELEASE_VERSION"
           artifact_name="obscura-dev-android-${version_code}-${short_sha}"
 
           {
@@ -127,7 +131,7 @@ jobs:
 
           mkdir -p dist
           {
-            echo "Obscura Dev Android internal build ${version_name}"
+            echo "Obscura Dev Android internal build ${version_name} (${version_code})"
             echo
             git show -s --format='%s%n%nCommit: %H'
           } > dist/release-notes.txt

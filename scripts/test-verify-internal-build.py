@@ -33,7 +33,8 @@ class InternalBuildVerificationTest(unittest.TestCase):
         self.git("config", "user.name", "Release Test")
         self.git("config", "user.email", "release@example.invalid")
         (self.repo / "README").write_text("tested")
-        self.git("add", "README")
+        (self.repo / "package.json").write_text('{"name":"obscura-app","version":"1.0.0"}\n')
+        self.git("add", "README", "package.json")
         self.git("commit", "-qm", "tested")
         subprocess.run(["git", "clone", "-q", "--bare", str(self.repo), str(self.remote)], check=True)
         self.git("remote", "add", "origin", str(self.remote))
@@ -61,7 +62,14 @@ class InternalBuildVerificationTest(unittest.TestCase):
         result = self.verify()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("build_number=1001\n", self.output.read_text())
+        self.assertIn("version=1.0.0\n", self.output.read_text())
         self.assertIn(f"sha={self.git('rev-parse', 'HEAD')}\n", self.output.read_text())
+
+    def test_rejects_invalid_package_version(self):
+        (self.repo / "package.json").write_text('{"name":"obscura-app","version":"1.0.0-beta.1"}\n')
+        self.git("commit", "-qam", "bad version")
+        self.git("push", "-q", "origin", "main")
+        self.assertNotEqual(self.verify().returncode, 0)
 
     def test_rejects_other_branches_and_mismatched_commit(self):
         self.assertNotEqual(self.verify(GITHUB_REF="refs/heads/feature").returncode, 0)

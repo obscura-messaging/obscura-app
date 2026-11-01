@@ -16,7 +16,8 @@ so **Obscura Dev** can be installed side-by-side with the production
 minified Android App Bundle (`.aab`). It keeps the `.aab` and release notes as
 a GitHub artifact for 30 days. A second job verifies the bundle's checksum and
 commit, then uploads it to the Google Play Console **Internal testing** track.
-The version code is 1000 plus the release run number. Never rerun a release
+The version name comes from `package.json` (`1.0.0`), and the version code is
+1000 plus the release run number. Never rerun a release
 that has already uploaded; retry the failed jobs or start a new run.
 
 ## Google Play Console & Firebase (FCM)

@@ -36,10 +36,11 @@ def isProdEnv = obscuraEnv == "prod"
 def obscuraAppId = isProdEnv ? "dev.barrelmaker.obscura" : "dev.barrelmaker.obscura.dev"
 def obscuraAppName = isProdEnv ? "Obscura" : "Obscura Dev"
 def obscuraApiUrl = isProdEnv ? "https://obscura.barrelmaker.dev" : "https://devscura.barrelmaker.dev"
+def packageJsonVersion = new groovy.json.JsonSlurper().parse(file("../../package.json")).version.toString()
 def obscuraVersionCode =
     (findProperty("obscuraVersionCode") ?: "1").toString().toInteger()
 def obscuraVersionName =
-    (findProperty("obscuraVersionName") ?: "1.0").toString()
+    (findProperty("obscuraVersionName") ?: packageJsonVersion).toString()
 
 if (obscuraVersionCode <= 0) {
     throw new GradleException("obscuraVersionCode must be a positive integer")
