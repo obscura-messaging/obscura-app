@@ -12,6 +12,7 @@ import {
 import { primaryOnly } from '../state/devices';
 import { StoriesRow } from './StoriesScreen';
 import { Avatar } from '../components/Avatar';
+import { confirm } from '../components/confirm';
 import { toast } from '../components/Toast';
 import { MAIN_HEADER_CONTENT_HEIGHT, MainHeaderOverlay } from '../components/MainHeaderOverlay';
 import type { RootStackParamList } from '../navigation/types';
@@ -107,6 +108,24 @@ export function ChatListScreen() {
 
   const openChat = (friend: Friend) => nav.navigate('Chat', { friend });
 
+  const confirmRemoveFriend = async (friend: Friend) => {
+    if (isPrimary !== true) return;
+    const confirmed = await confirm(
+      `Remove ${friend.username}?`,
+      'You will no longer be friends with this user.',
+      'Remove',
+      true,
+    );
+    if (!confirmed) return;
+    try {
+      await primaryOnly(() => Obscura.removeFriend(friend.userId));
+      await refreshFriends();
+      toast.success(`Removed ${friend.username}`);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+
   return (
     // Padded clear of the floating header; horizontal swipes belong to the tab pager.
     <View style={[cl.page, { paddingTop: insets.top + MAIN_HEADER_CONTENT_HEIGHT + 8 }]}>
@@ -143,7 +162,11 @@ export function ChatListScreen() {
               >
                 <PixIcon status={item.latestPix} unopened={item.unopenedPix.length} friend={item.friend} />
               </TouchableOpacity>
-              <TouchableOpacity style={cl.chatZone} onPress={() => openChat(item.friend)}>
+              <TouchableOpacity
+                style={cl.chatZone}
+                onPress={() => openChat(item.friend)}
+                onLongPress={isPrimary === true ? () => confirmRemoveFriend(item.friend) : undefined}
+              >
                 <View style={cl.info}>
                   <Text style={cl.username}>{item.friend.username}</Text>
                   <Text style={cl.preview} numberOfLines={1}>{preview}</Text>

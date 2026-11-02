@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-  SafeAreaView, View, Text, TextInput, TouchableOpacity, FlatList,
+  View, Text, TextInput, TouchableOpacity, FlatList,
   KeyboardAvoidingView, Platform, Animated, StyleSheet, type ViewToken,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -151,7 +152,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   };
 
   return (
-    <SafeAreaView style={s.container}>
+    <SafeAreaView style={s.container} edges={['bottom']}>
       <KeyboardAvoidingView
         style={s.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}

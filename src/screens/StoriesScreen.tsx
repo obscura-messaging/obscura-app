@@ -26,10 +26,12 @@ function StoryCircle({ label, username, empty, onPress }: {
 }) {
   return (
     <TouchableOpacity style={sc.container} onPress={onPress}>
-      <View style={[sc.ring, empty && sc.ringEmpty]}>
-        <Avatar name={username} size={54} background={colors.surface} color={colors.text} />
+      <View style={sc.ringWrap}>
+        <View style={[sc.ring, empty && sc.ringEmpty]}>
+          <Avatar name={username} size={54} background={colors.surface} color={colors.text} />
+        </View>
+        {empty && <View style={sc.addBadge}><Text style={sc.addBadgeText}>+</Text></View>}
       </View>
-      {empty && <View style={sc.addBadge}><Text style={sc.addBadgeText}>+</Text></View>}
       <Text style={sc.username} numberOfLines={1}>{label}</Text>
     </TouchableOpacity>
   );
@@ -188,11 +190,15 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
   const mediaUris = useRef(new Map<string, string>()).current;
 
   const group = groups[groupIdx];
-  const story = group.stories[storyIdx];
+  const story = group?.stories[storyIdx];
+
+  useEffect(() => {
+    if (!group || !story) navigation.goBack();
+  }, [group, story, navigation]);
 
   const viewedIds = useRef(new Set<string>());
   const markCurrentViewed = useCallback(() => {
-    if (!markViewed || viewedIds.current.has(story.id)) return;
+    if (!story || !markViewed || viewedIds.current.has(story.id)) return;
     viewedIds.current.add(story.id);
     markSeen('pix', story).catch((e) => logError('seen.pix:' + story.id, e));
   }, [markViewed, story]);
@@ -214,7 +220,7 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
   }, [group, storyIdx, mediaUri, cube]);
 
   const advance = useCallback(() => {
-    if (transition) return;
+    if (!group || transition) return;
     markCurrentViewed();
     if (storyIdx < group.stories.length - 1) {
       setStoryIdx((i) => i + 1);
@@ -290,13 +296,13 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
   const advanceRef = useRef(advance);
   useEffect(() => { advanceRef.current = advance; }, [advance]);
 
-  const isVideo = story.data.mediaType === 'video';
-  const durationMs = displayMs(story.data.displayDuration);
+  const isVideo = story?.data.mediaType === 'video';
+  const durationMs = displayMs(story?.data.displayDuration);
 
   useEffect(() => {
     progress.setValue(0);
     // A video advances itself when it ends.
-    if (!readyToPlay || isVideo) return;
+    if (!story || !readyToPlay || isVideo) return;
     const animation = Animated.timing(progress, { toValue: 1, duration: durationMs, useNativeDriver: false });
     animation.start();
     const timer = setTimeout(() => advanceRef.current(), durationMs);
@@ -304,7 +310,7 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
       animation.stop();
       clearTimeout(timer);
     };
-  }, [groupIdx, storyIdx, readyToPlay, durationMs, progress, isVideo]);
+  }, [story, groupIdx, storyIdx, readyToPlay, durationMs, progress, isVideo]);
 
   const forward = transition?.direction === 1;
   const incomingAngle = useMemo(
@@ -315,6 +321,8 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
     () => cube.interpolate({ inputRange: [0, 1], outputRange: ['0deg', forward ? '-90deg' : '90deg'] }),
     [cube, forward],
   );
+
+  if (!group || !story) return null;
 
   return (
     <View style={sv.container}>
@@ -381,9 +389,10 @@ export function StoriesRow() {
 
 const sc = StyleSheet.create({
   container: { alignItems: 'center', marginRight: 16, width: 72 },
+  ringWrap: { width: 64, height: 64 },
   ring: { width: 64, height: 64, borderRadius: 32, borderWidth: 3, borderColor: colors.accent, justifyContent: 'center', alignItems: 'center' },
   ringEmpty: { borderColor: colors.surfaceMuted, borderStyle: 'dashed' },
-  addBadge: { position: 'absolute', right: 2, bottom: 14, width: 20, height: 20, borderRadius: 10, backgroundColor: colors.accent, justifyContent: 'center', alignItems: 'center' },
+  addBadge: { position: 'absolute', right: 0, bottom: 0, width: 20, height: 20, borderRadius: 10, backgroundColor: colors.accent, justifyContent: 'center', alignItems: 'center' },
   addBadgeText: { color: colors.onAccent, fontWeight: '700', fontSize: 14, marginTop: -1 },
   username: { color: '#ccc', fontSize: 11, marginTop: 4, textAlign: 'center' },
 });
@@ -408,6 +417,6 @@ const sv = StyleSheet.create({
 });
 
 const ss = StyleSheet.create({
-  circleRow: { paddingTop: 8, paddingBottom: 8 },
+  circleRow: { flexGrow: 0, paddingTop: 8, paddingBottom: 8 },
   circleRowContent: { paddingHorizontal: 16 },
 });

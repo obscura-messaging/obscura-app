@@ -104,10 +104,10 @@ export function ProfileScreen() {
         {friendProfiles.length > 0 && (<>
           <Text style={pf.sectionTitle}>friend profiles</Text>
           {friendProfiles.map(({ entry, name }) => (
-            <View key={entry.id} style={pf.storyCard}>
-              <Text style={pf.storyAuthor}>{name}</Text>
-              {entry.data.displayName ? <Text style={pf.storyContent}>{entry.data.displayName}</Text> : null}
-              {entry.data.bio ? <Text style={pf.storyContent}>{entry.data.bio}</Text> : null}
+            <View key={entry.id} style={pf.profileCard}>
+              <Text style={pf.profileAuthor}>{name}</Text>
+              {entry.data.displayName ? <Text style={pf.profileContent}>{entry.data.displayName}</Text> : null}
+              {entry.data.bio ? <Text style={pf.profileContent}>{entry.data.bio}</Text> : null}
             </View>
           ))}
         </>)}
@@ -154,9 +154,9 @@ const pf = StyleSheet.create({
   sectionTitle: { color: colors.textDim, fontSize: 12, fontWeight: '700', marginTop: 20, marginBottom: 8, textTransform: 'uppercase' },
   smallBtn: { backgroundColor: colors.accent, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
   smallBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 14 },
-  storyCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 14, marginBottom: 8 },
-  storyAuthor: { color: colors.accent, fontSize: 13, fontWeight: '700', marginBottom: 4 },
-  storyContent: { color: colors.text, fontSize: 16 },
+  profileCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 14, marginBottom: 8 },
+  profileAuthor: { color: colors.accent, fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  profileContent: { color: colors.text, fontSize: 16 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, marginBottom: 12 },
   statusDot: { fontSize: 14 },
   statusText: { color: colors.text, fontSize: 15, fontWeight: '600' },
