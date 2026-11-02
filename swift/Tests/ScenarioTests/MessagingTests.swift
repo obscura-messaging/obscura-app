@@ -91,10 +91,11 @@ final class MessagingTests: XCTestCase {
         )
 
         let story = try await bob.waitForStory(storyId)
+        let att = try XCTUnwrap(story.attachment)
         let downloaded = try await bob.client.downloadDecryptedAttachment(
-            id: try XCTUnwrap(story.mediaRef),
-            contentKey: try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(story.contentKey))),
-            nonce: try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(story.nonce)))
+            id: att.id,
+            contentKey: att.contentKey,
+            nonce: att.nonce
         )
         XCTAssertEqual(downloaded, image)
         let ciphertext = try await bob.client.api.fetchAttachment(uploaded.id)

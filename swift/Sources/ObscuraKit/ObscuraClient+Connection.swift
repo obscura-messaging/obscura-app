@@ -255,10 +255,7 @@ extension ObscuraClient {
                 sentAt: sentAt,
                 viewedAt: nil,
                 content: dm.content,
-                mediaRef: nil,
-                contentKey: nil,
-                nonce: nil,
-                mediaType: nil,
+                attachment: nil,
                 caption: nil,
                 captionMeta: nil,
                 displayDuration: 0
@@ -283,10 +280,12 @@ extension ObscuraClient {
                 sentAt: sentAt,
                 viewedAt: nil,
                 content: "",
-                mediaRef: pix.attachment.id,
-                contentKey: pix.attachment.contentKey.base64EncodedString(),
-                nonce: pix.attachment.nonce.base64EncodedString(),
-                mediaType: pix.attachment.mediaType.isEmpty ? nil : pix.attachment.mediaType,
+                attachment: MediaAttachment(
+                    id: pix.attachment.id,
+                    contentKey: pix.attachment.contentKey,
+                    nonce: pix.attachment.nonce,
+                    mediaType: pix.attachment.mediaType.isEmpty ? "photo" : pix.attachment.mediaType
+                ),
                 caption: pix.caption.isEmpty ? nil : pix.caption,
                 captionMeta: pix.captionMeta.isEmpty ? nil : pix.captionMeta,
                 displayDuration: Int(pix.displayDurationSecs)
@@ -312,16 +311,21 @@ extension ObscuraClient {
             guard !st.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return .ignored("story with blank id")
             }
-            let hasAtt = st.hasAttachment && !st.attachment.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let hasAtt = st.hasAttachment
+                && !st.attachment.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !st.attachment.contentKey.isEmpty
+                && !st.attachment.nonce.isEmpty
             let item = StoryItem(
                 id: st.id,
                 authorUserId: senderUserId,
                 sentAt: sentAt,
                 content: st.content,
-                mediaRef: hasAtt ? st.attachment.id : nil,
-                contentKey: hasAtt && !st.attachment.contentKey.isEmpty ? st.attachment.contentKey.base64EncodedString() : nil,
-                nonce: hasAtt && !st.attachment.nonce.isEmpty ? st.attachment.nonce.base64EncodedString() : nil,
-                mediaType: hasAtt && !st.attachment.mediaType.isEmpty ? st.attachment.mediaType : nil,
+                attachment: hasAtt ? MediaAttachment(
+                    id: st.attachment.id,
+                    contentKey: st.attachment.contentKey,
+                    nonce: st.attachment.nonce,
+                    mediaType: st.attachment.mediaType.isEmpty ? "photo" : st.attachment.mediaType
+                ) : nil,
                 captionMeta: st.captionMeta.isEmpty ? nil : st.captionMeta
             )
             let inserted = try ContentStore.insertStoryItem(item, undelivered: false, in: db)

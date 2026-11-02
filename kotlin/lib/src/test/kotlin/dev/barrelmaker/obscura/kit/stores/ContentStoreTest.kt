@@ -1,14 +1,18 @@
 package dev.barrelmaker.obscura.kit.stores
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import dev.barrelmaker.obscura.kit.ObscuraClient
+import dev.barrelmaker.obscura.kit.ObscuraConfig
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.SELF_DEVICE_ID
 import dev.barrelmaker.obscura.kit.SELF_USER_ID
 import dev.barrelmaker.obscura.kit.authenticatedClient
 import dev.barrelmaker.obscura.kit.crypto.toBase64
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
+import dev.barrelmaker.obscura.kit.generateIdentity
 import dev.barrelmaker.obscura.kit.managers.FakeObscuraServer
 import dev.barrelmaker.obscura.kit.sessionClient
+import dev.barrelmaker.obscura.kit.storeLocalDevice
 import dev.barrelmaker.obscura.kit.storedSession
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
@@ -57,23 +61,29 @@ class ContentStoreTest {
     @Test
     fun `sweepExpired records tombstones, returns purged media refs and touched models, and cleans old tombstones`() = runBlocking {
         val now = 1_000_000_000L
+        val key = byteArrayOf(1, 2, 3)
+        val nonce = byteArrayOf(4, 5, 6)
         store.putConversation(
-            ConversationItemData("dm_exp", peer, "message", peer, 100, 200, now - 1, "gone"),
+            ConversationItem("dm_exp", peer, "message", peer, 100, 200, now - 1, "gone"),
         )
         store.putConversation(
-            ConversationItemData(
+            ConversationItem(
                 "pix_exp", peer, "pix", peer, 100, 200, now, "",
-                mediaRef = "att_pix", contentKey = "k", nonce = "n", mediaType = "photo", displayDuration = 5,
+                attachment = MediaAttachment("att_pix", key, nonce, "photo"),
+                displayDuration = 5,
             ),
         )
         store.putConversation(
-            ConversationItemData("dm_keep", peer, "message", peer, now, null, now + 10_000, "keep"),
+            ConversationItem("dm_keep", peer, "message", peer, now, null, now + 10_000, "keep"),
         )
         store.putStory(
-            StoryItemData("st_exp", peer, 100, now - 5, "old story", mediaRef = "att_story", contentKey = "k", nonce = "n"),
+            StoryItem(
+                "st_exp", peer, 100, now - 5, "old story",
+                attachment = MediaAttachment("att_story", key, nonce, "photo"),
+            ),
         )
         store.putStory(
-            StoryItemData("st_keep", peer, now, now + STORY_MAX_AGE_MS, "fresh story"),
+            StoryItem("st_keep", peer, now, now + STORY_MAX_AGE_MS, "fresh story"),
         )
         db.contentQueries.insertErased("ancient_tombstone", now - MAX_EPHEMERAL_AGE_MS)
         db.contentQueries.insertErased("recent_tombstone", now - 1_000)
@@ -90,6 +100,16 @@ class ContentStoreTest {
         assertFalse(canReinsertStory)
         assertFalse(db.contentQueries.existsErased("ancient_tombstone").executeAsOne())
         assertTrue(db.contentQueries.existsErased("recent_tombstone").executeAsOne())
+    }
+
+    @Test
+    fun `MediaAttachment compares contentKey and nonce by value`() {
+        val a = MediaAttachment("att_1", byteArrayOf(1, 2, 3), byteArrayOf(4, 5), "photo")
+        val b = MediaAttachment("att_1", byteArrayOf(1, 2, 3), byteArrayOf(4, 5), "photo")
+        val c = MediaAttachment("att_1", byteArrayOf(9, 2, 3), byteArrayOf(4, 5), "photo")
+        assertEquals(a, b)
+        assertEquals(a.hashCode(), b.hashCode())
+        assertNotEquals(a, c)
     }
 
     @Test
@@ -203,6 +223,83 @@ class ContentStoreTest {
             runBlocking { c.postStory("text", "att", null, "n", "photo", null) }
         }
         assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.markSeen(" ") } }
+        Unit
+    }
+
+    @Test
+    fun `uploadAttachmentFile downloadAttachmentToCache and sweepExpired cache purge work end to end`() = runBlocking {
+        val dir = File("build/test-databases/cache-${UUID.randomUUID()}").also { it.mkdirs() }
+        val cacheDir = File(dir, "attachments")
+        val srcFile = File(dir, "input.jpg").apply { writeBytes("image-bytes".toByteArray()) }
+        val attachments = mutableMapOf<String, ByteArray>()
+        MockWebServer().use { server ->
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val path = request.url.encodedPath
+                    return when {
+                        path == "/v1/attachments" && request.method == "POST" -> {
+                            val id = "att_cached_1"
+                            attachments[id] = request.body!!.toByteArray()
+                            MockResponse.Builder().body(JSONObject().put("id", id).toString()).build()
+                        }
+                        path.startsWith("/v1/attachments/") -> {
+                            val id = path.removePrefix("/v1/attachments/")
+                            attachments[id]?.let { MockResponse.Builder().body(okio.Buffer().write(it)).build() }
+                                ?: MockResponse.Builder().code(404).build()
+                        }
+                        else -> MockResponse.Builder().code(404).build()
+                    }
+                }
+            }
+            server.start()
+            val apiUrl = server.url("/").toString().trimEnd('/')
+            val c = ObscuraClient(
+                ObscuraConfig(apiUrl, "Test"),
+                driver = null,
+                sessionStorage = storedSession(),
+                attachmentCacheDir = cacheDir,
+            ).also {
+                it.signalStore.generateIdentity()
+                it.storeLocalDevice()
+            }
+            assertTrue(c.auth.restore())
+
+            val uploaded = c.uploadAttachmentFile(srcFile)
+            assertEquals("att_cached_1", uploaded.id)
+
+            val downloaded1 = c.downloadAttachmentToCache(
+                uploaded.id,
+                uploaded.contentKey.toBase64(),
+                uploaded.nonce.toBase64(),
+            )
+            assertTrue(downloaded1.exists())
+            assertArrayEquals("image-bytes".toByteArray(), downloaded1.readBytes())
+
+            // Second call hits cache even when server attachment is removed
+            attachments.clear()
+            val downloaded2 = c.downloadAttachmentToCache(
+                uploaded.id,
+                uploaded.contentKey.toBase64(),
+                uploaded.nonce.toBase64(),
+            )
+            assertEquals(downloaded1.absolutePath, downloaded2.absolutePath)
+
+            // Store an expired pix referencing uploaded.id and sweep via ObscuraClient
+            val now = 5_000_000L
+            c.content.putConversation(
+                ConversationItem(
+                    "pix_exp", peer, "pix", peer, 100, 200, now - 1, "",
+                    attachment = MediaAttachment(uploaded.id, uploaded.contentKey, uploaded.nonce, "photo"),
+                    displayDuration = 5,
+                ),
+            )
+            val touched = c.sweepExpired(now)
+            assertEquals(setOf("pix"), touched)
+            assertFalse(downloaded1.exists(), "sweepExpired must purge cached attachment file")
+
+            c.auth.end()
+        }
+        dir.deleteRecursively()
         Unit
     }
 }

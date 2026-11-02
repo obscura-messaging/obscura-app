@@ -91,9 +91,10 @@ class MessagingTests {
         eventually { bob.getStories().isNotEmpty() }
         val story = bob.getStories().single()
         assertEquals("vacation", story.content)
+        val att = story.attachment!!
         assertArrayEquals(
             jpeg,
-            bob.downloadDecryptedAttachment(story.mediaRef!!, story.contentKey!!.fromBase64(), story.nonce!!.fromBase64()),
+            bob.downloadDecryptedAttachment(att.id, att.contentKey, att.nonce),
         )
         alice.disconnect(); bob.disconnect()
     }

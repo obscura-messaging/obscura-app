@@ -1,9 +1,9 @@
 import {
   activityPreview, chatTimeline, conversationItems, friendActivities,
-  pixBadgeFor, pixStatus, type ConversationItem,
+  pixBadgeFor, pixStatus, type ConversationItem, type DirectMessageItem, type PixItem,
 } from '../chats';
 import { friendProfileEntries, type Friend, type ProfileItem } from '../friends';
-import { attachmentOf, displayMs, storyGroups, type StoryItem } from '../viewer';
+import { displayMs, storyGroups, type StoryItem } from '../viewer';
 import { isBackSwipeGesture, shouldCompleteBackSwipe } from '../../utils/gesture';
 
 const ME = 'uMe';
@@ -18,22 +18,15 @@ function msg(
   peerUserId: string,
   content = '',
   viewedAt: number | null = null,
-): ConversationItem {
+): DirectMessageItem {
   return {
+    kind: 'message',
     id,
     peerUserId,
-    kind: 'message',
     authorUserId,
     sentAt,
     viewedAt,
     content,
-    mediaRef: null,
-    contentKey: null,
-    nonce: null,
-    mediaType: null,
-    caption: null,
-    captionMeta: null,
-    displayDuration: 0,
   };
 }
 
@@ -44,19 +37,20 @@ function pixItem(
   peerUserId: string,
   viewedAt: number | null = null,
   caption: string | null = null,
-): ConversationItem {
+): PixItem {
   return {
+    kind: 'pix',
     id,
     peerUserId,
-    kind: 'pix',
     authorUserId,
     sentAt,
     viewedAt,
-    content: '',
-    mediaRef: 'att_1',
-    contentKey: 'key',
-    nonce: 'nonce',
-    mediaType: 'photo',
+    attachment: {
+      id: 'att_1',
+      contentKey: 'key',
+      nonce: 'nonce',
+      mediaType: 'photo',
+    },
     caption,
     captionMeta: null,
     displayDuration: 5,
@@ -69,10 +63,7 @@ function storyItem(id: string, sentAt: number, authorUserId: string, content = '
     authorUserId,
     sentAt,
     content,
-    mediaRef: null,
-    contentKey: null,
-    nonce: null,
-    mediaType: null,
+    attachment: null,
     captionMeta: null,
   };
 }
@@ -86,21 +77,11 @@ describe('pixStatus', () => {
   });
 });
 
-describe('displayMs & attachmentOf', () => {
+describe('displayMs', () => {
   it('uses the default for no limit or no value', () => {
     expect(displayMs(3)).toBe(3_000);
     expect(displayMs(0)).toBe(5_000);
     expect(displayMs(undefined)).toBe(5_000);
-  });
-
-  it('extracts a complete attachment or null', () => {
-    expect(attachmentOf({ mediaRef: 'r1', contentKey: 'k1', nonce: 'n1' })).toEqual({
-      mediaRef: 'r1',
-      contentKey: 'k1',
-      nonce: 'n1',
-    });
-    expect(attachmentOf({ mediaRef: null, contentKey: 'k1', nonce: 'n1' })).toBeNull();
-    expect(attachmentOf(undefined)).toBeNull();
   });
 });
 
@@ -151,7 +132,7 @@ describe('chatTimeline', () => {
       status: 'received_new',
     });
     expect('caption' in item).toBe(false);
-    expect('mediaRef' in item).toBe(false);
+    expect('attachment' in item).toBe(false);
   });
 });
 

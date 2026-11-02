@@ -1,21 +1,33 @@
+import type { CaptionMeta } from './caption';
 import type { Friend } from './friends';
+import type { MediaAttachment, MediaType } from './viewer';
 
-export interface ConversationItem {
+export type { MediaAttachment, MediaType };
+
+export interface DirectMessageItem {
+  kind: 'message';
   id: string;
   peerUserId: string;
-  kind: 'message' | 'pix';
   authorUserId: string;
   sentAt: number;
   viewedAt: number | null;
   content: string;
-  mediaRef: string | null;
-  contentKey: string | null;
-  nonce: string | null;
-  mediaType: string | null;
+}
+
+export interface PixItem {
+  kind: 'pix';
+  id: string;
+  peerUserId: string;
+  authorUserId: string;
+  sentAt: number;
+  viewedAt: number | null;
+  attachment: MediaAttachment;
   caption: string | null;
-  captionMeta: string | null;
+  captionMeta: CaptionMeta | null;
   displayDuration: number;
 }
+
+export type ConversationItem = DirectMessageItem | PixItem;
 
 /** How a pix looks from this user's side of the conversation. */
 export type PixStatus = 'received_new' | 'received_viewed' | 'sent_pending' | 'sent_opened';
@@ -94,9 +106,9 @@ export function chatTimeline(
 
 export interface FriendActivity {
   friend: Friend;
-  lastMessage: ConversationItem | undefined;
+  lastMessage: DirectMessageItem | undefined;
   /** Received pix not yet seen, oldest first. */
-  unopenedPix: ConversationItem[];
+  unopenedPix: PixItem[];
   /** The status of the newest pix either way, if any. */
   latestPix: PixStatus | undefined;
   /** When anything last happened in the conversation, or 0. */
@@ -120,8 +132,8 @@ export function friendActivities(
 ): FriendActivity[] {
   return friends.map((friend) => {
     const peerItems = conversationItems(items, friend.userId);
-    const messages = peerItems.filter((item) => item.kind === 'message');
-    const pix = peerItems.filter((item) => item.kind === 'pix');
+    const messages = peerItems.filter((item): item is DirectMessageItem => item.kind === 'message');
+    const pix = peerItems.filter((item): item is PixItem => item.kind === 'pix');
     const lastMessage = messages.at(-1);
     const latest = pix.at(-1);
     const unopenedPix = pix.filter((p) => pixStatus(p, myUserId) === 'received_new');

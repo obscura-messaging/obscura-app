@@ -34,10 +34,7 @@ extension ObscuraClient {
             sentAt: sentAt,
             viewedAt: nil,
             content: text,
-            mediaRef: nil,
-            contentKey: nil,
-            nonce: nil,
-            mediaType: nil,
+            attachment: nil,
             caption: nil,
             captionMeta: nil,
             displayDuration: 0
@@ -90,6 +87,12 @@ extension ObscuraClient {
         let sentAt = Self.nowMs()
         let id = Self.generateId(prefix: "pix")
         let normalizedMediaType = mediaType.isEmpty ? "photo" : mediaType
+        let attachment = MediaAttachment(
+            id: mediaRef,
+            contentKey: keyBytes,
+            nonce: nonceBytes,
+            mediaType: normalizedMediaType
+        )
         let item = ConversationItem(
             id: id,
             peerUserId: peerUserId,
@@ -98,10 +101,7 @@ extension ObscuraClient {
             sentAt: sentAt,
             viewedAt: nil,
             content: "",
-            mediaRef: mediaRef,
-            contentKey: contentKey,
-            nonce: nonce,
-            mediaType: normalizedMediaType,
+            attachment: attachment,
             caption: caption.isEmpty ? nil : caption,
             captionMeta: (captionMeta?.isEmpty == false) ? captionMeta : nil,
             displayDuration: max(0, displayDuration)
@@ -113,10 +113,10 @@ extension ObscuraClient {
         message.timestamp = sentAt
         message.pix.id = id
         message.pix.peerUserID = peerUserId
-        message.pix.attachment.id = mediaRef
-        message.pix.attachment.contentKey = keyBytes
-        message.pix.attachment.nonce = nonceBytes
-        message.pix.attachment.mediaType = normalizedMediaType
+        message.pix.attachment.id = attachment.id
+        message.pix.attachment.contentKey = attachment.contentKey
+        message.pix.attachment.nonce = attachment.nonce
+        message.pix.attachment.mediaType = attachment.mediaType
         message.pix.caption = caption
         message.pix.captionMeta = captionMeta ?? ""
         message.pix.displayDurationSecs = UInt32(max(0, displayDuration))
@@ -164,15 +164,19 @@ extension ObscuraClient {
         captionMeta: String?
     ) async throws -> String {
         let hasMedia = (mediaRef?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
-        var keyBytes: Data?
-        var nonceBytes: Data?
-        if hasMedia {
+        var attachment: MediaAttachment?
+        if hasMedia, let mediaRef {
             guard let contentKey, let decodedKey = Data(base64Encoded: contentKey), !decodedKey.isEmpty,
                   let nonce, let decodedNonce = Data(base64Encoded: nonce), !decodedNonce.isEmpty else {
                 throw ObscuraError.invalidArgument("invalid story attachment key material")
             }
-            keyBytes = decodedKey
-            nonceBytes = decodedNonce
+            let normalizedMediaType = (mediaType?.isEmpty == false) ? mediaType! : "photo"
+            attachment = MediaAttachment(
+                id: mediaRef,
+                contentKey: decodedKey,
+                nonce: decodedNonce,
+                mediaType: normalizedMediaType
+            )
         }
         let (selfUserId, _) = try await sendContext()
         let sentAt = Self.nowMs()
@@ -182,10 +186,7 @@ extension ObscuraClient {
             authorUserId: selfUserId,
             sentAt: sentAt,
             content: text,
-            mediaRef: hasMedia ? mediaRef : nil,
-            contentKey: hasMedia ? contentKey : nil,
-            nonce: hasMedia ? nonce : nil,
-            mediaType: hasMedia ? (mediaType?.isEmpty == false ? mediaType : "photo") : nil,
+            attachment: attachment,
             captionMeta: (captionMeta?.isEmpty == false) ? captionMeta : nil
         )
         try await content.insertStoryItem(item, undelivered: false)
@@ -195,11 +196,11 @@ extension ObscuraClient {
         message.timestamp = sentAt
         message.story.id = id
         message.story.content = text
-        if hasMedia, let mediaRef, let keyBytes, let nonceBytes {
-            message.story.attachment.id = mediaRef
-            message.story.attachment.contentKey = keyBytes
-            message.story.attachment.nonce = nonceBytes
-            message.story.attachment.mediaType = item.mediaType ?? "photo"
+        if let attachment {
+            message.story.attachment.id = attachment.id
+            message.story.attachment.contentKey = attachment.contentKey
+            message.story.attachment.nonce = attachment.nonce
+            message.story.attachment.mediaType = attachment.mediaType
         }
         message.story.captionMeta = captionMeta ?? ""
 
@@ -265,15 +266,13 @@ extension ObscuraClient {
             var message = Obscura_Client_V1_ClientMessage()
             message.timestamp = row.sentAt
             if row.kind == "pix" {
-                guard let mediaRef = row.mediaRef,
-                      let contentKey = row.contentKey, let keyBytes = Data(base64Encoded: contentKey),
-                      let nonce = row.nonce, let nonceBytes = Data(base64Encoded: nonce) else { continue }
+                guard let att = row.attachment else { continue }
                 message.pix.id = row.id
                 message.pix.peerUserID = row.peerUserId
-                message.pix.attachment.id = mediaRef
-                message.pix.attachment.contentKey = keyBytes
-                message.pix.attachment.nonce = nonceBytes
-                message.pix.attachment.mediaType = row.mediaType ?? "photo"
+                message.pix.attachment.id = att.id
+                message.pix.attachment.contentKey = att.contentKey
+                message.pix.attachment.nonce = att.nonce
+                message.pix.attachment.mediaType = att.mediaType
                 message.pix.caption = row.caption ?? ""
                 message.pix.captionMeta = row.captionMeta ?? ""
                 message.pix.displayDurationSecs = UInt32(max(0, row.displayDuration))
@@ -295,13 +294,11 @@ extension ObscuraClient {
             message.timestamp = row.sentAt
             message.story.id = row.id
             message.story.content = row.content
-            if let mediaRef = row.mediaRef, !mediaRef.isEmpty,
-               let contentKey = row.contentKey, let keyBytes = Data(base64Encoded: contentKey),
-               let nonce = row.nonce, let nonceBytes = Data(base64Encoded: nonce) {
-                message.story.attachment.id = mediaRef
-                message.story.attachment.contentKey = keyBytes
-                message.story.attachment.nonce = nonceBytes
-                message.story.attachment.mediaType = row.mediaType ?? "photo"
+            if let att = row.attachment {
+                message.story.attachment.id = att.id
+                message.story.attachment.contentKey = att.contentKey
+                message.story.attachment.nonce = att.nonce
+                message.story.attachment.mediaType = att.mediaType
             }
             message.story.captionMeta = row.captionMeta ?? ""
             if let report = try? await send(message, to: friendList),
@@ -329,7 +326,13 @@ extension ObscuraClient {
     public func sweepExpired(
         now: UInt64 = UInt64(Date().timeIntervalSince1970 * 1000)
     ) async throws -> (purgedMediaRefs: [String], touchedModels: [String]) {
-        try await content.sweepExpired(now: now)
+        let outcome = try await content.sweepExpired(now: now)
+        if let cacheDir = attachmentCacheDir {
+            for id in outcome.purgedMediaRefs {
+                AttachmentCrypto.purgeCached(cacheDir: cacheDir, id: id)
+            }
+        }
+        return outcome
     }
 
     /// Sends a `ClientMessage` to every device of the named users and to this user's other devices.
@@ -443,6 +446,39 @@ extension ObscuraClient {
 
     // MARK: - Typing
 
+    static func typingConvId(_ userA: String, _ userB: String) -> String {
+        userA <= userB ? "\(userA)_\(userB)" : "\(userB)_\(userA)"
+    }
+
+    public func sendTyping(peerUserId: String, state: TypingState) async throws {
+        guard !peerUserId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ObscuraError.invalidArgument("peerUserId must not be blank")
+        }
+        let selfId = try requireSession().userId
+        let convId = Self.typingConvId(selfId, peerUserId)
+        try await sendTyping(to: [peerUserId], contextId: convId, state: state)
+    }
+
+    public func observeTyping(peerUserId: String) async throws -> AsyncStream<Bool> {
+        guard !peerUserId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ObscuraError.invalidArgument("peerUserId must not be blank")
+        }
+        let selfId = try requireSession().userId
+        let convId = Self.typingConvId(selfId, peerUserId)
+        let upstream = observeTyping(contextId: convId)
+        return AsyncStream { continuation in
+            let task = Task {
+                for await userIds in upstream {
+                    continuation.yield(userIds.contains(peerUserId))
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
     /// At most one send per 2 s per (context, state). Delivery failures are logged, never thrown.
     public func sendTyping(to recipientUserIds: [String], contextId: String, state: TypingState) async throws {
         guard !contextId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -475,6 +511,11 @@ extension ObscuraClient {
 
     // MARK: - Attachments and push
 
+    public func uploadAttachment(filePath: String) async throws -> UploadedAttachment {
+        let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
+        return try await uploadAttachment(data)
+    }
+
     /// Encrypts and uploads; the server only sees ciphertext. The app sends the result in an entry.
     public func uploadAttachment(_ plaintext: Data) async throws -> UploadedAttachment {
         _ = try await requireFreshSession()
@@ -483,6 +524,22 @@ extension ObscuraClient {
         let response = try await api.uploadAttachment(encrypted.ciphertext)
         guard generation == sessionGeneration, !Task.isCancelled else { throw CancellationError() }
         return UploadedAttachment(id: response.id, contentKey: encrypted.contentKey, nonce: encrypted.nonce)
+    }
+
+    public func downloadAttachmentToCache(id: String, contentKeyBase64: String, nonceBase64: String) async throws -> String {
+        guard let cacheDir = attachmentCacheDir else {
+            throw ObscuraError.storageFailed("attachment cache directory unavailable")
+        }
+        if let cached = AttachmentCrypto.readCached(cacheDir: cacheDir, id: id) {
+            return cached.path
+        }
+        guard let keyData = Data(base64Encoded: contentKeyBase64), !keyData.isEmpty,
+              let nonceData = Data(base64Encoded: nonceBase64), !nonceData.isEmpty else {
+            throw ObscuraError.invalidArgument("invalid base64 key/nonce")
+        }
+        let data = try await downloadDecryptedAttachment(id: id, contentKey: keyData, nonce: nonceData)
+        let dest = try AttachmentCrypto.writeCached(cacheDir: cacheDir, id: id, data: data)
+        return dest.path
     }
 
     public func downloadDecryptedAttachment(id: String, contentKey: Data, nonce: Data) async throws -> Data {

@@ -193,7 +193,7 @@ class ReceivePathTest {
     }
 
     @Test
-    fun `pix is stored with base64 attachment fields and seen receipt updates viewedAt and expiresAt`() = runBlocking {
+    fun `pix is stored with raw attachment bytes and seen receipt updates viewedAt and expiresAt`() = runBlocking {
         val c = authenticatedClient()
         val key = ByteArray(32) { 7 }
         val nonce = ByteArray(12) { 8 }
@@ -202,8 +202,7 @@ class ReceivePathTest {
 
         val beforeSeen = c.getMessages().single()
         assertEquals("pix", beforeSeen.kind)
-        assertEquals(key.toBase64(), beforeSeen.contentKey)
-        assertEquals(nonce.toBase64(), beforeSeen.nonce)
+        assertEquals(MediaAttachment("att_1", key, nonce, "photo"), beforeSeen.attachment)
         assertNull(beforeSeen.viewedAt)
         assertEquals(1_000L + MAX_EPHEMERAL_AGE_MS, beforeSeen.expiresAt)
 
@@ -370,5 +369,17 @@ class ReceivePathTest {
         c.receive(typing(" ", Client.TypingState.TYPING_STATE_STARTED))
         assertEquals(emptyList<String>(), c.observeTyping("thread").first())
         assertEquals(emptyList<String>(), c.observeTyping("thread").first())
+    }
+
+    @Test
+    fun `1 to 1 typing methods derive canonical convId and map to boolean`() = runBlocking {
+        val c = authenticatedClient()
+        c.sendTyping(peer, TypingState.STARTED)
+        val convId = if (SELF_USER_ID <= peer) "${SELF_USER_ID}_$peer" else "${peer}_$SELF_USER_ID"
+        assertEquals(false, c.observePeerTyping(peer).first())
+        c.receive(typing(convId, Client.TypingState.TYPING_STATE_STARTED))
+        assertEquals(true, c.observePeerTyping(peer).first())
+        c.receive(typing(convId, Client.TypingState.TYPING_STATE_STOPPED))
+        assertEquals(false, c.observePeerTyping(peer).first())
     }
 }

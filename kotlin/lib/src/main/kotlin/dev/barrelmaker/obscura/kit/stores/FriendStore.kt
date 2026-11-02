@@ -13,10 +13,12 @@ enum class FriendStatus(val value: String) {
     ACCEPTED("accepted"),
 }
 
-data class FriendData(val userId: String, val username: String, val status: FriendStatus)
+data class Friend(val userId: String, val username: String, val status: FriendStatus)
+
+typealias FriendData = Friend
 
 /** The whole friend list at one version. */
-internal data class FriendList(val version: Long, val friends: List<FriendData>)
+internal data class FriendList(val version: Long, val friends: List<Friend>)
 
 /** Every change increments the list's version in the same transaction; [replaceInTransaction] sets it. */
 internal class FriendStore(private val db: ObscuraDatabase) {
@@ -30,7 +32,7 @@ internal class FriendStore(private val db: ObscuraDatabase) {
         addInTransaction(userId, username, status)
     }
 
-    suspend fun get(userId: String): FriendData? = withContext(dispatcher) {
+    suspend fun get(userId: String): Friend? = withContext(dispatcher) {
         getInTransaction(userId)
     }
 
@@ -39,14 +41,14 @@ internal class FriendStore(private val db: ObscuraDatabase) {
         queries.incrementVersion()
     }
 
-    internal fun getInTransaction(userId: String): FriendData? =
+    internal fun getInTransaction(userId: String): Friend? =
         queries.selectById(userId, ::friend).executeAsOneOrNull()
 
     /** Changes the status only. A status change driven by a peer must never carry a name with it. */
     internal fun updateStatusInTransaction(userId: String, status: FriendStatus): Boolean =
         changed { queries.updateStatus(status.value, userId) }
 
-    suspend fun getAll(): List<FriendData> = withContext(dispatcher) { queries.selectAll(::friend).executeAsList() }
+    suspend fun getAll(): List<Friend> = withContext(dispatcher) { queries.selectAll(::friend).executeAsList() }
 
     suspend fun list(): FriendList = withContext(dispatcher) {
         db.transactionWithResult { FriendList(versionInTransaction(), queries.selectAll(::friend).executeAsList()) }
@@ -62,7 +64,7 @@ internal class FriendStore(private val db: ObscuraDatabase) {
     }
 
     /** The existing relationship, or null after recording a new pending-sent one. */
-    suspend fun prepareRequest(userId: String, username: String): FriendData? = withContext(dispatcher) {
+    suspend fun prepareRequest(userId: String, username: String): Friend? = withContext(dispatcher) {
         db.transactionWithResult {
             queries.selectById(userId, ::friend).executeAsOneOrNull().also {
                 if (it == null) addInTransaction(userId, username, FriendStatus.PENDING_SENT)
@@ -86,5 +88,5 @@ internal class FriendStore(private val db: ObscuraDatabase) {
     }
 
     private fun friend(userId: String, username: String, status: String) =
-        FriendData(userId, username, FriendStatus.entries.first { it.value == status })
+        Friend(userId, username, FriendStatus.entries.first { it.value == status })
 }

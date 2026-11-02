@@ -39,12 +39,12 @@ final class SchemaTests: XCTestCase {
         }
         try await content.insertConversationItem(ConversationItem(
             id: "1", peerUserId: "peer", kind: "message", authorUserId: "peer",
-            sentAt: 1, viewedAt: nil, content: "x", mediaRef: nil, contentKey: nil,
-            nonce: nil, mediaType: nil, caption: nil, captionMeta: nil, displayDuration: 0
+            sentAt: 1, viewedAt: nil, content: "x", attachment: nil,
+            caption: nil, captionMeta: nil, displayDuration: 0
         ))
         try await content.insertStoryItem(StoryItem(
             id: "s1", authorUserId: "peer", sentAt: 1, content: "s",
-            mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil
+            attachment: nil, captionMeta: nil
         ))
         try await content.upsertProfile(ProfileItem(
             userId: "peer", authorDeviceId: "d", updatedAt: 1, displayName: "Alice", bio: "hi"

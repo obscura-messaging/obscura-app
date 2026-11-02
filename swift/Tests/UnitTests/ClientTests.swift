@@ -148,7 +148,7 @@ final class ClientTests: XCTestCase {
         let messages = try await client.getMessages()
         let pix = try XCTUnwrap(messages.first { $0.id == "pix_1" })
         XCTAssertEqual(pix.kind, "pix")
-        XCTAssertEqual(pix.mediaRef, "att_1")
+        XCTAssertEqual(pix.attachment, MediaAttachment(id: "att_1", contentKey: key, nonce: nonce, mediaType: "photo"))
         XCTAssertEqual(pix.caption, "look")
         XCTAssertEqual(pix.displayDuration, 7)
         XCTAssertNil(pix.viewedAt)

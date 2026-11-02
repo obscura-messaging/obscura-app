@@ -56,8 +56,8 @@ final class LinkingTests: XCTestCase {
         let oldIdentity = try client.signalStore.identityKeyPair(context: NullContext()).serialize()
         try await client.content.insertConversationItem(ConversationItem(
             id: "e", peerUserId: "u", kind: "message", authorUserId: "u", sentAt: 1,
-            viewedAt: nil, content: "x", mediaRef: nil, contentKey: nil, nonce: nil,
-            mediaType: nil, caption: nil, captionMeta: nil, displayDuration: 0
+            viewedAt: nil, content: "x", attachment: nil,
+            caption: nil, captionMeta: nil, displayDuration: 0
         ))
 
         try await client.resetAccount("alice", "password")
@@ -80,12 +80,12 @@ final class LinkingTests: XCTestCase {
         try await phoneClient.friends.add("carol-id", username: "carol", status: .pendingSent)
         try await phoneClient.content.insertStoryItem(StoryItem(
             id: "s1", authorUserId: "alice-id", sentAt: 7, content: "hi",
-            mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil
+            attachment: nil, captionMeta: nil
         ))
         try await phoneClient.content.insertConversationItem(ConversationItem(
             id: "p1", peerUserId: "bob-id", kind: "message", authorUserId: "bob-id", sentAt: 9,
-            viewedAt: nil, content: "ü", mediaRef: nil, contentKey: nil, nonce: nil,
-            mediaType: nil, caption: nil, captionMeta: nil, displayDuration: 0
+            viewedAt: nil, content: "ü", attachment: nil,
+            caption: nil, captionMeta: nil, displayDuration: 0
         ))
         try await phoneClient.content.upsertProfile(ProfileItem(
             userId: "alice-id", authorDeviceId: "phone", updatedAt: 11, displayName: "Alice", bio: "bio"

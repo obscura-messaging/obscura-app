@@ -3,18 +3,35 @@
  * view-once pix viewer.
  */
 
-import { displayNameFor, type Identity } from './friends';
+import type { CaptionMeta } from './caption';
+import type { ConversationItem, PixItem } from './chats';
+import { displayNameFor, type Friend, type Identity } from './friends';
+
+export type MediaType = 'photo' | 'video';
+
+export interface MediaAttachment {
+  id: string;
+  contentKey: string;
+  nonce: string;
+  mediaType: MediaType;
+}
 
 export interface StoryItem {
   id: string;
   authorUserId: string;
   sentAt: number;
   content: string;
-  mediaRef: string | null;
-  contentKey: string | null;
-  nonce: string | null;
-  mediaType: string | null;
-  captionMeta: string | null;
+  attachment: MediaAttachment | null;
+  captionMeta: CaptionMeta | null;
+}
+
+export interface ViewerSlide {
+  id: string;
+  sentAt: number;
+  text: string;
+  captionMeta: CaptionMeta | null;
+  attachment: MediaAttachment | null;
+  displayDuration?: number;
 }
 
 /** Seconds a photo shows when the sender chose no limit (0) or nothing. */
@@ -24,20 +41,25 @@ export function displayMs(displayDuration: number | undefined): number {
   return (displayDuration || DEFAULT_DISPLAY_SECONDS) * 1000;
 }
 
-export interface Attachment {
-  readonly mediaRef: string;
-  readonly contentKey: string;
-  readonly nonce: string;
+export function storyToSlide(story: StoryItem): ViewerSlide {
+  return {
+    id: story.id,
+    sentAt: story.sentAt,
+    text: story.content,
+    captionMeta: story.captionMeta,
+    attachment: story.attachment,
+  };
 }
 
-export function attachmentOf(
-  item: { mediaRef: string | null; contentKey: string | null; nonce: string | null } | undefined,
-): Attachment | null {
-  if (!item) return null;
-  const { mediaRef, contentKey, nonce } = item;
-  if (typeof mediaRef !== 'string' || typeof contentKey !== 'string' || typeof nonce !== 'string') return null;
-  if (mediaRef === '' || contentKey === '' || nonce === '') return null;
-  return { mediaRef, contentKey, nonce };
+export function pixToSlide(pix: PixItem): ViewerSlide {
+  return {
+    id: pix.id,
+    sentAt: pix.sentAt,
+    text: pix.caption ?? '',
+    captionMeta: pix.captionMeta,
+    attachment: pix.attachment,
+    displayDuration: pix.displayDuration,
+  };
 }
 
 export interface StoryGroup<E = StoryItem> {
@@ -70,6 +92,38 @@ export function storyGroups<E extends StoryItem = StoryItem>(
     mine: groupOf(identity.myUserId, identity.myUsername),
     others: others.sort((a, b) => newest(b) - newest(a)),
   };
+}
+
+export function pixViewerGroups(
+  allMessages: readonly ConversationItem[],
+  userId: string,
+  username: string,
+  entryIds: readonly string[],
+  friends: readonly Friend[],
+): { groups: StoryGroup<ViewerSlide>[]; initialGroupIdx: number } {
+  const wanted = new Set(entryIds);
+  const stories = allMessages
+    .filter((p): p is PixItem => p.kind === 'pix' && wanted.has(p.id))
+    .sort((a, b) => a.sentAt - b.sentAt)
+    .map(pixToSlide);
+  const resolvedUsername = friends.find((f) => f.userId === userId)?.username ?? username;
+  return {
+    groups: stories.length > 0 ? [{ userId, username: resolvedUsername, stories }] : [],
+    initialGroupIdx: 0,
+  };
+}
+
+export function storyViewerGroups(
+  allStories: readonly StoryItem[],
+  identity: Identity,
+  initialUserId: string,
+): { groups: StoryGroup<ViewerSlide>[]; initialGroupIdx: number } {
+  const { mine, others } = storyGroups(allStories, identity);
+  const populated = [mine, ...others]
+    .filter((g) => g.stories.length > 0)
+    .map((g) => ({ ...g, stories: g.stories.map(storyToSlide) }));
+  const idx = populated.findIndex((g) => g.userId === initialUserId);
+  return { groups: populated, initialGroupIdx: Math.max(0, idx) };
 }
 
 export interface ViewerCursor {

@@ -163,12 +163,12 @@ final class MultiDeviceTests: XCTestCase {
         let now = UInt64(Date().timeIntervalSince1970 * 1000)
         let story = StoryItem(
             id: "s1", authorUserId: alice.userId, sentAt: now, content: "hi",
-            mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil
+            attachment: nil, captionMeta: nil
         )
         let msg = ConversationItem(
             id: "m1", peerUserId: "some-peer-user", kind: "message", authorUserId: "some-peer-user",
-            sentAt: now, viewedAt: nil, content: "opaque", mediaRef: nil, contentKey: nil,
-            nonce: nil, mediaType: nil, caption: nil, captionMeta: nil, displayDuration: 0
+            sentAt: now, viewedAt: nil, content: "opaque", attachment: nil,
+            caption: nil, captionMeta: nil, displayDuration: 0
         )
         try await alice.client.content.insertStoryItem(story)
         try await alice.client.content.insertConversationItem(msg)

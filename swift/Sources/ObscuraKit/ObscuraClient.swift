@@ -69,6 +69,7 @@ public actor ObscuraClient {
     /// Model key of each newly persisted content message (`directMessage`, `pix`, `seen`, `story`, `profile`).
     /// Single consumer; theoldest keys are dropped when 100 are unread.
     public nonisolated let messageReceived: AsyncStream<String>
+    public nonisolated let attachmentCacheDir: URL?
 
     nonisolated let api: APIClient
     nonisolated let db: DatabaseQueue
@@ -107,24 +108,28 @@ public actor ObscuraClient {
     var connectionGeneration = 0
 
     public init(apiURL: String, dataDirectory: String, userId: String, keychainAccessGroup: String?, deviceName: String,
-                sessionStorage: SessionStorage, logger: ObscuraLogger) throws {
+                sessionStorage: SessionStorage, logger: ObscuraLogger,
+                attachmentCacheDir: URL? = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.appendingPathComponent("attachments")) throws {
         let protection = [FileAttributeKey.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
         try FileManager.default.createDirectory(atPath: dataDirectory, withIntermediateDirectories: true, attributes: protection)
         let path = (dataDirectory as NSString).appendingPathComponent("obscura.sqlite")
         let key = try DatabaseSecret.getOrCreate(userId: userId, accessGroup: keychainAccessGroup)
         let db = try ObscuraDatabase.open(path: path, key: key)
         try FileManager.default.setAttributes(protection, ofItemAtPath: path)
-        try self.init(apiURL: apiURL, database: db, deviceName: deviceName, sessionStorage: sessionStorage, logger: logger)
+        try self.init(apiURL: apiURL, database: db, deviceName: deviceName, sessionStorage: sessionStorage,
+                      logger: logger, attachmentCacheDir: attachmentCacheDir)
     }
 
     init(apiURL: String, database: DatabaseQueue, deviceName: String, sessionStorage: SessionStorage,
-         logger: ObscuraLogger) throws {
+         logger: ObscuraLogger,
+         attachmentCacheDir: URL? = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.appendingPathComponent("attachments")) throws {
         let recording = RecordingLogger(logger)
         self.logger = recording
         self.api = try APIClient(baseURL: apiURL)
         self.db = database
         self.deviceName = deviceName
         self.sessionStorage = sessionStorage
+        self.attachmentCacheDir = attachmentCacheDir
         self.friends = FriendStore(db: database)
         self.directory = DeviceStore(db: database)
         self.content = ContentStore(db: database)

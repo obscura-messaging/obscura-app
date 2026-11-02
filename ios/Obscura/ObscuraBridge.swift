@@ -569,9 +569,6 @@ extension ObscuraBridge {
         Task {
             do {
                 let outcome = try await client.sweepExpired()
-                for id in outcome.purgedMediaRefs {
-                    ObscuraBridge.purgeAttachmentFiles(id)
-                }
                 resolve(outcome.touchedModels)
             } catch {
                 rejectKit(reject, "SWEEP_EXPIRED_ERROR", error)
@@ -579,22 +576,39 @@ extension ObscuraBridge {
         }
     }
 
-    static func conversationItemDict(_ item: ConversationItem) -> [String: Any] {
+    static func attachmentDict(_ att: MediaAttachment) -> [String: Any] {
         [
+            "id": att.id,
+            "contentKey": att.contentKey.base64EncodedString(),
+            "nonce": att.nonce.base64EncodedString(),
+            "mediaType": att.mediaType,
+        ]
+    }
+
+    static func conversationItemDict(_ item: ConversationItem) -> [String: Any] {
+        if item.kind == "pix", let att = item.attachment {
+            return [
+                "id": item.id,
+                "peerUserId": item.peerUserId,
+                "kind": "pix",
+                "authorUserId": item.authorUserId,
+                "sentAt": Double(item.sentAt),
+                "viewedAt": item.viewedAt.map { Double($0) } as Any,
+                "content": item.content,
+                "attachment": attachmentDict(att),
+                "caption": item.caption as Any,
+                "captionMeta": item.captionMeta as Any,
+                "displayDuration": item.displayDuration,
+            ]
+        }
+        return [
             "id": item.id,
             "peerUserId": item.peerUserId,
-            "kind": item.kind,
+            "kind": "message",
             "authorUserId": item.authorUserId,
             "sentAt": Double(item.sentAt),
             "viewedAt": item.viewedAt.map { Double($0) } as Any,
             "content": item.content,
-            "mediaRef": item.mediaRef as Any,
-            "contentKey": item.contentKey as Any,
-            "nonce": item.nonce as Any,
-            "mediaType": item.mediaType as Any,
-            "caption": item.caption as Any,
-            "captionMeta": item.captionMeta as Any,
-            "displayDuration": item.displayDuration,
         ]
     }
 
@@ -604,10 +618,7 @@ extension ObscuraBridge {
             "authorUserId": item.authorUserId,
             "sentAt": Double(item.sentAt),
             "content": item.content,
-            "mediaRef": item.mediaRef as Any,
-            "contentKey": item.contentKey as Any,
-            "nonce": item.nonce as Any,
-            "mediaType": item.mediaType as Any,
+            "attachment": item.attachment.map(attachmentDict) as Any,
             "captionMeta": item.captionMeta as Any,
         ]
     }
@@ -627,19 +638,13 @@ extension ObscuraBridge {
 
 extension ObscuraBridge {
 
-    private static func typingConvId(_ userA: String, _ userB: String) -> String {
-        userA <= userB ? "\(userA)_\(userB)" : "\(userB)_\(userA)"
-    }
-
     @objc(sendTyping:resolver:rejecter:)
     func sendTyping(_ peerUserId: String,
                     resolver resolve: @escaping RCTPromiseResolveBlock,
                     rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let c = try await client
-                guard let selfId = await c.userId else { throw ObscuraError.notAuthenticated }
-                try await c.sendTyping(to: [peerUserId], contextId: ObscuraBridge.typingConvId(selfId, peerUserId), state: .started)
+                try await client.sendTyping(peerUserId: peerUserId, state: .started)
                 resolve(nil)
             } catch {
                 rejectKit(reject, "TYPING_ERROR", error)
@@ -653,9 +658,7 @@ extension ObscuraBridge {
                     rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let c = try await client
-                guard let selfId = await c.userId else { throw ObscuraError.notAuthenticated }
-                try await c.sendTyping(to: [peerUserId], contextId: ObscuraBridge.typingConvId(selfId, peerUserId), state: .stopped)
+                try await client.sendTyping(peerUserId: peerUserId, state: .stopped)
                 resolve(nil)
             } catch {
                 rejectKit(reject, "STOP_TYPING_ERROR", error)
@@ -669,14 +672,11 @@ extension ObscuraBridge {
                        rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let c = try await client
-                guard let selfId = await c.userId else { throw ObscuraError.notAuthenticated }
-                let convId = ObscuraBridge.typingConvId(selfId, peerUserId)
-                let observation = try await c.observeTyping(contextId: convId)
+                let observation = try await client.observeTyping(peerUserId: peerUserId)
                 typingTasks[peerUserId]?.cancel()
                 typingTasks[peerUserId] = Task { [weak self] in
-                    for await userIds in observation {
-                        self?.emit(.typingChanged, ["peerUserId": peerUserId, "typing": userIds.contains(peerUserId)])
+                    for await isTyping in observation {
+                        self?.emit(.typingChanged, ["peerUserId": peerUserId, "typing": isTyping])
                     }
                 }
                 resolve(nil)
@@ -703,19 +703,13 @@ extension ObscuraBridge {
 
 extension ObscuraBridge {
 
-    private static func attachmentDir() -> URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("attachments")
-    }
-
     @objc(uploadAttachment:resolver:rejecter:)
     func uploadAttachment(_ filePath: String,
                           resolver resolve: @escaping RCTPromiseResolveBlock,
                           rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
-                let result = try await client.uploadAttachment(data)
+                let result = try await client.uploadAttachment(filePath: filePath)
                 resolve([
                     "id": result.id,
                     "contentKey": result.contentKey.base64EncodedString(),
@@ -733,27 +727,13 @@ extension ObscuraBridge {
                             rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let dir = ObscuraBridge.attachmentDir()
-                if let cached = AttachmentCrypto.readCached(cacheDir: dir, id: id) {
-                    resolve(cached.path); return
-                }
-
-                guard let keyData = Data(base64Encoded: contentKey),
-                      let nonceData = Data(base64Encoded: nonce) else {
-                    reject("DOWNLOAD_ERROR", "invalid base64 key/nonce", nil); return
-                }
-                let data = try await client.downloadDecryptedAttachment(
-                    id: id, contentKey: keyData, nonce: nonceData)
-                let dest = try AttachmentCrypto.writeCached(cacheDir: dir, id: id, data: data)
-                resolve(dest.path)
+                let path = try await client.downloadAttachmentToCache(
+                    id: id, contentKeyBase64: contentKey, nonceBase64: nonce)
+                resolve(path)
             } catch {
                 rejectKit(reject, "DOWNLOAD_ERROR", error)
             }
         }
-    }
-
-    static func purgeAttachmentFiles(_ id: String) {
-        AttachmentCrypto.purgeCached(cacheDir: ObscuraBridge.attachmentDir(), id: id)
     }
 }
 

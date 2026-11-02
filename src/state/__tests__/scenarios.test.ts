@@ -90,6 +90,7 @@ describe('Scenario 2: offline capture -> outbox flush -> view-once receipt -> 15
     expect(useStore.getState().stories).toHaveLength(1);
 
     const [pixEntry] = useStore.getState().messages;
+    if (pixEntry.kind !== 'pix') throw new Error('Expected pix entry');
     let [bobActivity] = friendActivities(useStore.getState().friends, ALICE, useStore.getState().messages);
     expect(activityPreview(bobActivity, ALICE)).toEqual({ text: 'Pix delivered', highlight: false });
 
@@ -122,7 +123,7 @@ describe('Scenario 2: offline capture -> outbox flush -> view-once receipt -> 15
     await sweepAndRefresh();
 
     expect(useStore.getState().messages).toEqual([]);
-    expect(bridge.__purged).toContain(pixEntry.mediaRef);
+    expect(bridge.__purged).toContain(pixEntry.attachment.id);
 
     // 5. A replayed delivery for the erased pix is ignored and never resurrected.
     bridge.__deliverPix({
@@ -130,7 +131,7 @@ describe('Scenario 2: offline capture -> outbox flush -> view-once receipt -> 15
       peerUserId: BOB.userId,
       authorUserId: ALICE,
       sentAt: pixEntry.sentAt,
-      mediaRef: pixEntry.mediaRef ?? 'att_1',
+      attachment: pixEntry.attachment,
     });
     applyObscuraEvent({ type: 'messageReceived', model: 'pix' });
     await flush();

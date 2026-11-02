@@ -7,17 +7,17 @@ import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.ConnectionState
-import dev.barrelmaker.obscura.kit.ConversationItemData
+import dev.barrelmaker.obscura.kit.ConversationItem
 import dev.barrelmaker.obscura.kit.DeviceInfo
 import dev.barrelmaker.obscura.kit.LinkRequest
 import dev.barrelmaker.obscura.kit.LoginScenario
+import dev.barrelmaker.obscura.kit.MediaAttachment
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraError
-import dev.barrelmaker.obscura.kit.ProfileItemData
-import dev.barrelmaker.obscura.kit.StoryItemData
+import dev.barrelmaker.obscura.kit.ProfileItem
+import dev.barrelmaker.obscura.kit.StoryItem
 import dev.barrelmaker.obscura.kit.TypingState
-import dev.barrelmaker.obscura.kit.crypto.AttachmentCrypto
-import dev.barrelmaker.obscura.kit.stores.FriendData
+import dev.barrelmaker.obscura.kit.stores.Friend
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.sync.Mutex
@@ -481,16 +481,11 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     // ─── Signals ────────────────────────────────────────────────────────────
 
-    private fun typingConvId(userA: String, userB: String): String =
-        if (userA <= userB) "${userA}_$userB" else "${userB}_$userA"
-
     @ReactMethod
     fun sendTyping(peerUserId: String, promise: Promise) {
         scope.launch {
             try {
-                val c = requireClient()
-                val selfId = c.userId ?: throw ObscuraError.NotAuthenticated()
-                c.sendTyping(listOf(peerUserId), typingConvId(selfId, peerUserId), TypingState.STARTED)
+                requireClient().sendTyping(peerUserId, TypingState.STARTED)
                 promise.resolve(null)
             } catch (e: Exception) {
                 promise.rejectKit("TYPING_ERROR", e)
@@ -502,9 +497,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun stopTyping(peerUserId: String, promise: Promise) {
         scope.launch {
             try {
-                val c = requireClient()
-                val selfId = c.userId ?: throw ObscuraError.NotAuthenticated()
-                c.sendTyping(listOf(peerUserId), typingConvId(selfId, peerUserId), TypingState.STOPPED)
+                requireClient().sendTyping(peerUserId, TypingState.STOPPED)
                 promise.resolve(null)
             } catch (e: Exception) {
                 promise.rejectKit("STOP_TYPING_ERROR", e)
@@ -515,24 +508,18 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     @ReactMethod
     fun observeTyping(peerUserId: String, promise: Promise) {
         if (typingJobs.containsKey(peerUserId)) { promise.resolve(null); return }
-        val c = try {
-            requireClient()
+        val flow = try {
+            requireClient().observePeerTyping(peerUserId)
         } catch (e: Exception) {
             promise.rejectKit("OBSERVE_TYPING_ERROR", e)
             return
         }
-        val selfId = c.userId
-        if (selfId == null) {
-            promise.rejectKit("OBSERVE_TYPING_ERROR", ObscuraError.NotAuthenticated())
-            return
-        }
-        val convId = typingConvId(selfId, peerUserId)
 
         typingJobs[peerUserId] = scope.launch {
-            c.observeTyping(convId).collectLatest { userIds ->
+            flow.collectLatest { isTyping ->
                 emit(BridgeEvent.TYPING_CHANGED) {
                     putString("peerUserId", peerUserId)
-                    putBoolean("typing", userIds.contains(peerUserId))
+                    putBoolean("typing", isTyping)
                 }
             }
         }
@@ -554,8 +541,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun uploadAttachment(filePath: String, promise: Promise) {
         scope.launch {
             try {
-                val bytes = java.io.File(filePath).readBytes()
-                val ref = requireClient().uploadAttachment(bytes)
+                val ref = requireClient().uploadAttachmentFile(java.io.File(filePath))
                 promise.resolve(Arguments.createMap().apply {
                     putString("id", ref.id)
                     putString("contentKey", Base64.encodeToString(ref.contentKey, Base64.NO_WRAP))
@@ -567,31 +553,16 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    private fun attachmentDir() = java.io.File(reactApplicationContext.cacheDir, "attachments")
-
     @ReactMethod
     fun downloadAttachment(id: String, contentKey: String, nonce: String, promise: Promise) {
         scope.launch {
             try {
-                val dir = attachmentDir().apply { mkdirs() }
-                AttachmentCrypto.readCached(dir, id)?.let {
-                    promise.resolve(it.absolutePath)
-                    return@launch
-                }
-
-                val keyBytes = Base64.decode(contentKey, Base64.DEFAULT)
-                val nonceBytes = Base64.decode(nonce, Base64.DEFAULT)
-                val data = requireClient().downloadDecryptedAttachment(id, keyBytes, nonceBytes)
-                val dest = AttachmentCrypto.writeCached(dir, id, data)
+                val dest = requireClient().downloadAttachmentToCache(id, contentKey, nonce)
                 promise.resolve(dest.absolutePath)
             } catch (t: Throwable) {
                 promise.rejectKit("DOWNLOAD_ERROR", t)
             }
         }
-    }
-
-    private fun purgeAttachmentFile(id: String) {
-        AttachmentCrypto.purgeCached(attachmentDir(), id)
     }
 
     // ─── Image processing (native, path-in/path-out) ────────────────────────
@@ -908,7 +879,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
             putBoolean("isThisDevice", d.isThisDevice)
         }
 
-    private fun friendToMap(f: FriendData, status: String): WritableMap =
+    private fun friendToMap(f: Friend, status: String): WritableMap =
         Arguments.createMap().apply {
             putString("userId", f.userId)
             putString("username", f.username)
@@ -1066,10 +1037,9 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun sweepExpired(promise: Promise) {
         scope.launch {
             try {
-                val outcome = requireClient().sweepExpired()
-                for (mediaRef in outcome.purgedMediaRefs) purgeAttachmentFile(mediaRef)
+                val touched = requireClient().sweepExpired()
                 val arr = Arguments.createArray()
-                for (model in outcome.touchedModels) arr.pushString(model)
+                for (model in touched) arr.pushString(model)
                 promise.resolve(arr)
             } catch (e: Exception) {
                 promise.rejectKit("SWEEP_EXPIRED_ERROR", e)
@@ -1077,7 +1047,15 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    private fun messageToMap(m: ConversationItemData): WritableMap =
+    private fun attachmentToMap(att: MediaAttachment): WritableMap =
+        Arguments.createMap().apply {
+            putString("id", att.id)
+            putString("contentKey", Base64.encodeToString(att.contentKey, Base64.NO_WRAP))
+            putString("nonce", Base64.encodeToString(att.nonce, Base64.NO_WRAP))
+            putString("mediaType", att.mediaType)
+        }
+
+    private fun messageToMap(m: ConversationItem): WritableMap =
         Arguments.createMap().apply {
             putString("id", m.id)
             putString("peerUserId", m.peerUserId)
@@ -1086,30 +1064,29 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
             putDouble("sentAt", m.sentAt.toDouble())
             val viewedAt = m.viewedAt
             if (viewedAt != null) putDouble("viewedAt", viewedAt.toDouble()) else putNull("viewedAt")
-            putString("content", m.content)
-            putString("mediaRef", m.mediaRef)
-            putString("contentKey", m.contentKey)
-            putString("nonce", m.nonce)
-            putString("mediaType", m.mediaType)
-            putString("caption", m.caption)
-            putString("captionMeta", m.captionMeta)
-            putInt("displayDuration", m.displayDuration)
+            if (m.kind == "pix") {
+                val att = m.attachment
+                if (att != null) putMap("attachment", attachmentToMap(att)) else putNull("attachment")
+                putString("caption", m.caption)
+                putString("captionMeta", m.captionMeta)
+                putInt("displayDuration", m.displayDuration)
+            } else {
+                putString("content", m.content)
+            }
         }
 
-    private fun storyToMap(s: StoryItemData): WritableMap =
+    private fun storyToMap(s: StoryItem): WritableMap =
         Arguments.createMap().apply {
             putString("id", s.id)
             putString("authorUserId", s.authorUserId)
             putDouble("sentAt", s.sentAt.toDouble())
             putString("content", s.content)
-            putString("mediaRef", s.mediaRef)
-            putString("contentKey", s.contentKey)
-            putString("nonce", s.nonce)
-            putString("mediaType", s.mediaType)
             putString("captionMeta", s.captionMeta)
+            val att = s.attachment
+            if (att != null) putMap("attachment", attachmentToMap(att)) else putNull("attachment")
         }
 
-    private fun profileToMap(p: ProfileItemData): WritableMap =
+    private fun profileToMap(p: ProfileItem): WritableMap =
         Arguments.createMap().apply {
             putString("userId", p.userId)
             putString("authorDeviceId", p.authorDeviceId)

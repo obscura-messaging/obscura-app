@@ -25,10 +25,7 @@ final class EntryStoreTests: XCTestCase {
             sentAt: sentAt,
             viewedAt: nil,
             content: content,
-            mediaRef: nil,
-            contentKey: nil,
-            nonce: nil,
-            mediaType: nil,
+            attachment: nil,
             caption: nil,
             captionMeta: nil,
             displayDuration: 0
@@ -85,8 +82,8 @@ final class EntryStoreTests: XCTestCase {
         let source = try makeStore()
         let msg = ConversationItem(
             id: "id\0\(awkward)", peerUserId: "peer\0x", kind: "message", authorUserId: "user\0x",
-            sentAt: 7, viewedAt: nil, content: awkward, mediaRef: nil, contentKey: nil, nonce: nil,
-            mediaType: nil, caption: nil, captionMeta: nil, displayDuration: 0
+            sentAt: 7, viewedAt: nil, content: awkward, attachment: nil,
+            caption: nil, captionMeta: nil, displayDuration: 0
         )
         let other = message("id", peer: "peer", author: "u", sentAt: 1, content: "truncated id must not collide")
         try await source.insertConversationItem(msg)
@@ -108,13 +105,15 @@ final class EntryStoreTests: XCTestCase {
         let t0: UInt64 = 1_000_000
         try await store.insertConversationItem(ConversationItem(
             id: "pix_seen", peerUserId: "peer", kind: "pix", authorUserId: "peer",
-            sentAt: t0, viewedAt: nil, content: "", mediaRef: "att_pix", contentKey: "k", nonce: "n",
-            mediaType: "photo", caption: "hi", captionMeta: nil, displayDuration: 5
+            sentAt: t0, viewedAt: nil, content: "",
+            attachment: MediaAttachment(id: "att_pix", contentKey: Data([1]), nonce: Data([2]), mediaType: "photo"),
+            caption: "hi", captionMeta: nil, displayDuration: 5
         ))
         try await store.insertConversationItem(message("dm_unseen", peer: "peer", author: "peer", sentAt: t0))
         try await store.insertStoryItem(StoryItem(
             id: "story_1", authorUserId: "peer", sentAt: t0, content: "s",
-            mediaRef: "att_story", contentKey: "k", nonce: "n", mediaType: "photo", captionMeta: nil
+            attachment: MediaAttachment(id: "att_story", contentKey: Data([1]), nonce: Data([2]), mediaType: "photo"),
+            captionMeta: nil
         ))
 
         let viewedAt = t0 + 10_000

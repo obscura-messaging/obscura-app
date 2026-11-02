@@ -7,17 +7,27 @@
  * `completeLink` waits until the test approves, expires or cancels the pending link.
  */
 
+import { serializeCaptionMeta, type CaptionMeta } from '../../domain/caption';
 import type {
-  AuthState, ConnectionState, ConversationItem, DeviceInfo, Friend,
-  LoginScenario, ObscuraBridge, ProfileItem, StoryItem,
+  AuthState, ConnectionState, DeviceInfo, Friend,
+  LoginScenario, ObscuraBridge, ProfileItem, RawAttachment,
+  RawConversationItem, RawDirectMessageItem, RawPixItem, RawStoryItem,
 } from '../ObscuraModule';
 
 export const EXPIRE_AFTER_MS = 15 * 60 * 1000;
 export const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 export const STORY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-type StoredConversationItem = ConversationItem & { undelivered: boolean };
-type StoredStoryItem = StoryItem & { undelivered: boolean };
+type StoredDirectMessageItem = RawDirectMessageItem & { undelivered: boolean };
+type StoredPixItem = Omit<RawPixItem, 'attachment' | 'mediaRef' | 'contentKey' | 'nonce' | 'mediaType'> & {
+  attachment: RawAttachment;
+  undelivered: boolean;
+};
+type StoredConversationItem = StoredDirectMessageItem | StoredPixItem;
+type StoredStoryItem = Omit<RawStoryItem, 'attachment' | 'mediaRef' | 'contentKey' | 'nonce' | 'mediaType'> & {
+  attachment: RawAttachment | null;
+  undelivered: boolean;
+};
 type StoredProfileItem = ProfileItem & { undelivered: boolean };
 
 export interface SentRecord {
@@ -128,12 +138,16 @@ export class FakeObscuraBridge implements ObscuraBridge {
     this.__sent.push({ recipientUserIds, modelKey, entryId, sentAt, payload });
   }
 
-  async getMessages(): Promise<ConversationItem[]> {
+  async getMessages(): Promise<RawConversationItem[]> {
     this.record('getMessages');
     this.checkFailure('getMessages');
     return [...this.messages.values()]
       .sort((a, b) => a.sentAt - b.sentAt)
-      .map(({ undelivered: _undelivered, ...item }) => ({ ...item }));
+      .map((item): RawConversationItem => (
+        item.kind === 'pix'
+          ? { ...stripUndelivered(item), attachment: { ...item.attachment } }
+          : stripUndelivered(item)
+      ));
   }
 
   async sendMessage(peerUserId: string, content: string): Promise<string> {
@@ -144,21 +158,14 @@ export class FakeObscuraBridge implements ObscuraBridge {
     }
     const sentAt = this.nextTimestamp();
     const id = `dm_${sentAt}`;
-    const item: StoredConversationItem = {
+    const item: StoredDirectMessageItem = {
+      kind: 'message',
       id,
       peerUserId,
-      kind: 'message',
       authorUserId: this.userId,
       sentAt,
       viewedAt: null,
       content,
-      mediaRef: null,
-      contentKey: null,
-      nonce: null,
-      mediaType: null,
-      caption: null,
-      captionMeta: null,
-      displayDuration: 0,
       undelivered: false,
     };
     this.messages.set(id, item);
@@ -191,18 +198,19 @@ export class FakeObscuraBridge implements ObscuraBridge {
     }
     const sentAt = this.nextTimestamp();
     const id = `pix_${sentAt}`;
-    const item: StoredConversationItem = {
+    const item: StoredPixItem = {
+      kind: 'pix',
       id,
       peerUserId,
-      kind: 'pix',
       authorUserId: this.userId,
       sentAt,
       viewedAt: null,
-      content: '',
-      mediaRef,
-      contentKey,
-      nonce,
-      mediaType,
+      attachment: {
+        id: mediaRef,
+        contentKey,
+        nonce,
+        mediaType,
+      },
       caption,
       captionMeta,
       displayDuration,
@@ -247,13 +255,19 @@ export class FakeObscuraBridge implements ObscuraBridge {
     }
   }
 
-  async getStories(): Promise<StoryItem[]> {
+  async getStories(): Promise<RawStoryItem[]> {
     this.record('getStories');
     this.checkFailure('getStories');
     return [...this.stories.values()]
       .filter((s) => s.sentAt + STORY_MAX_AGE_MS > this.clock)
       .sort((a, b) => a.sentAt - b.sentAt)
-      .map(({ undelivered: _undelivered, ...story }) => ({ ...story }));
+      .map((story) => {
+        const stripped = stripUndelivered(story);
+        return {
+          ...stripped,
+          attachment: stripped.attachment ? { ...stripped.attachment } : null,
+        };
+      });
   }
 
   async postStory(
@@ -268,15 +282,15 @@ export class FakeObscuraBridge implements ObscuraBridge {
     this.checkPreStoreFailure('postStory');
     const sentAt = this.nextTimestamp();
     const id = `story_${sentAt}`;
+    const attachment: RawAttachment | null = mediaRef && contentKey && nonce
+      ? { id: mediaRef, contentKey, nonce, mediaType: mediaType ?? 'photo' }
+      : null;
     const story: StoredStoryItem = {
       id,
       authorUserId: this.userId,
       sentAt,
       content,
-      mediaRef,
-      contentKey,
-      nonce,
-      mediaType,
+      attachment,
       captionMeta,
       undelivered: false,
     };
@@ -344,10 +358,10 @@ export class FakeObscuraBridge implements ObscuraBridge {
         payload: item.kind === 'pix'
           ? {
               peerUserId: item.peerUserId,
-              mediaRef: item.mediaRef,
-              contentKey: item.contentKey,
-              nonce: item.nonce,
-              mediaType: item.mediaType,
+              mediaRef: item.attachment.id,
+              contentKey: item.attachment.contentKey,
+              nonce: item.attachment.nonce,
+              mediaType: item.attachment.mediaType,
               caption: item.caption,
               captionMeta: item.captionMeta,
               displayDuration: item.displayDuration,
@@ -382,10 +396,10 @@ export class FakeObscuraBridge implements ObscuraBridge {
         sentAt: story.sentAt,
         payload: {
           content: story.content,
-          mediaRef: story.mediaRef,
-          contentKey: story.contentKey,
-          nonce: story.nonce,
-          mediaType: story.mediaType,
+          mediaRef: story.attachment?.id ?? null,
+          contentKey: story.attachment?.contentKey ?? null,
+          nonce: story.attachment?.nonce ?? null,
+          mediaType: story.attachment?.mediaType ?? null,
           captionMeta: story.captionMeta,
         },
       });
@@ -419,7 +433,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
       const ceiling = item.sentAt + MAX_AGE_MS;
       const deadline = item.viewedAt === null ? ceiling : Math.min(ceiling, item.viewedAt + EXPIRE_AFTER_MS);
       if (deadline <= this.clock) {
-        if (item.mediaRef !== null) this.__purged.push(item.mediaRef);
+        if (item.kind === 'pix') this.__purged.push(item.attachment.id);
         this.tombstones.set(item.id, this.clock);
         this.messages.delete(item.id);
         this.undeliveredReceipts.delete(item.id);
@@ -429,7 +443,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
 
     for (const story of this.stories.values()) {
       if (story.sentAt + STORY_MAX_AGE_MS <= this.clock) {
-        if (story.mediaRef !== null) this.__purged.push(story.mediaRef);
+        if (story.attachment !== null) this.__purged.push(story.attachment.id);
         this.tombstones.set(story.id, this.clock);
         this.stories.delete(story.id);
         touched.add('story');
@@ -477,7 +491,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
     sentAt?: number;
     viewedAt?: number | null;
     content?: string;
-  } = {}): ConversationItem {
+  } = {}): RawDirectMessageItem {
     const sentAt = input.sentAt ?? this.nextTimestamp();
     const id = input.id ?? `dm_${sentAt}`;
     const authorUserId = input.authorUserId ?? input.peerUserId ?? 'user_peer';
@@ -489,21 +503,14 @@ export class FakeObscuraBridge implements ObscuraBridge {
       ? pending.viewedAt
       : null;
 
-    const item: StoredConversationItem = {
+    const item: StoredDirectMessageItem = {
+      kind: 'message',
       id,
       peerUserId,
-      kind: 'message',
       authorUserId,
       sentAt,
       viewedAt,
       content: input.content ?? 'hello',
-      mediaRef: null,
-      contentKey: null,
-      nonce: null,
-      mediaType: null,
-      caption: null,
-      captionMeta: null,
-      displayDuration: 0,
       undelivered: false,
     };
 
@@ -512,9 +519,10 @@ export class FakeObscuraBridge implements ObscuraBridge {
       if (viewedAt !== null) this.pendingReceipts.delete(id);
     }
 
-    const stored = this.messages.get(id) ?? item;
+    const stored = this.messages.get(id);
+    const result = stored && stored.kind === 'message' ? stored : item;
     this.__emit({ type: 'messageReceived', model: 'directMessage' });
-    return stripUndelivered(stored);
+    return stripUndelivered(result);
   }
 
   /** Deliver an incoming pix and emit `messageReceived`. */
@@ -524,14 +532,20 @@ export class FakeObscuraBridge implements ObscuraBridge {
     authorUserId?: string;
     sentAt?: number;
     viewedAt?: number | null;
+    attachment?: {
+      id: string;
+      contentKey?: string;
+      nonce?: string;
+      mediaType?: string;
+    };
     mediaRef?: string;
     contentKey?: string;
     nonce?: string;
     mediaType?: string | null;
     caption?: string | null;
-    captionMeta?: string | null;
+    captionMeta?: CaptionMeta | string | null;
     displayDuration?: number;
-  } = {}): ConversationItem {
+  } = {}): Omit<StoredPixItem, 'undelivered'> {
     const sentAt = input.sentAt ?? this.nextTimestamp();
     const id = input.id ?? `pix_${sentAt}`;
     const authorUserId = input.authorUserId ?? input.peerUserId ?? 'user_peer';
@@ -543,20 +557,33 @@ export class FakeObscuraBridge implements ObscuraBridge {
       ? pending.viewedAt
       : null;
 
-    const item: StoredConversationItem = {
+    const attachment: RawAttachment = input.attachment
+      ? {
+          id: input.attachment.id,
+          contentKey: input.attachment.contentKey ?? 'key',
+          nonce: input.attachment.nonce ?? 'nonce',
+          mediaType: input.attachment.mediaType ?? 'photo',
+        }
+      : {
+          id: input.mediaRef ?? 'att_1',
+          contentKey: input.contentKey ?? 'key',
+          nonce: input.nonce ?? 'nonce',
+          mediaType: input.mediaType ?? 'photo',
+        };
+    const captionMeta = typeof input.captionMeta === 'object' && input.captionMeta !== null
+      ? serializeCaptionMeta(input.captionMeta)
+      : (input.captionMeta ?? null);
+
+    const item: StoredPixItem = {
+      kind: 'pix',
       id,
       peerUserId,
-      kind: 'pix',
       authorUserId,
       sentAt,
       viewedAt,
-      content: '',
-      mediaRef: input.mediaRef ?? 'att_1',
-      contentKey: input.contentKey ?? 'key',
-      nonce: input.nonce ?? 'nonce',
-      mediaType: input.mediaType ?? 'photo',
+      attachment,
       caption: input.caption ?? null,
-      captionMeta: input.captionMeta ?? null,
+      captionMeta,
       displayDuration: input.displayDuration ?? 5,
       undelivered: false,
     };
@@ -566,9 +593,10 @@ export class FakeObscuraBridge implements ObscuraBridge {
       if (viewedAt !== null) this.pendingReceipts.delete(id);
     }
 
-    const stored = this.messages.get(id) ?? item;
+    const stored = this.messages.get(id);
+    const result = stored && stored.kind === 'pix' ? stored : item;
     this.__emit({ type: 'messageReceived', model: 'pix' });
-    return stripUndelivered(stored);
+    return { ...stripUndelivered(result), attachment: { ...result.attachment } };
   }
 
   /** Deliver an incoming seen receipt and emit `messageReceived`. */
@@ -604,24 +632,47 @@ export class FakeObscuraBridge implements ObscuraBridge {
     authorUserId?: string;
     sentAt?: number;
     content?: string;
+    attachment?: {
+      id: string;
+      contentKey?: string;
+      nonce?: string;
+      mediaType?: string;
+    } | null;
     mediaRef?: string | null;
     contentKey?: string | null;
     nonce?: string | null;
     mediaType?: string | null;
-    captionMeta?: string | null;
-  } = {}): StoryItem {
+    captionMeta?: CaptionMeta | string | null;
+  } = {}): Omit<StoredStoryItem, 'undelivered'> {
     const sentAt = input.sentAt ?? this.nextTimestamp();
     const id = input.id ?? `story_${sentAt}`;
+    const attachment: RawAttachment | null = input.attachment !== undefined
+      ? (input.attachment
+        ? {
+            id: input.attachment.id,
+            contentKey: input.attachment.contentKey ?? 'key',
+            nonce: input.attachment.nonce ?? 'nonce',
+            mediaType: input.attachment.mediaType ?? 'photo',
+          }
+        : null)
+      : input.mediaRef
+      ? {
+          id: input.mediaRef,
+          contentKey: input.contentKey ?? 'key',
+          nonce: input.nonce ?? 'nonce',
+          mediaType: input.mediaType ?? 'photo',
+        }
+      : null;
+    const captionMeta = typeof input.captionMeta === 'object' && input.captionMeta !== null
+      ? serializeCaptionMeta(input.captionMeta)
+      : (input.captionMeta ?? null);
     const story: StoredStoryItem = {
       id,
       authorUserId: input.authorUserId ?? 'user_peer',
       sentAt,
       content: input.content ?? '',
-      mediaRef: input.mediaRef ?? null,
-      contentKey: input.contentKey ?? null,
-      nonce: input.nonce ?? null,
-      mediaType: input.mediaType ?? null,
-      captionMeta: input.captionMeta ?? null,
+      attachment,
+      captionMeta,
       undelivered: false,
     };
 
@@ -631,7 +682,10 @@ export class FakeObscuraBridge implements ObscuraBridge {
 
     const stored = this.stories.get(id) ?? story;
     this.__emit({ type: 'messageReceived', model: 'story' });
-    return stripUndelivered(stored);
+    return {
+      ...stripUndelivered(stored),
+      attachment: stored.attachment ? { ...stored.attachment } : null,
+    };
   }
 
   /** Deliver an incoming profile update (`REPLACE` by `(updatedAt, authorDeviceId)`) and emit `messageReceived`. */

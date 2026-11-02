@@ -18,7 +18,29 @@ fun expiresAt(sentAt: Long, viewedAt: Long?): Long =
     if (viewedAt == null) sentAt + MAX_EPHEMERAL_AGE_MS
     else minOf(sentAt + MAX_EPHEMERAL_AGE_MS, viewedAt + EXPIRE_AFTER_VIEW_MS)
 
-data class ConversationItemData(
+data class MediaAttachment(
+    val id: String,
+    val contentKey: ByteArray,
+    val nonce: ByteArray,
+    val mediaType: String,
+) {
+    override fun equals(other: Any?): Boolean =
+        this === other || (other is MediaAttachment &&
+            id == other.id &&
+            contentKey.contentEquals(other.contentKey) &&
+            nonce.contentEquals(other.nonce) &&
+            mediaType == other.mediaType)
+
+    override fun hashCode(): Int {
+        var result = id.hashCode()
+        result = 31 * result + contentKey.contentHashCode()
+        result = 31 * result + nonce.contentHashCode()
+        result = 31 * result + mediaType.hashCode()
+        return result
+    }
+}
+
+data class ConversationItem(
     val id: String,
     val peerUserId: String,
     val kind: String,
@@ -27,31 +49,25 @@ data class ConversationItemData(
     val viewedAt: Long?,
     val expiresAt: Long,
     val content: String,
-    val mediaRef: String? = null,
-    val contentKey: String? = null,
-    val nonce: String? = null,
-    val mediaType: String? = null,
+    val attachment: MediaAttachment? = null,
     val caption: String? = null,
     val captionMeta: String? = null,
     val displayDuration: Int = 0,
     val undelivered: Boolean = false,
 )
 
-data class StoryItemData(
+data class StoryItem(
     val id: String,
     val authorUserId: String,
     val sentAt: Long,
     val expiresAt: Long,
     val content: String,
-    val mediaRef: String? = null,
-    val contentKey: String? = null,
-    val nonce: String? = null,
-    val mediaType: String? = null,
+    val attachment: MediaAttachment? = null,
     val captionMeta: String? = null,
     val undelivered: Boolean = false,
 )
 
-data class ProfileItemData(
+data class ProfileItem(
     val userId: String,
     val authorDeviceId: String,
     val updatedAt: Long,
@@ -59,6 +75,10 @@ data class ProfileItemData(
     val bio: String,
     val undelivered: Boolean = false,
 )
+
+typealias ConversationItemData = ConversationItem
+typealias StoryItemData = StoryItem
+typealias ProfileItemData = ProfileItem
 
 data class SweepOutcome(
     val purgedMediaRefs: List<String>,
@@ -90,7 +110,8 @@ internal class ContentStore(
     fun canInsertConversationInTransaction(id: String): Boolean =
         !queries.existsErased(id).executeAsOne() && !queries.existsMessage(id).executeAsOne()
 
-    fun insertConversationInTransaction(item: ConversationItemData) {
+    fun insertConversationInTransaction(item: ConversationItem) {
+        val att = item.attachment
         queries.insertMessage(
             id = item.id,
             peer_user_id = item.peerUserId,
@@ -100,10 +121,10 @@ internal class ContentStore(
             viewed_at = item.viewedAt,
             expires_at = item.expiresAt,
             content = item.content,
-            media_ref = item.mediaRef,
-            content_key = item.contentKey,
-            nonce = item.nonce,
-            media_type = item.mediaType,
+            media_ref = att?.id,
+            content_key = att?.contentKey,
+            nonce = att?.nonce,
+            media_type = att?.mediaType,
             caption = item.caption,
             caption_meta = item.captionMeta,
             display_duration = item.displayDuration.toLong(),
@@ -111,14 +132,14 @@ internal class ContentStore(
         )
     }
 
-    suspend fun putConversation(item: ConversationItemData) = withContext(dispatcher) {
+    suspend fun putConversation(item: ConversationItem) = withContext(dispatcher) {
         insertConversationInTransaction(item)
     }
 
-    fun getConversationInTransaction(id: String): ConversationItemData? =
+    fun getConversationInTransaction(id: String): ConversationItem? =
         queries.selectMessageById(id).executeAsOneOrNull()?.toData()
 
-    suspend fun getConversation(id: String): ConversationItemData? = withContext(dispatcher) {
+    suspend fun getConversation(id: String): ConversationItem? = withContext(dispatcher) {
         getConversationInTransaction(id)
     }
 
@@ -134,34 +155,35 @@ internal class ContentStore(
         queries.setMessageUndelivered(undelivered = if (undelivered) 1L else 0L, id = id)
     }
 
-    suspend fun getMessages(): List<ConversationItemData> = withContext(dispatcher) {
+    suspend fun getMessages(): List<ConversationItem> = withContext(dispatcher) {
         queries.selectAllMessages().executeAsList().map { it.toData() }
     }
 
-    suspend fun getUndeliveredMessages(): List<ConversationItemData> = withContext(dispatcher) {
+    suspend fun getUndeliveredMessages(): List<ConversationItem> = withContext(dispatcher) {
         queries.selectUndeliveredMessages().executeAsList().map { it.toData() }
     }
 
     fun canInsertStoryInTransaction(id: String): Boolean =
         !queries.existsErased(id).executeAsOne() && !queries.existsStory(id).executeAsOne()
 
-    fun insertStoryInTransaction(item: StoryItemData) {
+    fun insertStoryInTransaction(item: StoryItem) {
+        val att = item.attachment
         queries.insertStory(
             id = item.id,
             author_user_id = item.authorUserId,
             sent_at = item.sentAt,
             expires_at = item.expiresAt,
             content = item.content,
-            media_ref = item.mediaRef,
-            content_key = item.contentKey,
-            nonce = item.nonce,
-            media_type = item.mediaType,
+            media_ref = att?.id,
+            content_key = att?.contentKey,
+            nonce = att?.nonce,
+            media_type = att?.mediaType,
             caption_meta = item.captionMeta,
             undelivered = if (item.undelivered) 1L else 0L,
         )
     }
 
-    suspend fun putStory(item: StoryItemData) = withContext(dispatcher) {
+    suspend fun putStory(item: StoryItem) = withContext(dispatcher) {
         insertStoryInTransaction(item)
     }
 
@@ -169,26 +191,26 @@ internal class ContentStore(
         queries.setStoryUndelivered(undelivered = if (undelivered) 1L else 0L, id = id)
     }
 
-    suspend fun getStories(now: Long): List<StoryItemData> = withContext(dispatcher) {
+    suspend fun getStories(now: Long): List<StoryItem> = withContext(dispatcher) {
         queries.selectActiveStories(now).executeAsList().map { it.toData() }
     }
 
-    suspend fun getAllStories(): List<StoryItemData> = withContext(dispatcher) {
+    suspend fun getAllStories(): List<StoryItem> = withContext(dispatcher) {
         queries.selectAllStories().executeAsList().map { it.toData() }
     }
 
-    suspend fun getUndeliveredStories(): List<StoryItemData> = withContext(dispatcher) {
+    suspend fun getUndeliveredStories(): List<StoryItem> = withContext(dispatcher) {
         queries.selectUndeliveredStories().executeAsList().map { it.toData() }
     }
 
-    fun getProfileInTransaction(userId: String): ProfileItemData? =
+    fun getProfileInTransaction(userId: String): ProfileItem? =
         queries.selectProfileByUserId(userId).executeAsOneOrNull()?.toData()
 
-    suspend fun getProfile(userId: String): ProfileItemData? = withContext(dispatcher) {
+    suspend fun getProfile(userId: String): ProfileItem? = withContext(dispatcher) {
         getProfileInTransaction(userId)
     }
 
-    fun upsertProfileIfNewerInTransaction(item: ProfileItemData): Boolean {
+    fun upsertProfileIfNewerInTransaction(item: ProfileItem): Boolean {
         val existing = getProfileInTransaction(item.userId)
         val wins = existing == null ||
             item.updatedAt > existing.updatedAt ||
@@ -197,7 +219,7 @@ internal class ContentStore(
         return wins
     }
 
-    fun insertProfileInTransaction(item: ProfileItemData) {
+    fun insertProfileInTransaction(item: ProfileItem) {
         queries.insertProfile(
             user_id = item.userId,
             author_device_id = item.authorDeviceId,
@@ -208,7 +230,7 @@ internal class ContentStore(
         )
     }
 
-    suspend fun putProfile(item: ProfileItemData) = withContext(dispatcher) {
+    suspend fun putProfile(item: ProfileItem) = withContext(dispatcher) {
         insertProfileInTransaction(item)
     }
 
@@ -216,18 +238,18 @@ internal class ContentStore(
         queries.setProfileUndelivered(undelivered = if (undelivered) 1L else 0L, userId = userId, updatedAt = updatedAt)
     }
 
-    suspend fun getProfiles(): List<ProfileItemData> = withContext(dispatcher) {
+    suspend fun getProfiles(): List<ProfileItem> = withContext(dispatcher) {
         queries.selectAllProfiles().executeAsList().map { it.toData() }
     }
 
-    suspend fun getUndeliveredProfiles(): List<ProfileItemData> = withContext(dispatcher) {
+    suspend fun getUndeliveredProfiles(): List<ProfileItem> = withContext(dispatcher) {
         queries.selectUndeliveredProfiles().executeAsList().map { it.toData() }
     }
 
     suspend fun importSnapshot(
-        messages: List<ConversationItemData>,
-        stories: List<StoryItemData>,
-        profiles: List<ProfileItemData>,
+        messages: List<ConversationItem>,
+        stories: List<StoryItem>,
+        profiles: List<ProfileItem>,
     ) = withContext(dispatcher) {
         db.transaction {
             messages.forEach { if (canInsertConversationInTransaction(it.id)) insertConversationInTransaction(it) }
@@ -277,7 +299,17 @@ internal class ContentStore(
     }
 }
 
-private fun ConversationEntry.toData() = ConversationItemData(
+private fun toAttachment(mediaRef: String?, contentKey: ByteArray?, nonce: ByteArray?, mediaType: String?): MediaAttachment? =
+    if (!mediaRef.isNullOrBlank() && contentKey != null && nonce != null) {
+        MediaAttachment(
+            id = mediaRef,
+            contentKey = contentKey,
+            nonce = nonce,
+            mediaType = mediaType ?: "",
+        )
+    } else null
+
+private fun ConversationEntry.toData() = ConversationItem(
     id = id,
     peerUserId = peer_user_id,
     kind = kind,
@@ -286,31 +318,25 @@ private fun ConversationEntry.toData() = ConversationItemData(
     viewedAt = viewed_at,
     expiresAt = expires_at,
     content = content,
-    mediaRef = media_ref,
-    contentKey = content_key,
-    nonce = nonce,
-    mediaType = media_type,
-    caption = caption,
-    captionMeta = caption_meta,
-    displayDuration = display_duration.toInt(),
+    attachment = if (kind == "pix") toAttachment(media_ref, content_key, nonce, media_type) else null,
+    caption = if (kind == "pix") caption else null,
+    captionMeta = if (kind == "pix") caption_meta else null,
+    displayDuration = if (kind == "pix") display_duration.toInt() else 0,
     undelivered = undelivered != 0L,
 )
 
-private fun StoryEntry.toData() = StoryItemData(
+private fun StoryEntry.toData() = StoryItem(
     id = id,
     authorUserId = author_user_id,
     sentAt = sent_at,
     expiresAt = expires_at,
     content = content,
-    mediaRef = media_ref,
-    contentKey = content_key,
-    nonce = nonce,
-    mediaType = media_type,
+    attachment = toAttachment(media_ref, content_key, nonce, media_type),
     captionMeta = caption_meta,
     undelivered = undelivered != 0L,
 )
 
-private fun ProfileEntry.toData() = ProfileItemData(
+private fun ProfileEntry.toData() = ProfileItem(
     userId = user_id,
     authorDeviceId = author_device_id,
     updatedAt = updated_at,

@@ -152,6 +152,7 @@ object ObscuraSession {
             ObscuraConfig(apiUrl = API_URL, deviceName = deviceName),
             driver = driver,
             sessionStorage = sessionStorage,
+            attachmentCacheDir = java.io.File(appContext.cacheDir, "attachments"),
         ).also {
             it.logger = logger
             client = it

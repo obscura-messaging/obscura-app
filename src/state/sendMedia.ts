@@ -1,22 +1,22 @@
-import { Obscura, type Friend } from '../native/ObscuraModule';
-import { attachmentOf, type Attachment } from '../domain/viewer';
+import type { CaptionMeta } from '../domain/caption';
+import type { MediaAttachment, MediaType } from '../domain/viewer';
+import { Obscura, type AttachmentRef, type Friend } from '../native/ObscuraModule';
 import { fileUri } from '../utils/files';
 import { logError } from '../utils/log';
 import { refreshMessages, refreshStories } from './store';
 
-export { attachmentOf, type Attachment };
-export type MediaType = 'photo' | 'video';
+export type { AttachmentRef, MediaAttachment, MediaType };
 
 /**
- * Decrypt an attachment to the native cache and remember its `file://` URI by `mediaRef`. The
+ * Decrypt an attachment to the native cache and remember its `file://` URI by `id`. The
  * native side returns the cached file when it already has one, so repeating this is cheap.
  */
-export async function loadAttachmentUri(att: Attachment, cache: Map<string, string>): Promise<string> {
-  const cached = cache.get(att.mediaRef);
+export async function loadAttachmentUri(att: AttachmentRef, cache: Map<string, string>): Promise<string> {
+  const cached = cache.get(att.id);
   if (cached) return cached;
-  const path = await Obscura.downloadAttachment(att.mediaRef, att.contentKey, att.nonce);
+  const path = await Obscura.downloadAttachment(att.id, att.contentKey, att.nonce);
   const uri = fileUri(path);
-  cache.set(att.mediaRef, uri);
+  cache.set(att.id, uri);
   return uri;
 }
 
@@ -37,8 +37,7 @@ export interface Capture {
   path: string;
   mediaType: MediaType;
   caption: string;
-  /** A serialized `CaptionMeta`, absent without a caption. */
-  captionMeta?: string;
+  captionMeta?: CaptionMeta | null;
   displayDuration: number;
 }
 

@@ -1,4 +1,4 @@
-import { sendCapture, type Capture } from '../sendMedia';
+import { loadAttachmentUri, sendCapture, type Capture } from '../sendMedia';
 import { resetSession, useStore } from '../store';
 import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
@@ -64,5 +64,21 @@ describe('sendCapture', () => {
     await sendCapture({ ...CAPTURE, mediaType: 'video' }, [BOB], false);
 
     expect(bridge.__calls).not.toContain('resizeImage');
+  });
+
+  it('serializes CaptionMeta at the bridge boundary and caches downloaded attachment URIs by id', async () => {
+    const meta = { style: 'bar' as const, y: 0.5 };
+    await sendCapture({ ...CAPTURE, captionMeta: meta }, [BOB], true);
+
+    const [msg] = useStore.getState().messages;
+    if (msg.kind !== 'pix') throw new Error('Expected pix');
+    expect(msg.captionMeta).toEqual(meta);
+    expect(useStore.getState().stories[0].captionMeta).toEqual(meta);
+
+    const cache = new Map<string, string>();
+    const uri1 = await loadAttachmentUri(msg.attachment, cache);
+    const uri2 = await loadAttachmentUri(msg.attachment, cache);
+    expect(uri1).toBe(uri2);
+    expect(bridge.__calls.filter((c) => c === 'downloadAttachment')).toHaveLength(1);
   });
 });

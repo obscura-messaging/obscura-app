@@ -14,7 +14,7 @@ import { CloseIcon } from '../components/icons';
 import { clamp, touchDist } from '../utils/gesture';
 import {
   CAPTION_FONTS, CAPTION_FONT_LABELS, CAPTION_COLORS, DEFAULT_BAR, captionStyles, boldTextStyle,
-  serializeCaptionMeta, type CaptionMeta, type CaptionStyle,
+  type CaptionMeta, type CaptionStyle,
 } from '../components/Caption';
 import { DEFAULT_DISPLAY_SECONDS } from '../domain/viewer';
 import { discardCapture } from '../state/sendMedia';
@@ -209,12 +209,11 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
 
   const onChoose = () => {
     forwardedToPicker.current = true;
-    const meta = buildMeta();
     nav.navigate('RecipientPicker', {
       path,
       mediaType,
       caption: caption.trim(),
-      captionMeta: meta ? serializeCaptionMeta(meta) : undefined,
+      captionMeta: buildMeta(),
       displayDuration: duration,
     });
   };

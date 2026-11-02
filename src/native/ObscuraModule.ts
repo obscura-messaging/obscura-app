@@ -1,10 +1,14 @@
 import { NativeEventEmitter, TurboModuleRegistry, type TurboModule } from 'react-native';
-import type { ConversationItem } from '../domain/chats';
+import { parseCaptionMeta, serializeCaptionMeta, type CaptionMeta } from '../domain/caption';
+import type { ConversationItem, DirectMessageItem, PixItem } from '../domain/chats';
 import type { DeviceInfo } from '../domain/devices';
 import type { Friend, ProfileItem } from '../domain/friends';
-import type { StoryItem } from '../domain/viewer';
+import type { MediaAttachment, MediaType, StoryItem } from '../domain/viewer';
 
-export type { ConversationItem, DeviceInfo, Friend, ProfileItem, StoryItem };
+export type {
+  CaptionMeta, ConversationItem, DeviceInfo, DirectMessageItem,
+  Friend, MediaAttachment, MediaType, PixItem, ProfileItem, StoryItem,
+};
 
 export interface ResizedImage {
   path: string;
@@ -16,6 +20,52 @@ export interface AttachmentRef {
   id: string;
   contentKey: string;
   nonce: string;
+}
+
+export interface RawAttachment extends AttachmentRef {
+  mediaType: string;
+}
+
+export interface RawDirectMessageItem {
+  kind: 'message';
+  id: string;
+  peerUserId: string;
+  authorUserId: string;
+  sentAt: number;
+  viewedAt: number | null;
+  content: string;
+}
+
+export interface RawPixItem {
+  kind: 'pix';
+  id: string;
+  peerUserId: string;
+  authorUserId: string;
+  sentAt: number;
+  viewedAt: number | null;
+  attachment?: RawAttachment | null;
+  mediaRef?: string | null;
+  contentKey?: string | null;
+  nonce?: string | null;
+  mediaType?: string | null;
+  caption: string | null;
+  captionMeta: string | null;
+  displayDuration: number;
+}
+
+export type RawConversationItem = RawDirectMessageItem | RawPixItem;
+
+export interface RawStoryItem {
+  id: string;
+  authorUserId: string;
+  sentAt: number;
+  content: string;
+  attachment?: RawAttachment | null;
+  mediaRef?: string | null;
+  contentKey?: string | null;
+  nonce?: string | null;
+  mediaType?: string | null;
+  captionMeta: string | null;
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'reconnecting' | 'connected';
@@ -82,14 +132,14 @@ export interface ObscuraBridge extends TurboModule, EventModule {
   addFriendByCode(code: string): Promise<void>;
   getFriends(): Promise<Friend[]>;
 
-  getMessages(): Promise<ConversationItem[]>;
+  getMessages(): Promise<RawConversationItem[]>;
   sendMessage(peerUserId: string, content: string): Promise<string>;
   sendPix(
     peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
     mediaType: string, caption: string, captionMeta: string | null, displayDuration: number,
   ): Promise<string>;
   markSeen(entryId: string): Promise<void>;
-  getStories(): Promise<StoryItem[]>;
+  getStories(): Promise<RawStoryItem[]>;
   postStory(
     content: string, mediaRef: string | null, contentKey: string | null,
     nonce: string | null, mediaType: string | null, captionMeta: string | null,
@@ -121,7 +171,119 @@ export interface ObscuraBridge extends TurboModule, EventModule {
   getLaunchIntent(): Promise<LaunchIntent | null>;
 }
 
-export const Obscura = TurboModuleRegistry.getEnforcing<ObscuraBridge>('ObscuraBridge');
+export interface ObscuraClient extends Omit<ObscuraBridge, 'getMessages' | 'getStories' | 'sendPix' | 'postStory'> {
+  getMessages(): Promise<ConversationItem[]>;
+  sendPix(
+    peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
+    mediaType: MediaType | string, caption: string, captionMeta: CaptionMeta | string | null, displayDuration: number,
+  ): Promise<string>;
+  getStories(): Promise<StoryItem[]>;
+  postStory(
+    content: string, mediaRef: string | null, contentKey: string | null,
+    nonce: string | null, mediaType: MediaType | string | null, captionMeta: CaptionMeta | string | null,
+  ): Promise<string>;
+}
+
+function normalizeMediaType(mediaType: string | null | undefined): MediaType {
+  return mediaType === 'video' ? 'video' : 'photo';
+}
+
+function normalizeAttachment(raw: RawAttachment): MediaAttachment {
+  return {
+    id: raw.id,
+    contentKey: raw.contentKey,
+    nonce: raw.nonce,
+    mediaType: normalizeMediaType(raw.mediaType),
+  };
+}
+
+function toConversationItem(raw: RawConversationItem): ConversationItem {
+  if (raw.kind === 'message') {
+    return {
+      kind: 'message',
+      id: raw.id,
+      peerUserId: raw.peerUserId,
+      authorUserId: raw.authorUserId,
+      sentAt: raw.sentAt,
+      viewedAt: raw.viewedAt,
+      content: raw.content,
+    };
+  }
+  const att = raw.attachment ?? {
+    id: raw.mediaRef ?? '',
+    contentKey: raw.contentKey ?? '',
+    nonce: raw.nonce ?? '',
+    mediaType: raw.mediaType ?? 'photo',
+  };
+  return {
+    kind: 'pix',
+    id: raw.id,
+    peerUserId: raw.peerUserId,
+    authorUserId: raw.authorUserId,
+    sentAt: raw.sentAt,
+    viewedAt: raw.viewedAt,
+    attachment: normalizeAttachment(att),
+    caption: raw.caption,
+    captionMeta: parseCaptionMeta(raw.captionMeta),
+    displayDuration: raw.displayDuration,
+  };
+}
+
+function toStoryItem(raw: RawStoryItem): StoryItem {
+  const rawAtt = raw.attachment !== undefined
+    ? raw.attachment
+    : (raw.mediaRef && raw.contentKey && raw.nonce
+      ? { id: raw.mediaRef, contentKey: raw.contentKey, nonce: raw.nonce, mediaType: raw.mediaType ?? 'photo' }
+      : null);
+  return {
+    id: raw.id,
+    authorUserId: raw.authorUserId,
+    sentAt: raw.sentAt,
+    content: raw.content,
+    attachment: rawAtt ? normalizeAttachment(rawAtt) : null,
+    captionMeta: parseCaptionMeta(raw.captionMeta),
+  };
+}
+
+function encodeCaptionMeta(meta: CaptionMeta | string | null | undefined): string | null {
+  if (meta == null) return null;
+  return typeof meta === 'string' ? meta : serializeCaptionMeta(meta);
+}
+
+const rawBridge = TurboModuleRegistry.getEnforcing<ObscuraBridge>('ObscuraBridge');
+
+export const Obscura: ObscuraClient = new Proxy(rawBridge, {
+  get(target, prop, receiver) {
+    switch (prop) {
+      case 'getMessages':
+        return async (): Promise<ConversationItem[]> => (await target.getMessages()).map(toConversationItem);
+      case 'getStories':
+        return async (): Promise<StoryItem[]> => (await target.getStories()).map(toStoryItem);
+      case 'sendPix':
+        return (
+          peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
+          mediaType: MediaType | string, caption: string, captionMeta: CaptionMeta | string | null, displayDuration: number,
+        ): Promise<string> =>
+          target.sendPix(
+            peerUserId, mediaRef, contentKey, nonce,
+            mediaType, caption, encodeCaptionMeta(captionMeta), displayDuration,
+          );
+      case 'postStory':
+        return (
+          content: string, mediaRef: string | null, contentKey: string | null,
+          nonce: string | null, mediaType: MediaType | string | null, captionMeta: CaptionMeta | string | null,
+        ): Promise<string> =>
+          target.postStory(
+            content, mediaRef, contentKey,
+            nonce, mediaType, encodeCaptionMeta(captionMeta),
+          );
+      default: {
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    }
+  },
+}) as unknown as ObscuraClient;
 
 /** The payloads of the native `ObscuraEvent` stream; must match each bridge's `BridgeEvent` enum. */
 export type ObscuraEvent =
@@ -134,7 +296,7 @@ export type ObscuraEvent =
   | { type: 'typingChanged'; peerUserId: string; typing: boolean }
   | { type: 'pushTokenReceived'; token: string };
 
-const emitter = new NativeEventEmitter(Obscura);
+const emitter = new NativeEventEmitter(rawBridge);
 
 /** Subscribe to Obscura events. Returns an unsubscribe function. */
 export function onObscuraEvent(handler: (event: ObscuraEvent) => void): () => void {

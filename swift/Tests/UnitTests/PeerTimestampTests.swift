@@ -26,7 +26,7 @@ final class PeerTimestampTests: XCTestCase {
 
         try await content.insertStoryItem(StoryItem(
             id: "s1", authorUserId: "user-1", sentAt: Self.aboveInt64Max, content: "hi",
-            mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil
+            attachment: nil, captionMeta: nil
         ))
 
         let written = try await content.allStories()

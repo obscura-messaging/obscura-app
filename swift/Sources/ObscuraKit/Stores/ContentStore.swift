@@ -1,6 +1,20 @@
 import Foundation
 import GRDB
 
+public struct MediaAttachment: Sendable, Equatable {
+    public let id: String
+    public let contentKey: Data
+    public let nonce: Data
+    public let mediaType: String
+
+    public init(id: String, contentKey: Data, nonce: Data, mediaType: String) {
+        self.id = id
+        self.contentKey = contentKey
+        self.nonce = nonce
+        self.mediaType = mediaType
+    }
+}
+
 public struct ConversationItem: Sendable, Equatable {
     public let id: String
     public let peerUserId: String
@@ -9,10 +23,7 @@ public struct ConversationItem: Sendable, Equatable {
     public let sentAt: UInt64
     public let viewedAt: UInt64?
     public let content: String
-    public let mediaRef: String?
-    public let contentKey: String?
-    public let nonce: String?
-    public let mediaType: String?
+    public let attachment: MediaAttachment?
     public let caption: String?
     public let captionMeta: String?
     public let displayDuration: Int
@@ -25,13 +36,10 @@ public struct ConversationItem: Sendable, Equatable {
         sentAt: UInt64,
         viewedAt: UInt64?,
         content: String,
-        mediaRef: String?,
-        contentKey: String?,
-        nonce: String?,
-        mediaType: String?,
-        caption: String?,
-        captionMeta: String?,
-        displayDuration: Int
+        attachment: MediaAttachment? = nil,
+        caption: String? = nil,
+        captionMeta: String? = nil,
+        displayDuration: Int = 0
     ) {
         self.id = id
         self.peerUserId = peerUserId
@@ -40,10 +48,7 @@ public struct ConversationItem: Sendable, Equatable {
         self.sentAt = sentAt
         self.viewedAt = viewedAt
         self.content = content
-        self.mediaRef = mediaRef
-        self.contentKey = contentKey
-        self.nonce = nonce
-        self.mediaType = mediaType
+        self.attachment = attachment
         self.caption = caption
         self.captionMeta = captionMeta
         self.displayDuration = displayDuration
@@ -55,10 +60,7 @@ public struct StoryItem: Sendable, Equatable {
     public let authorUserId: String
     public let sentAt: UInt64
     public let content: String
-    public let mediaRef: String?
-    public let contentKey: String?
-    public let nonce: String?
-    public let mediaType: String?
+    public let attachment: MediaAttachment?
     public let captionMeta: String?
 
     public init(
@@ -66,20 +68,14 @@ public struct StoryItem: Sendable, Equatable {
         authorUserId: String,
         sentAt: UInt64,
         content: String,
-        mediaRef: String?,
-        contentKey: String?,
-        nonce: String?,
-        mediaType: String?,
-        captionMeta: String?
+        attachment: MediaAttachment? = nil,
+        captionMeta: String? = nil
     ) {
         self.id = id
         self.authorUserId = authorUserId
         self.sentAt = sentAt
         self.content = content
-        self.mediaRef = mediaRef
-        self.contentKey = contentKey
-        self.nonce = nonce
-        self.mediaType = mediaType
+        self.attachment = attachment
         self.captionMeta = captionMeta
     }
 }
@@ -203,10 +199,10 @@ actor ContentStore {
             item.viewedAt.map { Int64(clamping: $0) },
             Int64(clamping: expiry),
             item.content.storedText,
-            item.mediaRef?.storedText,
-            item.contentKey?.storedText,
-            item.nonce?.storedText,
-            item.mediaType?.storedText,
+            item.attachment?.id.storedText,
+            item.attachment?.contentKey,
+            item.attachment?.nonce,
+            item.attachment?.mediaType.storedText,
             item.caption?.storedText,
             item.captionMeta?.storedText,
             item.displayDuration,
@@ -307,10 +303,10 @@ actor ContentStore {
             Int64(clamping: item.sentAt),
             Int64(clamping: expiry),
             item.content.storedText,
-            item.mediaRef?.storedText,
-            item.contentKey?.storedText,
-            item.nonce?.storedText,
-            item.mediaType?.storedText,
+            item.attachment?.id.storedText,
+            item.attachment?.contentKey,
+            item.attachment?.nonce,
+            item.attachment?.mediaType.storedText,
             item.captionMeta?.storedText,
             undelivered ? 1 : 0,
         ])
@@ -473,11 +469,11 @@ actor ContentStore {
                 record.sentAt = item.sentAt
                 record.viewedAt = item.viewedAt ?? 0
                 record.content = item.content
-                if let mediaRef = item.mediaRef, !mediaRef.isEmpty {
-                    record.attachment.id = mediaRef
-                    record.attachment.contentKey = item.contentKey.flatMap { Data(base64Encoded: $0) } ?? Data()
-                    record.attachment.nonce = item.nonce.flatMap { Data(base64Encoded: $0) } ?? Data()
-                    record.attachment.mediaType = item.mediaType ?? ""
+                if let att = item.attachment, !att.id.isEmpty {
+                    record.attachment.id = att.id
+                    record.attachment.contentKey = att.contentKey
+                    record.attachment.nonce = att.nonce
+                    record.attachment.mediaType = att.mediaType
                 }
                 record.caption = item.caption ?? ""
                 record.captionMeta = item.captionMeta ?? ""
@@ -490,11 +486,11 @@ actor ContentStore {
                 record.authorUserID = item.authorUserId
                 record.sentAt = item.sentAt
                 record.content = item.content
-                if let mediaRef = item.mediaRef, !mediaRef.isEmpty {
-                    record.attachment.id = mediaRef
-                    record.attachment.contentKey = item.contentKey.flatMap { Data(base64Encoded: $0) } ?? Data()
-                    record.attachment.nonce = item.nonce.flatMap { Data(base64Encoded: $0) } ?? Data()
-                    record.attachment.mediaType = item.mediaType ?? ""
+                if let att = item.attachment, !att.id.isEmpty {
+                    record.attachment.id = att.id
+                    record.attachment.contentKey = att.contentKey
+                    record.attachment.nonce = att.nonce
+                    record.attachment.mediaType = att.mediaType
                 }
                 record.captionMeta = item.captionMeta ?? ""
                 return record
@@ -516,37 +512,46 @@ actor ContentStore {
         try await db.write { db in
             for record in snapshot.messages {
                 guard !record.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-                let hasAtt = record.hasAttachment && !record.attachment.id.isEmpty
+                let kind = record.kind.isEmpty ? "message" : record.kind
+                let isPix = kind == "pix"
+                let hasAtt = isPix && record.hasAttachment && !record.attachment.id.isEmpty
+                if isPix && !hasAtt { continue }
+                let attachment: MediaAttachment? = hasAtt ? MediaAttachment(
+                    id: record.attachment.id,
+                    contentKey: record.attachment.contentKey,
+                    nonce: record.attachment.nonce,
+                    mediaType: record.attachment.mediaType.isEmpty ? "photo" : record.attachment.mediaType
+                ) : nil
                 let item = ConversationItem(
                     id: record.id,
                     peerUserId: record.peerUserID,
-                    kind: record.kind.isEmpty ? "message" : record.kind,
+                    kind: kind,
                     authorUserId: record.authorUserID,
                     sentAt: record.sentAt,
                     viewedAt: record.viewedAt > 0 ? record.viewedAt : nil,
                     content: record.content,
-                    mediaRef: hasAtt ? record.attachment.id : nil,
-                    contentKey: hasAtt && !record.attachment.contentKey.isEmpty ? record.attachment.contentKey.base64EncodedString() : nil,
-                    nonce: hasAtt && !record.attachment.nonce.isEmpty ? record.attachment.nonce.base64EncodedString() : nil,
-                    mediaType: hasAtt && !record.attachment.mediaType.isEmpty ? record.attachment.mediaType : nil,
-                    caption: record.caption.isEmpty ? nil : record.caption,
-                    captionMeta: record.captionMeta.isEmpty ? nil : record.captionMeta,
-                    displayDuration: Int(record.displayDurationSecs)
+                    attachment: attachment,
+                    caption: isPix && !record.caption.isEmpty ? record.caption : nil,
+                    captionMeta: isPix && !record.captionMeta.isEmpty ? record.captionMeta : nil,
+                    displayDuration: isPix ? Int(record.displayDurationSecs) : 0
                 )
                 _ = try Self.insertConversationItem(item, undelivered: false, in: db)
             }
             for record in snapshot.stories {
                 guard !record.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
                 let hasAtt = record.hasAttachment && !record.attachment.id.isEmpty
+                let attachment: MediaAttachment? = hasAtt ? MediaAttachment(
+                    id: record.attachment.id,
+                    contentKey: record.attachment.contentKey,
+                    nonce: record.attachment.nonce,
+                    mediaType: record.attachment.mediaType.isEmpty ? "photo" : record.attachment.mediaType
+                ) : nil
                 let item = StoryItem(
                     id: record.id,
                     authorUserId: record.authorUserID,
                     sentAt: record.sentAt,
                     content: record.content,
-                    mediaRef: hasAtt ? record.attachment.id : nil,
-                    contentKey: hasAtt && !record.attachment.contentKey.isEmpty ? record.attachment.contentKey.base64EncodedString() : nil,
-                    nonce: hasAtt && !record.attachment.nonce.isEmpty ? record.attachment.nonce.base64EncodedString() : nil,
-                    mediaType: hasAtt && !record.attachment.mediaType.isEmpty ? record.attachment.mediaType : nil,
+                    attachment: attachment,
                     captionMeta: record.captionMeta.isEmpty ? nil : record.captionMeta
                 )
                 _ = try Self.insertStoryItem(item, undelivered: false, in: db)
@@ -582,23 +587,32 @@ actor ContentStore {
                           arguments: [id.storedText]) == true
     }
 
+    private static func mediaAttachment(_ row: Row) throws -> MediaAttachment? {
+        guard let id = try row.optionalText("media_ref"), !id.isEmpty else {
+            return nil
+        }
+        let contentKey = (row["content_key"] as Data?) ?? Data()
+        let nonce = (row["nonce"] as Data?) ?? Data()
+        let mediaType = try row.optionalText("media_type") ?? "photo"
+        return MediaAttachment(id: id, contentKey: contentKey, nonce: nonce, mediaType: mediaType)
+    }
+
     private static func conversationItem(_ row: Row) throws -> ConversationItem {
         let viewedRaw: Int64? = row["viewed_at"]
+        let kind: String = row["kind"]
+        let isPix = kind == "pix"
         return ConversationItem(
             id: try row.text("id"),
             peerUserId: try row.text("peer_user_id"),
-            kind: row["kind"],
+            kind: kind,
             authorUserId: try row.text("author_user_id"),
             sentAt: UInt64(max(0, row["sent_at"] as Int64)),
             viewedAt: viewedRaw.map { UInt64(max(0, $0)) },
             content: try row.text("content"),
-            mediaRef: try row.optionalText("media_ref"),
-            contentKey: try row.optionalText("content_key"),
-            nonce: try row.optionalText("nonce"),
-            mediaType: try row.optionalText("media_type"),
-            caption: try row.optionalText("caption"),
-            captionMeta: try row.optionalText("caption_meta"),
-            displayDuration: max(0, row["display_duration"] as Int)
+            attachment: isPix ? try mediaAttachment(row) : nil,
+            caption: isPix ? try row.optionalText("caption") : nil,
+            captionMeta: isPix ? try row.optionalText("caption_meta") : nil,
+            displayDuration: isPix ? max(0, row["display_duration"] as Int) : 0
         )
     }
 
@@ -608,10 +622,7 @@ actor ContentStore {
             authorUserId: try row.text("author_user_id"),
             sentAt: UInt64(max(0, row["sent_at"] as Int64)),
             content: try row.text("content"),
-            mediaRef: try row.optionalText("media_ref"),
-            contentKey: try row.optionalText("content_key"),
-            nonce: try row.optionalText("nonce"),
-            mediaType: try row.optionalText("media_type"),
+            attachment: try mediaAttachment(row),
             captionMeta: try row.optionalText("caption_meta")
         )
     }

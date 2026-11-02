@@ -48,9 +48,8 @@ describe('logout', () => {
     session();
     useStore.setState({
       messages: [{
-        id: 'm1', peerUserId: BOB, kind: 'message', authorUserId: BOB, sentAt: 1,
-        viewedAt: null, content: 'hi', mediaRef: null, contentKey: null, nonce: null,
-        mediaType: null, caption: null, captionMeta: null, displayDuration: 0,
+        kind: 'message', id: 'm1', peerUserId: BOB, authorUserId: BOB, sentAt: 1,
+        viewedAt: null, content: 'hi',
       }],
     });
 

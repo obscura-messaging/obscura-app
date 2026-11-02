@@ -62,16 +62,29 @@ describe('typed domain operations', () => {
     bridge.__deliverMessage({ id: 'dm_1', peerUserId: 'u_bob', authorUserId: 'u_bob', content: 'second', sentAt: 9_000 });
 
     const [msg] = await Obscura.getMessages();
+    if (msg.kind !== 'message') throw new Error('Expected a message');
     expect(msg.content).toBe('first');
     expect(msg.sentAt).toBe(1_000);
   });
 
   it('round-trips unicode stories and captionMeta, and hides stories older than 24h', async () => {
-    const captionMeta = JSON.stringify({ style: 'bold', x: 0.5, y: 0.5, color: '#fff' });
+    const captionMeta = {
+      style: 'bold' as const,
+      x: 0.5,
+      y: 0.5,
+      rot: 0,
+      scale: 1,
+      color: '#fff',
+      font: 0,
+    };
     await Obscura.postStory('sunset 🌅', 'att_1', 'k', 'n', 'photo', captionMeta);
 
     const [story] = await Obscura.getStories();
-    expect(story).toMatchObject({ content: 'sunset 🌅', captionMeta });
+    expect(story).toMatchObject({
+      content: 'sunset 🌅',
+      attachment: { id: 'att_1', contentKey: 'k', nonce: 'n', mediaType: 'photo' },
+      captionMeta,
+    });
 
     bridge.__advanceTime(STORY_MAX_AGE_MS + 1);
     expect(await Obscura.getStories()).toEqual([]);

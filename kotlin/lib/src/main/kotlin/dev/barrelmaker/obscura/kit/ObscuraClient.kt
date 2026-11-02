@@ -8,8 +8,8 @@ import dev.barrelmaker.obscura.kit.crypto.LinkCrypto
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
 import dev.barrelmaker.obscura.kit.crypto.UuidCodec
 import dev.barrelmaker.obscura.kit.crypto.fromBase64
-import dev.barrelmaker.obscura.kit.crypto.toBase64
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
+import dev.barrelmaker.obscura.kit.linking.HistorySync
 import dev.barrelmaker.obscura.kit.managers.AuthManager
 import dev.barrelmaker.obscura.kit.managers.Credentials
 import dev.barrelmaker.obscura.kit.managers.MessageSender
@@ -20,19 +20,18 @@ import dev.barrelmaker.obscura.kit.network.APIClient
 import dev.barrelmaker.obscura.kit.network.GatewayConnection
 import dev.barrelmaker.obscura.kit.persistence.SessionStorage
 import dev.barrelmaker.obscura.kit.stores.ContentStore
-import dev.barrelmaker.obscura.kit.stores.ConversationItemData
+import dev.barrelmaker.obscura.kit.stores.ConversationItem
 import dev.barrelmaker.obscura.kit.stores.DeviceStore
 import dev.barrelmaker.obscura.kit.stores.EXPIRE_AFTER_VIEW_MS
-import dev.barrelmaker.obscura.kit.stores.FriendData
 import dev.barrelmaker.obscura.kit.stores.FriendList
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import dev.barrelmaker.obscura.kit.stores.FriendStore
 import dev.barrelmaker.obscura.kit.stores.LocalDevice
 import dev.barrelmaker.obscura.kit.stores.MAX_EPHEMERAL_AGE_MS
-import dev.barrelmaker.obscura.kit.stores.ProfileItemData
+import dev.barrelmaker.obscura.kit.stores.MediaAttachment
+import dev.barrelmaker.obscura.kit.stores.ProfileItem
 import dev.barrelmaker.obscura.kit.stores.STORY_MAX_AGE_MS
-import dev.barrelmaker.obscura.kit.stores.StoryItemData
-import dev.barrelmaker.obscura.kit.stores.SweepOutcome
+import dev.barrelmaker.obscura.kit.stores.StoryItem
 import dev.barrelmaker.obscura.kit.stores.expiresAt
 import dev.barrelmaker.obscura.kit.stores.pragma
 import dev.barrelmaker.obscura.kit.stores.truncateWal
@@ -54,26 +53,21 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import com.google.protobuf.InvalidProtocolBufferException
-import obscura.client.v1.Client.AttachmentPointer
 import obscura.client.v1.Client.ClientMessage
 import obscura.client.v1.Client.DirectMessage
-import obscura.client.v1.Client.EntrySnapshot
 import obscura.client.v1.Client.FriendListSync
-import obscura.client.v1.Client.HistorySnapshot
 import obscura.client.v1.Client.LinkBundle
 import obscura.client.v1.Client.LinkCode
 import obscura.client.v1.Client.PixMessage
 import obscura.client.v1.Client.ProfileUpdate
 import obscura.client.v1.Client.SeenReceipt
-import obscura.client.v1.Client.StoredMessageRecord
-import obscura.client.v1.Client.StoredProfileRecord
-import obscura.client.v1.Client.StoredStoryRecord
 import obscura.client.v1.Client.StoryPost
 import obscura.client.v1.friendAccept
 import obscura.client.v1.friendRequest
@@ -82,6 +76,7 @@ import org.signal.libsignal.protocol.DuplicateMessageException
 import org.signal.libsignal.protocol.IdentityKeyPair
 import org.signal.libsignal.protocol.ecc.Curve
 import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
+import java.io.File
 import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -96,6 +91,7 @@ class ObscuraClient(
     config: ObscuraConfig,
     driver: SqlDriver?,
     sessionStorage: SessionStorage,
+    val attachmentCacheDir: File? = null,
 ) {
     var logger: ObscuraLogger = NoOpLogger
 
@@ -220,7 +216,9 @@ class ObscuraClient(
             SignalKeyUtils.generateProvisioningKeys(identity), request.sessionId,
         ) { friends.replaceInTransaction(friendList) }
         try {
-            if (bundle.hasHistory()) importHistory(bundle.history)
+            if (bundle.hasHistory()) {
+                HistorySync.restoreHistorySnapshot(bundle.history, content, ::downloadDecryptedAttachment)
+            }
             connect()
         } finally {
             auth.publishAuthenticated()
@@ -241,67 +239,6 @@ class ObscuraClient(
         throw ObscuraError.LinkFailed("Link session expired")
     }
 
-    private suspend fun importHistory(history: HistorySnapshot) {
-        val plaintext = downloadDecryptedAttachment(history.attachmentId, history.contentKey.toByteArray(), history.nonce.toByteArray())
-        val snapshot = try {
-            EntrySnapshot.parseFrom(plaintext)
-        } catch (e: InvalidProtocolBufferException) {
-            throw ObscuraError.ProtocolViolation("Invalid history snapshot", e)
-        }
-        val messages = snapshot.messagesList.mapNotNull { m ->
-            if (m.id.isBlank()) return@mapNotNull null
-            val viewedAt = m.viewedAt.takeIf { it > 0L }
-            val hasAtt = m.hasAttachment() && m.attachment.id.isNotBlank()
-            ConversationItemData(
-                id = m.id,
-                peerUserId = m.peerUserId,
-                kind = m.kind,
-                authorUserId = m.authorUserId,
-                sentAt = m.sentAt,
-                viewedAt = viewedAt,
-                expiresAt = expiresAt(m.sentAt, viewedAt),
-                content = m.content,
-                mediaRef = if (hasAtt) m.attachment.id else null,
-                contentKey = if (hasAtt && !m.attachment.contentKey.isEmpty) m.attachment.contentKey.toByteArray().toBase64() else null,
-                nonce = if (hasAtt && !m.attachment.nonce.isEmpty) m.attachment.nonce.toByteArray().toBase64() else null,
-                mediaType = if (hasAtt) m.attachment.mediaType.ifEmpty { null } else null,
-                caption = m.caption.ifEmpty { null },
-                captionMeta = m.captionMeta.ifEmpty { null },
-                displayDuration = m.displayDurationSecs,
-                undelivered = false,
-            )
-        }
-        val stories = snapshot.storiesList.mapNotNull { s ->
-            if (s.id.isBlank()) return@mapNotNull null
-            val hasAtt = s.hasAttachment() && s.attachment.id.isNotBlank()
-            StoryItemData(
-                id = s.id,
-                authorUserId = s.authorUserId,
-                sentAt = s.sentAt,
-                expiresAt = s.sentAt + STORY_MAX_AGE_MS,
-                content = s.content,
-                mediaRef = if (hasAtt) s.attachment.id else null,
-                contentKey = if (hasAtt && !s.attachment.contentKey.isEmpty) s.attachment.contentKey.toByteArray().toBase64() else null,
-                nonce = if (hasAtt && !s.attachment.nonce.isEmpty) s.attachment.nonce.toByteArray().toBase64() else null,
-                mediaType = if (hasAtt) s.attachment.mediaType.ifEmpty { null } else null,
-                captionMeta = s.captionMeta.ifEmpty { null },
-                undelivered = false,
-            )
-        }
-        val profiles = snapshot.profilesList.mapNotNull { p ->
-            if (p.userId.isBlank()) return@mapNotNull null
-            ProfileItemData(
-                userId = p.userId,
-                authorDeviceId = p.authorDeviceId,
-                updatedAt = p.updatedAt,
-                displayName = p.displayName,
-                bio = p.bio,
-                undelivered = false,
-            )
-        }
-        content.importSnapshot(messages, stories, profiles)
-    }
-
     /** Primary only: approve the device showing [code] by sending it the account identity, friends and history. */
     suspend fun approveLink(code: String) {
         val self = requirePrimary()
@@ -314,7 +251,7 @@ class ObscuraClient(
             .setPrimaryDeviceId(self.deviceId)
             .setFriendListVersion(friendList.version)
             .addAllFriends(friendList.friends.map(WireCodec::encodeFriend))
-        exportHistory()?.let { bundle.setHistory(it) }
+        HistorySync.uploadHistorySnapshot(content, ::uploadAttachment)?.let { bundle.setHistory(it) }
         val envelope = LinkCrypto.seal(bundle.build().toByteArray(), LinkCrypto.publicKey(link))
         try {
             api.approveLinkSession(link.sessionId, envelope.toByteArray())
@@ -322,78 +259,6 @@ class ObscuraClient(
             if (e.status == 404) throw ObscuraError.LinkFailed("Link session expired or unknown", e)
             throw e
         }
-    }
-
-    /** The whole content store as an encrypted attachment; null when it is empty. */
-    private suspend fun exportHistory(): HistorySnapshot? {
-        val messages = content.getMessages()
-        val stories = content.getAllStories()
-        val profiles = content.getProfiles()
-        if (messages.isEmpty() && stories.isEmpty() && profiles.isEmpty()) return null
-        val snapshot = EntrySnapshot.newBuilder()
-            .addAllMessages(messages.map { m ->
-                StoredMessageRecord.newBuilder()
-                    .setId(m.id)
-                    .setPeerUserId(m.peerUserId)
-                    .setKind(m.kind)
-                    .setAuthorUserId(m.authorUserId)
-                    .setSentAt(m.sentAt)
-                    .setViewedAt(m.viewedAt ?: 0L)
-                    .setContent(m.content)
-                    .setCaption(m.caption ?: "")
-                    .setCaptionMeta(m.captionMeta ?: "")
-                    .setDisplayDurationSecs(m.displayDuration)
-                    .apply {
-                        if (!m.mediaRef.isNullOrBlank()) {
-                            setAttachment(
-                                AttachmentPointer.newBuilder()
-                                    .setId(m.mediaRef)
-                                    .setContentKey(ByteString.copyFrom(m.contentKey?.fromBase64() ?: ByteArray(0)))
-                                    .setNonce(ByteString.copyFrom(m.nonce?.fromBase64() ?: ByteArray(0)))
-                                    .setMediaType(m.mediaType ?: "")
-                                    .build(),
-                            )
-                        }
-                    }
-                    .build()
-            })
-            .addAllStories(stories.map { s ->
-                StoredStoryRecord.newBuilder()
-                    .setId(s.id)
-                    .setAuthorUserId(s.authorUserId)
-                    .setSentAt(s.sentAt)
-                    .setContent(s.content)
-                    .setCaptionMeta(s.captionMeta ?: "")
-                    .apply {
-                        if (!s.mediaRef.isNullOrBlank()) {
-                            setAttachment(
-                                AttachmentPointer.newBuilder()
-                                    .setId(s.mediaRef)
-                                    .setContentKey(ByteString.copyFrom(s.contentKey?.fromBase64() ?: ByteArray(0)))
-                                    .setNonce(ByteString.copyFrom(s.nonce?.fromBase64() ?: ByteArray(0)))
-                                    .setMediaType(s.mediaType ?: "")
-                                    .build(),
-                            )
-                        }
-                    }
-                    .build()
-            })
-            .addAllProfiles(profiles.map { p ->
-                StoredProfileRecord.newBuilder()
-                    .setUserId(p.userId)
-                    .setAuthorDeviceId(p.authorDeviceId)
-                    .setUpdatedAt(p.updatedAt)
-                    .setDisplayName(p.displayName)
-                    .setBio(p.bio)
-                    .build()
-            })
-            .build()
-        val upload = uploadAttachment(snapshot.toByteArray())
-        return HistorySnapshot.newBuilder()
-            .setAttachmentId(upload.id)
-            .setContentKey(ByteString.copyFrom(upload.contentKey))
-            .setNonce(ByteString.copyFrom(upload.nonce))
-            .build()
     }
 
     /** The account's devices. */
@@ -701,7 +566,7 @@ class ObscuraClient(
                     Stored(message)
                 } else {
                     content.insertConversationInTransaction(
-                        ConversationItemData(
+                        ConversationItem(
                             id = dm.id,
                             peerUserId = peer,
                             kind = "message",
@@ -726,7 +591,7 @@ class ObscuraClient(
                     Stored(message)
                 } else {
                     content.insertConversationInTransaction(
-                        ConversationItemData(
+                        ConversationItem(
                             id = pix.id,
                             peerUserId = peer,
                             kind = "pix",
@@ -735,10 +600,12 @@ class ObscuraClient(
                             viewedAt = null,
                             expiresAt = expiresAt(sentAt, null),
                             content = "",
-                            mediaRef = att.id,
-                            contentKey = att.contentKey.toByteArray().toBase64(),
-                            nonce = att.nonce.toByteArray().toBase64(),
-                            mediaType = att.mediaType.ifEmpty { null },
+                            attachment = MediaAttachment(
+                                id = att.id,
+                                contentKey = att.contentKey.toByteArray(),
+                                nonce = att.nonce.toByteArray(),
+                                mediaType = att.mediaType,
+                            ),
                             caption = pix.caption.ifEmpty { null },
                             captionMeta = pix.captionMeta.ifEmpty { null },
                             displayDuration = pix.displayDurationSecs,
@@ -772,18 +639,15 @@ class ObscuraClient(
                 } else if (!content.canInsertStoryInTransaction(st.id)) {
                     Stored(message)
                 } else {
-                    val att = st.attachment.takeIf { st.hasAttachment() && it.id.isNotBlank() }
+                    val att = if (st.hasAttachment()) HistorySync.decodeAttachment(st.attachment) else null
                     content.insertStoryInTransaction(
-                        StoryItemData(
+                        StoryItem(
                             id = st.id,
                             authorUserId = senderUserId,
                             sentAt = sentAt,
                             expiresAt = sentAt + STORY_MAX_AGE_MS,
                             content = st.content,
-                            mediaRef = att?.id,
-                            contentKey = att?.contentKey?.takeUnless { it.isEmpty }?.toByteArray()?.toBase64(),
-                            nonce = att?.nonce?.takeUnless { it.isEmpty }?.toByteArray()?.toBase64(),
-                            mediaType = att?.mediaType?.ifEmpty { null },
+                            attachment = att,
                             captionMeta = st.captionMeta.ifEmpty { null },
                         ),
                     )
@@ -793,7 +657,7 @@ class ObscuraClient(
             ClientMessage.PayloadCase.PROFILE -> {
                 val pr = message.profile
                 val updated = content.upsertProfileIfNewerInTransaction(
-                    ProfileItemData(
+                    ProfileItem(
                         userId = senderUserId,
                         authorDeviceId = senderDeviceId,
                         updatedAt = sentAt,
@@ -934,7 +798,7 @@ class ObscuraClient(
         api.registerPushToken(token)
     }
 
-    suspend fun getMessages(): List<ConversationItemData> = content.getMessages()
+    suspend fun getMessages(): List<ConversationItem> = content.getMessages()
 
     suspend fun sendMessage(peerUserId: String, content: String): String {
         if (peerUserId.isBlank()) throw ObscuraError.InvalidArgument("peerUserId must not be blank")
@@ -942,7 +806,7 @@ class ObscuraClient(
         val sentAt = System.currentTimeMillis()
         val id = generateEntryId("dm", sentAt)
         this.content.putConversation(
-            ConversationItemData(
+            ConversationItem(
                 id = id,
                 peerUserId = peerUserId,
                 kind = "message",
@@ -998,7 +862,7 @@ class ObscuraClient(
         val self = requireFreshToken()
         val sentAt = System.currentTimeMillis()
         val id = generateEntryId("pix", sentAt)
-        val item = ConversationItemData(
+        val item = ConversationItem(
             id = id,
             peerUserId = peerUserId,
             kind = "pix",
@@ -1007,16 +871,18 @@ class ObscuraClient(
             viewedAt = null,
             expiresAt = expiresAt(sentAt, null),
             content = "",
-            mediaRef = mediaRef,
-            contentKey = contentKey,
-            nonce = nonce,
-            mediaType = mediaType.ifEmpty { null },
+            attachment = MediaAttachment(
+                id = mediaRef,
+                contentKey = keyBytes,
+                nonce = nonceBytes,
+                mediaType = mediaType,
+            ),
             caption = caption.ifEmpty { null },
             captionMeta = captionMeta?.ifEmpty { null },
             displayDuration = displayDuration,
         )
         content.putConversation(item)
-        val message = buildPixClientMessage(item, keyBytes, nonceBytes)
+        val message = buildPixClientMessage(item)
         val peers = acceptedFriendIds(self.userId).intersect(setOf(peerUserId)).toList()
         val report = sendToPeersAndSelf(self.userId, peers, message)
         if (peers.isEmpty() || report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
@@ -1046,7 +912,7 @@ class ObscuraClient(
         sendToPeersAndSelf(self.userId, peers, message)
     }
 
-    suspend fun getStories(now: Long = System.currentTimeMillis()): List<StoryItemData> = content.getStories(now)
+    suspend fun getStories(now: Long = System.currentTimeMillis()): List<StoryItem> = content.getStories(now)
 
     suspend fun postStory(
         content: String,
@@ -1056,32 +922,32 @@ class ObscuraClient(
         mediaType: String?,
         captionMeta: String?,
     ): String {
-        val hasMedia = !mediaRef.isNullOrBlank()
-        val keyBytes = if (hasMedia) {
+        val attachment = if (!mediaRef.isNullOrBlank()) {
             if (contentKey.isNullOrBlank()) throw ObscuraError.InvalidArgument("story contentKey must not be blank when mediaRef is set")
-            try { contentKey.fromBase64() } catch (e: Exception) { throw ObscuraError.InvalidArgument("Invalid base64 contentKey: ${e.message}") }
-        } else null
-        val nonceBytes = if (hasMedia) {
+            val keyBytes = try { contentKey.fromBase64() } catch (e: Exception) { throw ObscuraError.InvalidArgument("Invalid base64 contentKey: ${e.message}") }
             if (nonce.isNullOrBlank()) throw ObscuraError.InvalidArgument("story nonce must not be blank when mediaRef is set")
-            try { nonce.fromBase64() } catch (e: Exception) { throw ObscuraError.InvalidArgument("Invalid base64 nonce: ${e.message}") }
+            val nonceBytes = try { nonce.fromBase64() } catch (e: Exception) { throw ObscuraError.InvalidArgument("Invalid base64 nonce: ${e.message}") }
+            MediaAttachment(
+                id = mediaRef,
+                contentKey = keyBytes,
+                nonce = nonceBytes,
+                mediaType = mediaType ?: "",
+            )
         } else null
         val self = requireFreshToken()
         val sentAt = System.currentTimeMillis()
         val id = generateEntryId("story", sentAt)
-        val item = StoryItemData(
+        val item = StoryItem(
             id = id,
             authorUserId = self.userId,
             sentAt = sentAt,
             expiresAt = sentAt + STORY_MAX_AGE_MS,
             content = content,
-            mediaRef = mediaRef?.takeIf { it.isNotBlank() },
-            contentKey = if (hasMedia) contentKey else null,
-            nonce = if (hasMedia) nonce else null,
-            mediaType = if (hasMedia) mediaType?.ifEmpty { null } else null,
+            attachment = attachment,
             captionMeta = captionMeta?.ifEmpty { null },
         )
         this.content.putStory(item)
-        val message = buildStoryClientMessage(item, keyBytes, nonceBytes)
+        val message = buildStoryClientMessage(item)
         val peers = acceptedFriendIds(self.userId).toList()
         val report = sendToPeersAndSelf(self.userId, peers, message)
         if (peers.isNotEmpty() && report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
@@ -1091,13 +957,13 @@ class ObscuraClient(
         return id
     }
 
-    suspend fun getProfiles(): List<ProfileItemData> = content.getProfiles()
+    suspend fun getProfiles(): List<ProfileItem> = content.getProfiles()
 
     suspend fun updateProfile(displayName: String, bio: String) {
         val self = requireFreshToken()
         val existing = content.getProfile(self.userId)
         val sentAt = maxOf(System.currentTimeMillis(), (existing?.updatedAt ?: 0L) + 1L)
-        val item = ProfileItemData(
+        val item = ProfileItem(
             userId = self.userId,
             authorDeviceId = self.deviceId,
             updatedAt = sentAt,
@@ -1122,9 +988,8 @@ class ObscuraClient(
             val peers = accepted.intersect(setOf(row.peerUserId)).toList()
             if (peers.isEmpty()) continue
             val message = if (row.kind == "pix") {
-                val keyBytes = row.contentKey?.let { runCatching { it.fromBase64() }.getOrNull() } ?: continue
-                val nonceBytes = row.nonce?.let { runCatching { it.fromBase64() }.getOrNull() } ?: continue
-                buildPixClientMessage(row, keyBytes, nonceBytes)
+                if (row.attachment == null) continue
+                buildPixClientMessage(row)
             } else {
                 ClientMessage.newBuilder()
                     .setTimestamp(row.sentAt)
@@ -1144,11 +1009,7 @@ class ObscuraClient(
         }
         for (row in content.getUndeliveredStories()) {
             val peers = accepted.toList()
-            val hasMedia = !row.mediaRef.isNullOrBlank()
-            val keyBytes = if (hasMedia) row.contentKey?.let { runCatching { it.fromBase64() }.getOrNull() } else null
-            val nonceBytes = if (hasMedia) row.nonce?.let { runCatching { it.fromBase64() }.getOrNull() } else null
-            if (hasMedia && (keyBytes == null || nonceBytes == null)) continue
-            val message = buildStoryClientMessage(row, keyBytes, nonceBytes)
+            val message = buildStoryClientMessage(row)
             val report = sendToPeersAndSelf(self.userId, peers, message)
             if (peers.isEmpty() || report.recipients.any { it.status == SubmissionStatus.ACCEPTED }) {
                 content.setStoryUndelivered(row.id, false)
@@ -1167,7 +1028,15 @@ class ObscuraClient(
         return delivered
     }
 
-    suspend fun sweepExpired(now: Long = System.currentTimeMillis()): SweepOutcome = content.sweepExpired(now)
+    suspend fun sweepExpired(now: Long = System.currentTimeMillis()): Set<String> {
+        val outcome = content.sweepExpired(now)
+        attachmentCacheDir?.let { dir ->
+            for (mediaRef in outcome.purgedMediaRefs) {
+                AttachmentCrypto.purgeCached(dir, mediaRef)
+            }
+        }
+        return outcome.touchedModels.toSet()
+    }
 
     private suspend fun acceptedFriendIds(selfUserId: String): Set<String> =
         friends.getAll().asSequence().filter { it.status == FriendStatus.ACCEPTED && it.userId != selfUserId }.map { it.userId }.toSet()
@@ -1189,28 +1058,21 @@ class ObscuraClient(
         return "${prefix}_${now}_$token"
     }
 
-    private fun buildPixClientMessage(item: ConversationItemData, keyBytes: ByteArray, nonceBytes: ByteArray): ClientMessage =
+    private fun buildPixClientMessage(item: ConversationItem): ClientMessage =
         ClientMessage.newBuilder()
             .setTimestamp(item.sentAt)
             .setPix(
                 PixMessage.newBuilder()
                     .setId(item.id)
                     .setPeerUserId(item.peerUserId)
-                    .setAttachment(
-                        AttachmentPointer.newBuilder()
-                            .setId(item.mediaRef ?: "")
-                            .setContentKey(ByteString.copyFrom(keyBytes))
-                            .setNonce(ByteString.copyFrom(nonceBytes))
-                            .setMediaType(item.mediaType ?: "")
-                            .build(),
-                    )
+                    .apply { item.attachment?.let { setAttachment(HistorySync.encodeAttachment(it)) } }
                     .setCaption(item.caption ?: "")
                     .setCaptionMeta(item.captionMeta ?: "")
                     .setDisplayDurationSecs(item.displayDuration.coerceAtLeast(0)),
             )
             .build()
 
-    private fun buildStoryClientMessage(item: StoryItemData, keyBytes: ByteArray?, nonceBytes: ByteArray?): ClientMessage =
+    private fun buildStoryClientMessage(item: StoryItem): ClientMessage =
         ClientMessage.newBuilder()
             .setTimestamp(item.sentAt)
             .setStory(
@@ -1218,22 +1080,11 @@ class ObscuraClient(
                     .setId(item.id)
                     .setContent(item.content)
                     .setCaptionMeta(item.captionMeta ?: "")
-                    .apply {
-                        if (!item.mediaRef.isNullOrBlank() && keyBytes != null && nonceBytes != null) {
-                            setAttachment(
-                                AttachmentPointer.newBuilder()
-                                    .setId(item.mediaRef)
-                                    .setContentKey(ByteString.copyFrom(keyBytes))
-                                    .setNonce(ByteString.copyFrom(nonceBytes))
-                                    .setMediaType(item.mediaType ?: "")
-                                    .build(),
-                            )
-                        }
-                    },
+                    .apply { item.attachment?.let { setAttachment(HistorySync.encodeAttachment(it)) } },
             )
             .build()
 
-    private fun buildProfileClientMessage(item: ProfileItemData): ClientMessage =
+    private fun buildProfileClientMessage(item: ProfileItem): ClientMessage =
         ClientMessage.newBuilder()
             .setTimestamp(item.updatedAt)
             .setProfile(
@@ -1242,6 +1093,25 @@ class ObscuraClient(
                     .setBio(item.bio),
             )
             .build()
+
+    private fun requireUserId(): String = auth.requireCredentials().userId
+
+    private fun typingConvId(userA: String, userB: String): String =
+        if (userA <= userB) "${userA}_$userB" else "${userB}_$userA"
+
+    /** 1:1 convenience wrapper around [sendTyping]. */
+    suspend fun sendTyping(peerUserId: String, state: TypingState) {
+        if (peerUserId.isBlank()) throw ObscuraError.InvalidArgument("peerUserId must not be blank")
+        val selfId = requireUserId()
+        sendTyping(listOf(peerUserId), typingConvId(selfId, peerUserId), state)
+    }
+
+    /** 1:1 convenience wrapper around [observeTyping]. */
+    fun observePeerTyping(peerUserId: String): Flow<Boolean> {
+        if (peerUserId.isBlank()) throw ObscuraError.InvalidArgument("peerUserId must not be blank")
+        val selfId = requireUserId()
+        return observeTyping(typingConvId(selfId, peerUserId)).map { it.contains(peerUserId) }
+    }
 
     /** Throttled per (context, state). A recipient that cannot be reached is logged and skipped. */
     suspend fun sendTyping(recipientUserIds: List<String>, contextId: String, state: TypingState) {
@@ -1277,9 +1147,32 @@ class ObscuraClient(
         return AttachmentUpload(api.uploadAttachment(encrypted.ciphertext), encrypted.contentKey, encrypted.nonce)
     }
 
+    suspend fun uploadAttachmentFile(file: File): AttachmentUpload =
+        uploadAttachment(withContext(Dispatchers.IO) { file.readBytes() })
+
     suspend fun downloadDecryptedAttachment(id: String, contentKey: ByteArray, nonce: ByteArray): ByteArray {
         requireFreshToken()
         return AttachmentCrypto.decrypt(api.fetchAttachment(id), contentKey, nonce)
+    }
+
+    suspend fun downloadAttachmentToCache(id: String, contentKeyBase64: String, nonceBase64: String): File {
+        val dir = attachmentCacheDir ?: throw ObscuraError.InvalidArgument("attachmentCacheDir is not configured")
+        withContext(Dispatchers.IO) {
+            dir.mkdirs()
+            AttachmentCrypto.readCached(dir, id)
+        }?.let { return it }
+        val keyBytes = try {
+            contentKeyBase64.fromBase64()
+        } catch (e: Exception) {
+            throw ObscuraError.InvalidArgument("Invalid base64 contentKey: ${e.message}")
+        }
+        val nonceBytes = try {
+            nonceBase64.fromBase64()
+        } catch (e: Exception) {
+            throw ObscuraError.InvalidArgument("Invalid base64 nonce: ${e.message}")
+        }
+        val data = downloadDecryptedAttachment(id, keyBytes, nonceBytes)
+        return withContext(Dispatchers.IO) { AttachmentCrypto.writeCached(dir, id, data) }
     }
 
     fun friendCode(): String {
