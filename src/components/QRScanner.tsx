@@ -2,6 +2,7 @@ import React, { useCallback, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Camera, useCameraDevice, useCodeScanner, type Code } from 'react-native-vision-camera';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CloseIcon } from './icons';
 import { CameraPermissionGate } from './CameraPermissionGate';
 import { parseQR, type QRKind } from '../domain/qr';
@@ -17,6 +18,7 @@ interface QRScannerProps {
 export function QRScanner({ kind, hint, onCode }: QRScannerProps) {
   const nav = useNavigation();
   const isFocused = useIsFocused();
+  const insets = useSafeAreaInsets();
   const device = useCameraDevice('back');
   const handled = useRef(false); // onCodeScanned keeps firing
 
@@ -47,7 +49,7 @@ export function QRScanner({ kind, hint, onCode }: QRScannerProps) {
             <View style={ss.frame} />
             <Text style={ss.hint}>{hint}</Text>
           </View>
-          <TouchableOpacity style={ss.close} onPress={() => nav.goBack()}>
+          <TouchableOpacity style={[ss.close, { top: insets.top + 12 }]} onPress={() => nav.goBack()}>
             <CloseIcon size={22} color="#fff" />
           </TouchableOpacity>
         </View>

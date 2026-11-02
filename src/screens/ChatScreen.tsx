@@ -59,6 +59,8 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const allPix = useModelEntries('pix');
   const [text, setText] = useState('');
   const [peerTyping, setPeerTyping] = useState(false);
+  const listRef = useRef<FlatList<TimelineItem>>(null);
+  const prevCountRef = useRef(0);
   const convId = conversationId(myUserId, friend.userId);
 
   const messages = useMemo(() => conversationEntries(allMessages, convId), [allMessages, convId]);
@@ -159,6 +161,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
         keyboardVerticalOffset={headerHeight}
       >
         <FlatList
+          ref={listRef}
           data={timeline}
           keyExtractor={(item) => item.id}
           style={cs.messageList}
@@ -167,6 +170,12 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
           renderItem={renderItem}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={VIEWABILITY}
+          onContentSizeChange={() => {
+            if (timeline.length > prevCountRef.current) {
+              listRef.current?.scrollToEnd({ animated: prevCountRef.current > 0 });
+            }
+            prevCountRef.current = timeline.length;
+          }}
           ListFooterComponent={peerTyping ? (
             <View style={[cs.msgRow, cs.msgRowLeft]}>
               <TypingBubble />

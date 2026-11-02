@@ -41,7 +41,14 @@ export async function sendCapture(capture: Capture, recipients: readonly Friend[
       logError('send.pix:' + friend.username, e);
     }
   }
-  if (toStory) await saveEntry('story', { content: caption, ...media });
+  if (toStory) {
+    try {
+      await saveEntry('story', { content: caption, ...media });
+    } catch (e) {
+      undelivered.push('My story');
+      logError('send.story', e);
+    }
+  }
 
   for (const temp of new Set([path, resized?.path ?? path])) {
     Obscura.deleteFile(temp).catch((e) => logError('cleanup', e));

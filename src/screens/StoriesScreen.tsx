@@ -162,13 +162,16 @@ function StoryFace({
       <View style={sv.content}>
         {mediaLoading && <ActivityIndicator color={colors.text} size="large" />}
         {!mediaUri && text !== '' && <Text style={sv.contentText}>{text}</Text>}
+        {!mediaLoading && !mediaUri && text === '' && attachmentOf(story) !== null && (
+          <Text style={sv.unavailableText}>Media unavailable</Text>
+        )}
       </View>
 
       {/* Styled caption over media; entries without metadata use a plain bottom overlay. */}
       {mediaUri && text !== '' ? (
         meta
           ? <CaptionView meta={meta} text={text} width={W} height={H} />
-          : <Text style={sv.captionOverlay}>{text}</Text>
+          : <Text style={[sv.captionOverlay, { bottom: insets.bottom + 48 }]}>{text}</Text>
       ) : null}
     </Animated.View>
   );
@@ -410,7 +413,8 @@ const sv = StyleSheet.create({
   closeBtn: { padding: 8 },
   content: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   contentText: { color: '#fff', fontSize: 24, fontWeight: '600', textAlign: 'center' },
-  captionOverlay: { color: '#fff', fontSize: 18, fontWeight: '600', textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12, position: 'absolute', bottom: 80 },
+  unavailableText: { color: colors.textSecondary, fontSize: 16, textAlign: 'center' },
+  captionOverlay: { color: '#fff', fontSize: 18, fontWeight: '600', textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12, position: 'absolute', left: 16, right: 16 },
   tapZones: { ...StyleSheet.absoluteFill, flexDirection: 'row', top: 100 },
   tapLeft: { flex: 1 },
   tapRight: { flex: 2 },

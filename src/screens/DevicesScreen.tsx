@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { DeviceInfo } from '../native/ObscuraModule';
@@ -44,6 +45,7 @@ export async function confirmAndApproveLink(code: string): Promise<boolean> {
 
 export function DevicesScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const insets = useSafeAreaInsets();
   const focused = useIsFocused();
   const { isPrimary } = useSession();
   const [devices, setDevices] = useState<DeviceInfo[] | null>(null);
@@ -81,7 +83,11 @@ export function DevicesScreen() {
   const thisDevice = devices?.find((d) => d.isThisDevice);
 
   return (
-    <ScrollView style={s.container} contentContainerStyle={dv.screen} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      style={s.container}
+      contentContainerStyle={[dv.screen, { paddingBottom: insets.bottom + 24 }]}
+      keyboardShouldPersistTaps="handled"
+    >
       <Text style={dv.sectionTitle}>your devices</Text>
       {loadError !== null && <Text style={dv.error}>{loadError}</Text>}
       {devices === null && loadError === null && <Text style={dv.hint}>Loading…</Text>}

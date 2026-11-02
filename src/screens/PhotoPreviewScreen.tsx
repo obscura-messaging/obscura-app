@@ -9,6 +9,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackScreenProps, RootStackParamList } from '../navigation/types';
+import { Obscura } from '../native/ObscuraModule';
 import { colors } from '../styles';
 import { CloseIcon } from '../components/icons';
 import { clamp, touchDist } from '../utils/gesture';
@@ -18,6 +19,7 @@ import {
 } from '../components/Caption';
 import { DEFAULT_DISPLAY_SECONDS } from '../domain/pix';
 import { fileUri } from '../utils/files';
+import { logError } from '../utils/log';
 
 const TIMER_OPTIONS = [
   { label: '3s', value: 3 },
@@ -47,6 +49,23 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
   const [dragging, setDragging] = useState(false);
   const [nearDelete, setNearDelete] = useState(false);
   const nearDeleteRef = useRef(false);
+  const forwardedToPicker = useRef(false);
+
+  // Clean up the captured temp file if the user discards the preview (X button or system back).
+  useEffect(() => {
+    const unsubFocus = nav.addListener('focus', () => {
+      forwardedToPicker.current = false;
+    });
+    const unsubRemove = nav.addListener('beforeRemove', () => {
+      if (!forwardedToPicker.current) {
+        Obscura.deleteFile(path).catch((e) => logError('preview.cleanup', e));
+      }
+    });
+    return () => {
+      unsubFocus();
+      unsubRemove();
+    };
+  }, [nav, path]);
 
   // The caption's transform, animated for rendering and mirrored into refs to read at send time.
   const initialBarY = DEFAULT_BAR.y * H;
@@ -190,6 +209,7 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
   };
 
   const onChoose = () => {
+    forwardedToPicker.current = true;
     const meta = buildMeta();
     nav.navigate('RecipientPicker', {
       path,
@@ -311,7 +331,7 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
       </View>
 
       {dragging && (
-        <View style={ps.deleteZone} pointerEvents="none">
+        <View style={[ps.deleteZone, { top: insets.top + 8 }]} pointerEvents="none">
           <View style={[ps.deletePill, nearDelete && ps.deletePillActive]}>
             <Text style={ps.deleteIcon}>{'✕'}</Text>
             <Text style={ps.deleteLabel}>{nearDelete ? 'Release to delete' : 'Drag here to delete'}</Text>
@@ -332,7 +352,7 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
       )}
 
       {!keyboardUp && (
-        <View style={ps.bottom} pointerEvents="box-none">
+        <View style={[ps.bottom, { paddingBottom: insets.bottom + 24 }]} pointerEvents="box-none">
           <View style={ps.timerRow}>
             {TIMER_OPTIONS.map(opt => (
               <TouchableOpacity

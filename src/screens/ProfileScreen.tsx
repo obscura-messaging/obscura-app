@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   KeyboardAvoidingView, Platform, StyleSheet,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Obscura, type ConnectionState } from '../native/ObscuraModule';
@@ -26,12 +27,14 @@ const DEBUG_LOG_POLL_MS = 2000;
 
 export function ProfileScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const insets = useSafeAreaInsets();
   const { myUserId, myUsername, connState } = useSession();
   const identity = useIdentity();
   const profiles = useModelEntries('profile');
   const ownProfile = profiles.find((p) => p.id === profileEntryId(myUserId));
   const [displayName, setDisplayName] = useState(myUsername);
   const [bio, setBio] = useState('');
+  const [saving, setSaving] = useState(false);
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [showLog, setShowLog] = useState(false);
 
@@ -64,11 +67,15 @@ export function ProfileScreen() {
   }, [showLog]);
 
   const save = async () => {
+    if (saving) return;
+    setSaving(true);
     try {
       await saveEntry('profile', { displayName, bio }, profileEntryId(myUserId));
       toast.success('Profile updated');
     } catch (e) {
       toast.error(errorMessage(e));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -91,14 +98,18 @@ export function ProfileScreen() {
       style={s.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <ScrollView style={pf.screen} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        style={pf.screen}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={pf.sectionTitle}>edit profile</Text>
         <TextInput style={s.input} placeholder="Display name" placeholderTextColor={colors.textDim}
           value={displayName} onChangeText={onChangeDisplayName} />
         <TextInput style={s.input} placeholder="Bio" placeholderTextColor={colors.textDim}
           value={bio} onChangeText={onChangeBio} />
-        <TouchableOpacity style={pf.smallBtn} onPress={save}>
-          <Text style={pf.smallBtnText}>Save</Text>
+        <TouchableOpacity style={pf.smallBtn} onPress={save} disabled={saving}>
+          <Text style={pf.smallBtnText}>{saving ? 'Saving…' : 'Save'}</Text>
         </TouchableOpacity>
 
         {friendProfiles.length > 0 && (<>

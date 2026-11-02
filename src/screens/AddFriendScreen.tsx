@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Obscura } from '../native/ObscuraModule';
 import { toast } from '../components/Toast';
 import { CodeCard } from '../components/CodeCard';
 import { cleanCode } from '../domain/qr';
-import { useSession } from '../state/store';
+import { useSession, refreshFriends } from '../state/store';
 import { primaryOnly } from '../state/devices';
 import { errorMessage, logError } from '../utils/log';
 import type { RootStackParamList } from '../navigation/types';
@@ -14,9 +15,11 @@ import { colors } from '../styles';
 
 export function AddFriendScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const insets = useSafeAreaInsets();
   const { isPrimary } = useSession();
   const [myCode, setMyCode] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState('');
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     Obscura.getFriendCode().then(setMyCode).catch((e) => logError('getFriendCode', e));
@@ -24,16 +27,22 @@ export function AddFriendScreen() {
 
   const addByCode = async () => {
     const code = cleanCode('friend', codeInput);
-    if (!code) return;
+    if (!code || adding) return;
+    setAdding(true);
     try {
       await primaryOnly(() => Obscura.addFriendByCode(code));
+      await refreshFriends();
       setCodeInput('');
       toast.success('Friend request sent');
-    } catch (e) { toast.error(errorMessage(e)); }
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setAdding(false);
+    }
   };
 
   return (
-    <View style={afs.container}>
+    <View style={[afs.container, { paddingBottom: insets.bottom + 24 }]}>
       <CodeCard kind="friend" code={myCode} caption="Friends can scan this to add you" copiedMessage="Friend code copied" />
 
       <View style={afs.divider} />
@@ -53,8 +62,8 @@ export function AddFriendScreen() {
             autoCapitalize="none"
             autoCorrect={false}
           />
-          <TouchableOpacity style={afs.addBtn} onPress={addByCode}>
-            <Text style={afs.addBtnText}>Add</Text>
+          <TouchableOpacity style={afs.addBtn} onPress={addByCode} disabled={adding}>
+            <Text style={afs.addBtnText}>{adding ? '…' : 'Add'}</Text>
           </TouchableOpacity>
         </View>
 

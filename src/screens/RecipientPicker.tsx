@@ -51,7 +51,7 @@ export function RecipientPicker({ route }: RootStackScreenProps<'RecipientPicker
   const count = selected.size + (includeStory ? 1 : 0);
 
   return (
-    <SafeAreaView style={rp.container} edges={['top']}>
+    <SafeAreaView style={rp.container} edges={['top', 'bottom']}>
       <View style={rp.header}>
         <TouchableOpacity onPress={() => nav.goBack()} disabled={sending}>
           <Text style={rp.cancelText}>Cancel</Text>
@@ -114,7 +114,7 @@ const rp = StyleSheet.create({
   rowText: { color: colors.text, fontSize: 16, flex: 1 },
   rowHint: { color: colors.textDim, fontSize: 13 },
   empty: { color: colors.textMuted, textAlign: 'center', marginTop: 32, fontSize: 14 },
-  sendBtn: { backgroundColor: colors.accent, borderRadius: 12, padding: 14, alignItems: 'center', margin: 16, marginBottom: 40 },
+  sendBtn: { backgroundColor: colors.accent, borderRadius: 12, padding: 14, alignItems: 'center', margin: 16 },
   sendBtnDisabled: { backgroundColor: colors.surfaceMuted },
   sendBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 16 },
 });

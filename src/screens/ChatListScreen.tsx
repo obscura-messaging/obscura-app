@@ -42,9 +42,10 @@ interface PendingRowProps {
   /** Only the primary accepts; null until the session loads. */
   isPrimary: boolean | null;
   onAccept?: () => void;
+  onLongPress?: () => void;
 }
 
-function PendingRow({ friend, accepting, isPrimary, onAccept }: PendingRowProps) {
+function PendingRow({ friend, accepting, isPrimary, onAccept, onLongPress }: PendingRowProps) {
   const received = friend.status === 'pending_received';
   const actionable = received && isPrimary === true;
   const content = (
@@ -63,14 +64,15 @@ function PendingRow({ friend, accepting, isPrimary, onAccept }: PendingRowProps)
       )}
     </>
   );
-  if (!actionable) return <View style={cl.row}>{content}</View>;
+  if (!actionable && !onLongPress) return <View style={cl.row}>{content}</View>;
   return (
     <Pressable
       style={cl.row}
-      onPress={onAccept}
-      disabled={onAccept === undefined}
+      onPress={actionable ? onAccept : undefined}
+      onLongPress={onLongPress}
+      disabled={!actionable && !onLongPress}
       accessibilityRole="button"
-      accessibilityLabel={`Accept friend request from ${friend.username}`}
+      accessibilityLabel={actionable ? `Accept friend request from ${friend.username}` : friend.username}
       hitSlop={8}
     >
       {content}
@@ -110,12 +112,20 @@ export function ChatListScreen() {
 
   const confirmRemoveFriend = async (friend: Friend) => {
     if (isPrimary !== true) return;
-    const confirmed = await confirm(
-      `Remove ${friend.username}?`,
-      'You will no longer be friends with this user.',
-      'Remove',
-      true,
-    );
+    const title = friend.status === 'pending_received'
+      ? `Decline ${friend.username}?`
+      : friend.status === 'pending_sent'
+      ? `Cancel request to ${friend.username}?`
+      : `Remove ${friend.username}?`;
+    const body = friend.status === 'accepted'
+      ? 'You will no longer be friends with this user.'
+      : 'This pending friend request will be removed.';
+    const actionLabel = friend.status === 'pending_received'
+      ? 'Decline'
+      : friend.status === 'pending_sent'
+      ? 'Cancel Request'
+      : 'Remove';
+    const confirmed = await confirm(title, body, actionLabel, true);
     if (!confirmed) return;
     try {
       await primaryOnly(() => Obscura.removeFriend(friend.userId));
@@ -139,6 +149,7 @@ export function ChatListScreen() {
           accepting={acceptingUserId === f.userId}
           isPrimary={isPrimary}
           onAccept={acceptingUserId === null ? () => accept(f) : undefined}
+          onLongPress={isPrimary === true ? () => confirmRemoveFriend(f) : undefined}
         />
       ))}
 

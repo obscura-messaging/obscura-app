@@ -42,6 +42,17 @@ describe('sendCapture', () => {
     warn.mockRestore();
   });
 
+  it('reports an undelivered story, keeps it in the outbox, and still deletes temp files', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    bridge.__setUnreachable([BOB.userId, CAROL.userId]);
+
+    expect(await sendCapture(CAPTURE, [], true)).toEqual(['My story']);
+
+    expect(await Obscura.entryAll('story')).toHaveLength(1);
+    expect(bridge.__calls).toContain('deleteFile');
+    warn.mockRestore();
+  });
+
   it('does not resize a video', async () => {
     await sendCapture({ ...CAPTURE, mediaType: 'video' }, [BOB], false);
 
