@@ -16,8 +16,8 @@ import { CameraScreen } from '../screens/CameraScreen';
 import { ChatListScreen } from '../screens/ChatListScreen';
 import { ChatScreen } from '../screens/ChatScreen';
 import { PhotoPreviewScreen } from '../screens/PhotoPreviewScreen';
-import { RecipientPicker } from '../screens/RecipientPicker';
-import { StoryViewer } from '../screens/StoriesScreen';
+import { RecipientPickerScreen } from '../screens/RecipientPickerScreen';
+import { StoryViewerScreen } from '../screens/StoryViewerScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { AddFriendScreen } from '../screens/AddFriendScreen';
 import { ScanFriendScreen } from '../screens/ScanFriendScreen';
@@ -129,12 +129,12 @@ export function RootNavigator() {
           />
           <RootStack.Screen
             name="RecipientPicker"
-            component={RecipientPicker}
+            component={RecipientPickerScreen}
             options={{ presentation: 'fullScreenModal' }}
           />
           <RootStack.Screen
             name="StoryViewer"
-            component={StoryViewer}
+            component={StoryViewerScreen}
             options={{ presentation: 'fullScreenModal', animation: 'fade' }}
           />
           <RootStack.Screen

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
-import { CodeCard } from '../components/CodeCard';
-import { confirm } from '../components/confirm';
+import { CodeCard } from './CodeCard';
+import { confirm } from './confirm';
 import { linkProblem, type LinkProblem } from '../domain/devices';
 import { cancelLink, linkThisDevice, resetAccount } from '../state/login';
 import { useStore } from '../state/store';
@@ -57,9 +57,9 @@ export function LinkThisDevice({ username, password, onBack }: LinkThisDevicePro
   };
 
   return (
-    <ScrollView contentContainerStyle={lk.box}>
-      <Text style={lk.title}>Link this device</Text>
-      <Text style={lk.body}>
+    <ScrollView contentContainerStyle={styles.box}>
+      <Text style={styles.title}>Link this device</Text>
+      <Text style={styles.body}>
         {username} is already signed in on another device. On your primary device, open Profile → Devices and scan
         this code.
       </Text>
@@ -67,28 +67,28 @@ export function LinkThisDevice({ username, password, onBack }: LinkThisDevicePro
       {phase.kind === 'waiting' && (
         <CodeCard kind="link" code={phase.code} caption="Waiting for approval…" copiedMessage="Link code copied" />
       )}
-      {phase.kind === 'starting' && <Text style={lk.status}>Creating a link code…</Text>}
-      {phase.kind === 'resetting' && <Text style={lk.status}>Resetting account…</Text>}
-      {phase.kind === 'expired' && <Text style={lk.error}>The code expired or could not be used.</Text>}
-      {phase.kind === 'failed' && <Text style={lk.error}>{phase.message}</Text>}
+      {phase.kind === 'starting' && <Text style={styles.status}>Creating a link code…</Text>}
+      {phase.kind === 'resetting' && <Text style={styles.status}>Resetting account…</Text>}
+      {phase.kind === 'expired' && <Text style={styles.error}>The code expired or could not be used.</Text>}
+      {phase.kind === 'failed' && <Text style={styles.error}>{phase.message}</Text>}
 
       {(phase.kind === 'expired' || phase.kind === 'failed') && (
-        <TouchableOpacity style={[s.primaryBtn, lk.stretch]} onPress={start}>
+        <TouchableOpacity style={[s.primaryBtn, styles.stretch]} onPress={start}>
           <Text style={s.primaryBtnText}>Try again</Text>
         </TouchableOpacity>
       )}
 
-      <TouchableOpacity style={[s.secondaryBtn, lk.stretch, lk.backBtn]} onPress={onBack}>
+      <TouchableOpacity style={[s.secondaryBtn, styles.stretch, styles.backBtn]} onPress={onBack}>
         <Text style={s.secondaryBtnText}>Back</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={lk.resetBtn} onPress={reset} disabled={phase.kind === 'starting' || phase.kind === 'resetting'}>
-        <Text style={lk.resetText}>Lost your primary device? Reset account</Text>
+      <TouchableOpacity style={styles.resetBtn} onPress={reset} disabled={phase.kind === 'starting' || phase.kind === 'resetting'}>
+        <Text style={styles.resetText}>Lost your primary device? Reset account</Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
-const lk = StyleSheet.create({
+const styles = StyleSheet.create({
   box: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   title: { color: colors.text, fontSize: 22, fontWeight: '700', marginBottom: 8 },
   body: { color: colors.textSecondary, fontSize: 14, textAlign: 'center', marginBottom: 8 },

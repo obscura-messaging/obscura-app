@@ -1,44 +1,24 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  View, Text, TouchableOpacity, ScrollView, StyleSheet,
+  View, Text, TouchableOpacity, StyleSheet,
   Animated, Easing, Image, ActivityIndicator, useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Video from 'react-native-video';
-import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { CaptionView, parseCaptionMeta } from '../components/Caption';
 import { CloseIcon } from '../components/icons';
 import { Avatar } from '../components/Avatar';
-import { displayMs } from '../domain/pix';
+import { attachmentOf, displayMs, type Attachment } from '../domain/pix';
 import { storyGroups, type StoryGroup } from '../domain/stories';
 import { stepViewer } from '../domain/viewer';
-import { attachmentOf, loadAttachmentUri, type Attachment } from '../state/sendMedia';
+import { loadAttachmentUri } from '../state/sendMedia';
 import { useIdentity, useModelEntries, markSeen } from '../state/store';
 import { timeAgo } from '../utils/format';
 import { logError } from '../utils/log';
-import type { RootStackParamList, RootStackScreenProps, ViewerEntry } from '../navigation/types';
+import type { RootStackScreenProps, ViewerEntry } from '../navigation/types';
 import { colors } from '../styles';
 
-function StoryCircle({ label, username, empty, onPress }: {
-  label: string; username: string; empty: boolean; onPress: () => void;
-}) {
-  return (
-    <TouchableOpacity style={sc.container} onPress={onPress}>
-      <View style={sc.ringWrap}>
-        <View style={[sc.ring, empty && sc.ringEmpty]}>
-          <Avatar name={username} size={54} background={colors.surface} color={colors.text} />
-        </View>
-        {empty && <View style={sc.addBadge}><Text style={sc.addBadgeText}>+</Text></View>}
-      </View>
-      <Text style={sc.username} numberOfLines={1}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
-// ─── Cube transition between groups ──────────────────────
-
-/** How long one turn of the cube takes. */
+/** How long one turn of the 3D cube transition takes. */
 const CUBE_MS = 300;
 /** Perspective distance as a multiple of the screen width. Larger is flatter. */
 const CUBE_PERSPECTIVE = 2;
@@ -64,8 +44,6 @@ function cubeFace(width: number, angle: Animated.AnimatedInterpolation<string>) 
 interface Face { group: StoryGroup<ViewerEntry>; storyIdx: number; mediaUri: string | null }
 interface Transition { outgoing: Face; direction: 1 | -1 }
 
-// ─── Story Face (one group's current story, full screen) ──
-
 interface StoryFaceProps {
   group: StoryGroup<ViewerEntry>;
   storyIdx: number;
@@ -90,8 +68,7 @@ function StoryFace({
   const meta = parseCaptionMeta(story.data.captionMeta);
 
   return (
-    <Animated.View style={[sv.face, style]}>
-      {/* Background media (if any) */}
+    <Animated.View style={[styles.face, style]}>
       {mediaUri && (isVideo ? (
         <Video
           source={{ uri: mediaUri, type: 'mp4' }}
@@ -105,18 +82,15 @@ function StoryFace({
         <Image source={{ uri: mediaUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
       ))}
 
-      {/* Progress bars — only the currently-playing segment is Animated.
-          Past/future segments are plain Views with explicit widths because
-          React Native won't reset a previously-applied animated `width`
-          when you switch to a style object that omits the property. */}
-      <View style={[sv.progressRow, { paddingTop: insets.top + 8 }]}>
+      {/* Progress bars — only the currently-playing segment is Animated. */}
+      <View style={[styles.progressRow, { paddingTop: insets.top + 8 }]}>
         {group.stories.map((_, i) => (
-          <View key={i} style={sv.progressTrack}>
+          <View key={i} style={styles.progressTrack}>
             {i < storyIdx || (i === storyIdx && progress === null) ? (
-              <View style={[sv.progressFill, sv.progressFillFull]} />
+              <View style={[styles.progressFill, styles.progressFillFull]} />
             ) : i === storyIdx && progress !== null ? (
               <Animated.View style={[
-                sv.progressFill,
+                styles.progressFill,
                 { width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) },
               ]} />
             ) : null}
@@ -124,37 +98,34 @@ function StoryFace({
         ))}
       </View>
 
-      {/* Header */}
-      <View style={sv.header}>
+      <View style={styles.header}>
         <Avatar name={group.username} size={32} background={colors.surfaceMuted} color={colors.text} />
-        <Text style={sv.headerName}>{group.username}</Text>
-        <Text style={sv.headerTime}>{timeAgo(story.sentAt)}</Text>
-        <TouchableOpacity onPress={onClose} disabled={!onClose} style={sv.closeBtn}>
+        <Text style={styles.headerName}>{group.username}</Text>
+        <Text style={styles.headerTime}>{timeAgo(story.sentAt)}</Text>
+        <TouchableOpacity onPress={onClose} disabled={!onClose} style={styles.closeBtn}>
           <CloseIcon size={22} color={colors.text} />
         </TouchableOpacity>
       </View>
 
-      {/* Text-only content (no media) — centered */}
-      <View style={sv.content}>
+      <View style={styles.content}>
         {mediaLoading && <ActivityIndicator color={colors.text} size="large" />}
-        {!mediaUri && text !== '' && <Text style={sv.contentText}>{text}</Text>}
+        {!mediaUri && text !== '' && <Text style={styles.contentText}>{text}</Text>}
         {!mediaLoading && !mediaUri && text === '' && attachmentOf(story) !== null && (
-          <Text style={sv.unavailableText}>Media unavailable</Text>
+          <Text style={styles.unavailableText}>Media unavailable</Text>
         )}
       </View>
 
-      {/* Styled caption over media; entries without metadata use a plain bottom overlay. */}
       {mediaUri && text !== '' ? (
         meta
           ? <CaptionView meta={meta} text={text} width={W} height={H} />
-          : <Text style={[sv.captionOverlay, { bottom: insets.bottom + 48 }]}>{text}</Text>
+          : <Text style={[styles.captionOverlay, { bottom: insets.bottom + 48 }]}>{text}</Text>
       ) : null}
     </Animated.View>
   );
 }
 
 /** Full-screen viewer for live stories (`mode: 'stories'`) and view-once pix (`mode: 'pix'`). */
-export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryViewer'>) {
+export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'StoryViewer'>) {
   const params = route.params;
   const markViewed = params.mode === 'pix';
   const identity = useIdentity();
@@ -184,12 +155,10 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
   const [storyIdx, setStoryIdx] = useState(0);
   const [mediaUri, setMediaUri] = useState<string | null>(null);
   const [mediaLoading, setMediaLoading] = useState(false);
-  // Set while the cube turns from one group to the next; taps and timers wait for it to land.
   const [transition, setTransition] = useState<Transition | null>(null);
   const { width: W } = useWindowDimensions();
   const progress = useRef(new Animated.Value(0)).current;
   const cube = useRef(new Animated.Value(0)).current;
-  // Decrypted media URIs by mediaRef, so a prefetched or already-shown face appears at once.
   const mediaUris = useRef(new Map<string, string>()).current;
 
   const group = groups[groupIdx];
@@ -206,11 +175,8 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
     markSeen('pix', story).catch((e) => logError('seen.pix:' + story.id, e));
   }, [markViewed, story]);
 
-  // Every way out of the screen sends the receipt.
   useEffect(() => navigation.addListener('beforeRemove', markCurrentViewed), [navigation, markCurrentViewed]);
 
-  // Turn the cube to another group: the current face is frozen as it is and turns away while the
-  // new group's first story turns in behind it.
   const turnTo = useCallback((nextGroupIdx: number, direction: 1 | -1) => {
     if (!group) return;
     setTransition({ outgoing: { group, storyIdx, mediaUri }, direction });
@@ -227,7 +193,7 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
   const applyStep = useCallback((action: 'advance' | 'rewind') => {
     if (!group || transition) return;
     if (action === 'advance') markCurrentViewed();
-    const step = stepViewer({ groupIdx, storyIdx }, groupLengths, action, !!markViewed);
+    const step = stepViewer({ groupIdx, storyIdx }, groupLengths, action, markViewed);
     switch (step.kind) {
       case 'stay':
         return;
@@ -247,10 +213,6 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
   const advance = useCallback(() => applyStep('advance'), [applyStep]);
   const rewind = useCallback(() => applyStep('rewind'), [applyStep]);
 
-  // Resolve the attachment ref into a stable object so the load effect's
-  // dep array is honest. Without this, the effect either drops deps and
-  // gets a stale closure warning, or includes them and re-fires whenever
-  // React re-renders for any reason (sets up new fetches on every paint).
   const mediaRef = story?.data.mediaRef;
   const contentKey = story?.data.contentKey;
   const nonce = story?.data.nonce;
@@ -259,9 +221,6 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
     [mediaRef, contentKey, nonce],
   );
 
-  // Load media if the entry has an attachment — native decrypts to a cached
-  // file and returns the path, which we use as a `file://` URI. No base64
-  // payload in JS, no `data:` URI in Image. Story and pix share the shape.
   useEffect(() => {
     setMediaLoading(false);
     if (!attachment) { setMediaUri(null); return; }
@@ -283,7 +242,6 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
     return () => { cancelled = true; };
   }, [attachment, mediaUris]);
 
-  // Warm the neighbouring groups' first stories, so the face turning in already has its media.
   useEffect(() => {
     for (const neighbour of [groups[groupIdx + 1], groups[groupIdx - 1]]) {
       const att = attachmentOf(neighbour?.stories[0]);
@@ -293,56 +251,45 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
     }
   }, [groups, groupIdx, mediaUris]);
 
-  // Auto-advance timer — waits for media to load and the cube to land before starting.
-  // (Declared AFTER mediaLoading/mediaUri so the closure sees real state.)
   const hasMedia = !!story?.data.mediaRef;
-  const readyToPlay = (!hasMedia || !mediaLoading) && transition === null;
-
-  // The timer reads the latest `advance` without restarting on every render.
-  const advanceRef = useRef(advance);
-  useEffect(() => { advanceRef.current = advance; }, [advance]);
-
   const isVideo = story?.data.mediaType === 'video';
   const durationMs = displayMs(story?.data.displayDuration);
+  const readyToPlay = (!hasMedia || (!!mediaUri && !mediaLoading)) && !transition;
 
   useEffect(() => {
     progress.setValue(0);
-    // A video advances itself when it ends.
-    if (!story || !readyToPlay || isVideo) return;
-    const animation = Animated.timing(progress, { toValue: 1, duration: durationMs, useNativeDriver: false });
-    animation.start();
-    const timer = setTimeout(() => advanceRef.current(), durationMs);
-    return () => {
-      animation.stop();
-      clearTimeout(timer);
-    };
-  }, [story, groupIdx, storyIdx, readyToPlay, durationMs, progress, isVideo]);
+    if (!readyToPlay) return;
+    if (isVideo) {
+      const anim = Animated.timing(progress, {
+        toValue: 1, duration: 15000, easing: Easing.linear, useNativeDriver: false,
+      });
+      anim.start();
+      return () => anim.stop();
+    }
+    const anim = Animated.timing(progress, {
+      toValue: 1, duration: durationMs, easing: Easing.linear, useNativeDriver: false,
+    });
+    anim.start(({ finished }) => { if (finished) advance(); });
+    return () => anim.stop();
+  }, [groupIdx, storyIdx, readyToPlay, isVideo, durationMs, advance, progress]);
 
-  const forward = transition?.direction === 1;
-  const incomingAngle = useMemo(
-    () => cube.interpolate({ inputRange: [0, 1], outputRange: [forward ? '90deg' : '-90deg', '0deg'] }),
-    [cube, forward],
-  );
-  const outgoingAngle = useMemo(
-    () => cube.interpolate({ inputRange: [0, 1], outputRange: ['0deg', forward ? '-90deg' : '90deg'] }),
-    [cube, forward],
-  );
+  if (!group || !story) return <View style={styles.container} />;
 
-  if (!group || !story) return null;
+  const incomingTransform = transition ? {
+    transform: cubeFace(W, cube.interpolate({
+      inputRange: [0, 1],
+      outputRange: [transition.direction === 1 ? '90deg' : '-90deg', '0deg'],
+    })),
+  } : undefined;
+  const outgoingTransform = transition ? {
+    transform: cubeFace(W, cube.interpolate({
+      inputRange: [0, 1],
+      outputRange: ['0deg', transition.direction === 1 ? '-90deg' : '90deg'],
+    })),
+  } : undefined;
 
   return (
-    <View style={sv.container}>
-      <StoryFace
-        group={group}
-        storyIdx={storyIdx}
-        mediaUri={mediaUri}
-        mediaLoading={mediaLoading}
-        progress={progress}
-        paused={!readyToPlay}
-        onVideoEnd={() => advanceRef.current()}
-        onClose={() => navigation.goBack()}
-        style={transition ? { transform: cubeFace(W, incomingAngle) } : undefined}
-      />
+    <View style={styles.container}>
       {transition && (
         <StoryFace
           group={transition.outgoing.group}
@@ -350,59 +297,31 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
           mediaUri={transition.outgoing.mediaUri}
           mediaLoading={false}
           progress={null}
-          paused
-          style={{ transform: cubeFace(W, outgoingAngle) }}
+          paused={true}
+          style={outgoingTransform}
         />
       )}
+      <StoryFace
+        group={group}
+        storyIdx={storyIdx}
+        mediaUri={mediaUri}
+        mediaLoading={mediaLoading}
+        progress={progress}
+        paused={!readyToPlay}
+        onVideoEnd={advance}
+        onClose={() => navigation.goBack()}
+        style={incomingTransform}
+      />
 
-      <View style={sv.tapZones}>
-        <TouchableOpacity style={sv.tapLeft} onPress={rewind} activeOpacity={1} />
-        <TouchableOpacity style={sv.tapRight} onPress={advance} activeOpacity={1} />
+      <View style={styles.tapZones}>
+        <TouchableOpacity style={styles.tapLeft} onPress={rewind} activeOpacity={1} />
+        <TouchableOpacity style={styles.tapRight} onPress={advance} activeOpacity={1} />
       </View>
     </View>
   );
 }
 
-/** The horizontal row of story circles at the top of the chat list. */
-export function StoriesRow() {
-  const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const identity = useIdentity();
-  const stories = useModelEntries('story');
-  // Stories past their age are hidden until the sweep erases them.
-  const { mine, others } = useMemo(() => storyGroups(stories, identity, Date.now()), [stories, identity]);
-
-  const open = (group: typeof mine) => {
-    nav.navigate('StoryViewer', { mode: 'stories', initialUserId: group.userId });
-  };
-
-  return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={ss.circleRow}
-      contentContainerStyle={ss.circleRowContent}>
-      <StoryCircle
-        label="My story"
-        username={mine.username}
-        empty={mine.stories.length === 0}
-        // With nothing posted yet, go and take one.
-        onPress={() => (mine.stories.length === 0 ? nav.navigate('MainTabs', { screen: 'Camera' }) : open(mine))}
-      />
-      {others.map((g) => (
-        <StoryCircle key={g.userId} label={g.username} username={g.username} empty={false} onPress={() => open(g)} />
-      ))}
-    </ScrollView>
-  );
-}
-
-const sc = StyleSheet.create({
-  container: { alignItems: 'center', marginRight: 16, width: 72 },
-  ringWrap: { width: 64, height: 64 },
-  ring: { width: 64, height: 64, borderRadius: 32, borderWidth: 3, borderColor: colors.accent, justifyContent: 'center', alignItems: 'center' },
-  ringEmpty: { borderColor: colors.surfaceMuted, borderStyle: 'dashed' },
-  addBadge: { position: 'absolute', right: 0, bottom: 0, width: 20, height: 20, borderRadius: 10, backgroundColor: colors.accent, justifyContent: 'center', alignItems: 'center' },
-  addBadgeText: { color: colors.onAccent, fontWeight: '700', fontSize: 14, marginTop: -1 },
-  username: { color: '#ccc', fontSize: 11, marginTop: 4, textAlign: 'center' },
-});
-
-const sv = StyleSheet.create({
+const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000', overflow: 'hidden' },
   face: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000' },
   progressRow: { flexDirection: 'row', paddingHorizontal: 8, gap: 4 },
@@ -416,13 +335,12 @@ const sv = StyleSheet.create({
   content: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   contentText: { color: '#fff', fontSize: 24, fontWeight: '600', textAlign: 'center' },
   unavailableText: { color: colors.textSecondary, fontSize: 16, textAlign: 'center' },
-  captionOverlay: { color: '#fff', fontSize: 18, fontWeight: '600', textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12, position: 'absolute', left: 16, right: 16 },
+  captionOverlay: {
+    color: '#fff', fontSize: 18, fontWeight: '600', textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 16, paddingVertical: 8,
+    borderRadius: 12, position: 'absolute', left: 16, right: 16,
+  },
   tapZones: { ...StyleSheet.absoluteFill, flexDirection: 'row', top: 100 },
   tapLeft: { flex: 1 },
   tapRight: { flex: 2 },
-});
-
-const ss = StyleSheet.create({
-  circleRow: { flexGrow: 0, paddingTop: 8, paddingBottom: 8 },
-  circleRowContent: { paddingHorizontal: 16 },
 });

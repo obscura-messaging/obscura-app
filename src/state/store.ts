@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -8,7 +8,7 @@ import {
 import { drainInboxFully } from './drainInbox';
 import { writeEntry, flushOutbox } from './writeEntry';
 import { primaryOnly } from './devices';
-import { requestStartupPermissions } from '../application/requestStartupPermissions';
+import { requestStartupPermissions } from './permissions';
 import { getJsLog, logError } from '../utils/log';
 import type { Entry } from '../domain/merge';
 import type { ModelData, ModelName } from '../models/schema';
@@ -247,36 +247,6 @@ export function subscribeToLaunchScreen(onScreen: (screen: string) => void): () 
   return onObscuraEvent((event) => {
     if (event.type === 'launchedFrom') onScreen(event.screen);
   });
-}
-
-export function notifyTyping(friendUserId: string, convId: string): void {
-  Obscura.sendTyping([friendUserId], convId).catch((e) => logError('typing.send', e));
-}
-
-export async function sendChatMessage(convId: string, friendUserId: string, content: string): Promise<void> {
-  await Obscura.stopTyping([friendUserId], convId);
-  await saveEntry('directMessage', { conversationId: convId, content });
-}
-
-export function usePeerTyping(convId: string, friendUserId: string): boolean {
-  const [peerTyping, setPeerTyping] = useState(false);
-  useEffect(() => {
-    setPeerTyping(false);
-    const unsubscribe = onObscuraEvent((event) => {
-      if (event.type === 'messageReceived' && event.model === 'directMessage') {
-        setPeerTyping(false);
-      } else if (event.type === 'typingChanged' && event.conversationId === convId) {
-        // Anyone can signal under this id; only this conversation's friend counts.
-        setPeerTyping(event.userIds.includes(friendUserId));
-      }
-    });
-    Obscura.observeTyping(convId).catch((e) => logError('typing.observe', e));
-    return () => {
-      unsubscribe();
-      Obscura.stopObservingTyping(convId).catch((e) => logError('typing.unobserve', e));
-    };
-  }, [convId, friendUserId]);
-  return peerTyping;
 }
 
 export function applyObscuraEvent(event: ObscuraEvent): void {

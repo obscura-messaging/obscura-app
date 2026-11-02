@@ -10,9 +10,9 @@ import { Avatar } from '../components/Avatar';
 import { useAcceptedFriends } from '../state/store';
 import { sendCapture } from '../state/sendMedia';
 import type { RootStackScreenProps, RootStackParamList } from '../navigation/types';
-import { colors } from '../styles';
+import { s, colors } from '../styles';
 
-export function RecipientPicker({ route }: RootStackScreenProps<'RecipientPicker'>) {
+export function RecipientPickerScreen({ route }: RootStackScreenProps<'RecipientPicker'>) {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const friends = useAcceptedFriends();
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -51,49 +51,49 @@ export function RecipientPicker({ route }: RootStackScreenProps<'RecipientPicker
   const count = selected.size + (includeStory ? 1 : 0);
 
   return (
-    <SafeAreaView style={rp.container} edges={['top', 'bottom']}>
-      <View style={rp.header}>
+    <SafeAreaView style={s.container} edges={['top', 'bottom']}>
+      <View style={styles.header}>
         <TouchableOpacity onPress={() => nav.goBack()} disabled={sending}>
-          <Text style={rp.cancelText}>Cancel</Text>
+          <Text style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
-        <Text style={rp.title}>Send to</Text>
-        <View style={rp.headerSpacer} />
+        <Text style={styles.title}>Send to</Text>
+        <View style={styles.headerSpacer} />
       </View>
 
-      <TouchableOpacity style={rp.row} onPress={() => setIncludeStory((v) => !v)} disabled={sending}>
-        <View style={[rp.check, includeStory && rp.checkActive]}>
+      <TouchableOpacity style={styles.row} onPress={() => setIncludeStory((v) => !v)} disabled={sending}>
+        <View style={[styles.check, includeStory && styles.checkActive]}>
           {includeStory && <CheckIcon size={15} color={colors.onAccent} />}
         </View>
-        <Text style={rp.rowText}>My story</Text>
-        <Text style={rp.rowHint}>Visible to all friends</Text>
+        <Text style={styles.rowText}>My story</Text>
+        <Text style={styles.rowHint}>Visible to all friends</Text>
       </TouchableOpacity>
 
-      <Text style={rp.sectionTitle}>friends</Text>
+      <Text style={[s.sectionTitle, styles.sectionTitle]}>friends</Text>
 
       <FlatList
         data={friends}
-        keyExtractor={f => f.userId}
+        keyExtractor={(f) => f.userId}
         renderItem={({ item }) => {
           const isSelected = selected.has(item.userId);
           return (
-            <TouchableOpacity style={rp.row} onPress={() => toggle(item.userId)} disabled={sending}>
-              <View style={[rp.check, isSelected && rp.checkActive]}>
+            <TouchableOpacity style={styles.row} onPress={() => toggle(item.userId)} disabled={sending}>
+              <View style={[styles.check, isSelected && styles.checkActive]}>
                 {isSelected && <CheckIcon size={15} color={colors.onAccent} />}
               </View>
               <Avatar name={item.username} size={36} background={colors.surfaceMuted} color={colors.text} />
-              <Text style={rp.rowText}>{item.username}</Text>
+              <Text style={styles.rowText}>{item.username}</Text>
             </TouchableOpacity>
           );
         }}
-        ListEmptyComponent={<Text style={rp.empty}>No friends yet</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>No friends yet</Text>}
       />
 
       <TouchableOpacity
-        style={[rp.sendBtn, (count === 0 || sending) && rp.sendBtnDisabled]}
+        style={[s.primaryBtn, styles.sendBtn, (count === 0 || sending) && styles.sendBtnDisabled]}
         onPress={send}
         disabled={count === 0 || sending}
       >
-        <Text style={rp.sendBtnText}>
+        <Text style={s.primaryBtnText}>
           {sending ? 'Sending…' : count === 0 ? 'Select recipients' : `Send to ${count}`}
         </Text>
       </TouchableOpacity>
@@ -101,20 +101,18 @@ export function RecipientPicker({ route }: RootStackScreenProps<'RecipientPicker
   );
 }
 
-const rp = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16 },
   headerSpacer: { width: 50 },
   cancelText: { color: colors.accent, fontSize: 16 },
   title: { color: colors.text, fontSize: 18, fontWeight: '700' },
-  sectionTitle: { color: colors.textDim, fontSize: 12, fontWeight: '700', marginLeft: 16, marginTop: 16, marginBottom: 8, textTransform: 'uppercase' },
+  sectionTitle: { marginLeft: 16 },
   row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 12 },
   check: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: colors.textMuted, justifyContent: 'center', alignItems: 'center' },
   checkActive: { backgroundColor: colors.accent, borderColor: colors.accent },
   rowText: { color: colors.text, fontSize: 16, flex: 1 },
   rowHint: { color: colors.textDim, fontSize: 13 },
   empty: { color: colors.textMuted, textAlign: 'center', marginTop: 32, fontSize: 14 },
-  sendBtn: { backgroundColor: colors.accent, borderRadius: 12, padding: 14, alignItems: 'center', margin: 16 },
+  sendBtn: { margin: 16 },
   sendBtnDisabled: { backgroundColor: colors.surfaceMuted },
-  sendBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 16 },
 });

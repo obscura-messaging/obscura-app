@@ -9,7 +9,7 @@ import {
   useSession, useModelEntries, useAcceptedFriends, usePendingFriends,
   acceptFriend, removeFriend, type Friend,
 } from '../state/store';
-import { StoriesRow } from './StoriesScreen';
+import { StoriesRow } from '../components/StoriesRow';
 import { Avatar } from '../components/Avatar';
 import { confirm } from '../components/confirm';
 import { toast } from '../components/Toast';

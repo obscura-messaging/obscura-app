@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, Image, StyleSheet } from 'reac
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MIN_PASSWORD_LENGTH, credentialsProblem, logIn, register } from '../state/login';
 import { KeyboardScreen } from '../components/KeyboardScreen';
-import { LinkThisDevice } from './LinkThisDevice';
+import { LinkThisDevice } from '../components/LinkThisDevice';
 import { errorMessage } from '../utils/log';
 import { s, colors } from '../styles';
 

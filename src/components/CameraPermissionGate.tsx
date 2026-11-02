@@ -3,7 +3,7 @@ import { AppState, Linking, StyleSheet, Text, TouchableOpacity, View } from 'rea
 import {
   Camera, type CameraPermissionStatus, useCameraPermission,
 } from 'react-native-vision-camera';
-import { canPromptFor } from '../application/requestStartupPermissions';
+import { canPromptFor } from '../state/permissions';
 import { colors } from '../styles';
 
 interface CameraPermissionGateProps {

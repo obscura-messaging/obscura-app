@@ -11,10 +11,8 @@ import { conversationEntries } from '../domain/chats';
 import { conversationId } from '../domain/conversation';
 import { pixStatus } from '../domain/pix';
 import type { ScreenEntry } from '../domain/seen';
-import {
-  useSession, useModelEntries, useAcceptedFriends, markSeen,
-  usePeerTyping, notifyTyping, sendChatMessage,
-} from '../state/store';
+import { useSession, useModelEntries, useAcceptedFriends, markSeen } from '../state/store';
+import { usePeerTyping, notifyTyping, sendChatMessage } from '../state/chat';
 import { useAppActive } from '../hooks/useAppActive';
 import { errorMessage, logError } from '../utils/log';
 import type { ModelData } from '../models/schema';

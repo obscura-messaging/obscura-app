@@ -1,24 +1,12 @@
 import { Obscura, type Friend } from '../native/ObscuraModule';
 import { conversationId } from '../domain/conversation';
+import { attachmentOf, type Attachment } from '../domain/pix';
 import { fileUri } from '../utils/files';
 import { logError } from '../utils/log';
 import { saveEntry, useStore } from './store';
 
+export { attachmentOf, type Attachment };
 export type MediaType = 'photo' | 'video';
-
-export interface Attachment {
-  readonly mediaRef: string;
-  readonly contentKey: string;
-  readonly nonce: string;
-}
-
-export function attachmentOf(entry: { data: Record<string, unknown> } | undefined): Attachment | null {
-  const mediaRef = entry?.data.mediaRef;
-  const contentKey = entry?.data.contentKey;
-  const nonce = entry?.data.nonce;
-  if (typeof mediaRef !== 'string' || typeof contentKey !== 'string' || typeof nonce !== 'string') return null;
-  return { mediaRef, contentKey, nonce };
-}
 
 /**
  * Decrypt an attachment to the native cache and remember its `file://` URI by `mediaRef`. The
