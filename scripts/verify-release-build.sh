@@ -37,7 +37,7 @@ if [[ ! "${GITHUB_RUN_NUMBER:-}" =~ ^[1-9][0-9]*$ ]]; then
     echo "error: invalid release workflow run number" >&2
     exit 1
 fi
-build_number=$((1000 + GITHUB_RUN_NUMBER))
+build_number=$((1010 + GITHUB_RUN_NUMBER))
 if (( build_number > 2100000000 )); then
     echo "error: Android version code exceeds the supported limit" >&2
     exit 1
