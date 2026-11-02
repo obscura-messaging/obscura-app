@@ -1,8 +1,11 @@
-name: Internal / iOS
+name: Distribute / iOS
 
 on:
   workflow_call:
     inputs:
+      env:
+        required: true
+        type: string
       sha:
         required: true
         type: string
@@ -21,18 +24,19 @@ jobs:
     name: Signed iOS archive
     runs-on: macos-26
     timeout-minutes: 90
-    environment: ios-testflight
+    environment: ios-${{ inputs.env }}
     outputs:
       artifact_name: ${{ steps.metadata.outputs.artifact_name }}
       ipa_sha256: ${{ steps.stage.outputs.ipa_sha256 }}
       sha: ${{ steps.metadata.outputs.sha }}
     env:
+      OBSCURA_ENV: ${{ inputs.env }}
       DISTRIBUTION_REF: ${{ inputs.sha }}
       BUILD_NUMBER: ${{ inputs.build_number }}
       RELEASE_VERSION: ${{ inputs.version }}
       LIBSIGNAL_REF: 7ef4efdb85d8b2ebd77f3cf1e2b542a2115033c5
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-      APPLE_BUNDLE_ID: ${{ vars.APPLE_BUNDLE_ID }}
+      APPLE_BUNDLE_ID: ${{ inputs.env == 'prod' && 'dev.barrelmaker.obscura' || 'dev.barrelmaker.obscura.dev' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -81,7 +85,7 @@ jobs:
                       IOS_PROVISIONING_PROFILE_BASE64 APPLE_TEAM_ID APPLE_BUNDLE_ID
           do
             [[ -n "${!name:-}" ]] || {
-              echo "error: required iOS signing value $name is missing" >&2
+              echo "error: required ios-${OBSCURA_ENV} signing value $name is missing" >&2
               exit 1
             }
           done
@@ -134,14 +138,14 @@ jobs:
             exit 1
           }
           short_sha="$(git rev-parse --short=7 HEAD)"
-          artifact_name="obscura-dev-ios-${BUILD_NUMBER}-${short_sha}"
+          artifact_name="obscura-${OBSCURA_ENV}-ios-${BUILD_NUMBER}-${short_sha}"
           {
             echo "sha=$sha"
             echo "artifact_name=$artifact_name"
           } >> "$GITHUB_OUTPUT"
           mkdir -p dist
           {
-            echo "Obscura Dev iOS internal build ${RELEASE_VERSION} (${BUILD_NUMBER})"
+            echo "Obscura (${OBSCURA_ENV}) iOS build ${RELEASE_VERSION} (${BUILD_NUMBER})"
             echo
             git show -s --format='%s%n%nCommit: %H'
           } > dist/release-notes.txt
@@ -150,11 +154,14 @@ jobs:
         env:
           PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
         run: |
-          just ios-archive "$RUNNER_TEMP/Obscura.xcarchive" "$BUILD_NUMBER" "$RELEASE_VERSION" "dev" "$PROFILE_NAME"
-          cp ios/ExportOptions-TestFlight.plist "$RUNNER_TEMP/ExportOptions.plist"
+          just ios-archive "$RUNNER_TEMP/Obscura.xcarchive" "$BUILD_NUMBER" "$RELEASE_VERSION" "$OBSCURA_ENV" "$PROFILE_NAME"
+          cp ios/ExportOptions.plist "$RUNNER_TEMP/ExportOptions.plist"
           /usr/libexec/PlistBuddy -c "Delete :provisioningProfiles" "$RUNNER_TEMP/ExportOptions.plist"
           /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$RUNNER_TEMP/ExportOptions.plist"
           /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:${APPLE_BUNDLE_ID} string ${PROFILE_NAME}" "$RUNNER_TEMP/ExportOptions.plist"
+          internal_only="true"
+          if [[ "$OBSCURA_ENV" == "prod" ]]; then internal_only="false"; fi
+          /usr/libexec/PlistBuddy -c "Set :testFlightInternalTestingOnly ${internal_only}" "$RUNNER_TEMP/ExportOptions.plist"
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/Obscura.xcarchive" \
             -exportPath "$RUNNER_TEMP/export" \
@@ -199,7 +206,7 @@ jobs:
     needs: archive
     runs-on: macos-26
     timeout-minutes: 45
-    environment: ios-testflight
+    environment: ios-${{ inputs.env }}
     env:
       BUILD_SHA: ${{ needs.archive.outputs.sha }}
       EXPECTED_REF: ${{ inputs.sha }}

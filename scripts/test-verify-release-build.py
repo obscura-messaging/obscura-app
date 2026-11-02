@@ -5,10 +5,10 @@ import tempfile
 import unittest
 
 
-SCRIPT = pathlib.Path(__file__).with_name("verify-internal-build.sh")
+SCRIPT = pathlib.Path(__file__).with_name("verify-release-build.sh")
 
 
-class InternalBuildVerificationTest(unittest.TestCase):
+class ReleaseBuildVerificationTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

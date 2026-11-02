@@ -1,0 +1,56 @@
+name: Release / Dev
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release-dev
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify main and CI
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+      build_number: ${{ steps.release.outputs.build_number }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify selected commit
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/verify-release-build.sh
+
+  android:
+    needs: verify
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/distribute-android.yml
+    with:
+      env: dev
+      sha: ${{ needs.verify.outputs.sha }}
+      build_number: ${{ needs.verify.outputs.build_number }}
+      version: ${{ needs.verify.outputs.version }}
+    secrets: inherit
+
+  ios:
+    needs: verify
+    uses: ./.github/workflows/distribute-ios.yml
+    with:
+      env: dev
+      sha: ${{ needs.verify.outputs.sha }}
+      build_number: ${{ needs.verify.outputs.build_number }}
+      version: ${{ needs.verify.outputs.version }}
+    secrets: inherit

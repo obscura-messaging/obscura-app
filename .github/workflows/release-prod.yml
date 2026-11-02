@@ -1,10 +1,10 @@
-name: Release / Internal
+name: Release / Prod
 
 on:
   workflow_dispatch:
 
 concurrency:
-  group: release-internal
+  group: release-prod
   cancel-in-progress: false
 
 permissions:
@@ -30,15 +30,16 @@ jobs:
         id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/verify-internal-build.sh
+        run: bash scripts/verify-release-build.sh
 
   android:
     needs: verify
     permissions:
       contents: read
       id-token: write
-    uses: ./.github/workflows/internal-android.yml
+    uses: ./.github/workflows/distribute-android.yml
     with:
+      env: prod
       sha: ${{ needs.verify.outputs.sha }}
       build_number: ${{ needs.verify.outputs.build_number }}
       version: ${{ needs.verify.outputs.version }}
@@ -46,8 +47,9 @@ jobs:
 
   ios:
     needs: verify
-    uses: ./.github/workflows/internal-ios.yml
+    uses: ./.github/workflows/distribute-ios.yml
     with:
+      env: prod
       sha: ${{ needs.verify.outputs.sha }}
       build_number: ${{ needs.verify.outputs.build_number }}
       version: ${{ needs.verify.outputs.version }}

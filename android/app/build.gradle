@@ -25,8 +25,8 @@ def releaseSigningConfigured =
     releaseKeyAlias &&
     releaseKeyPassword
 
-def distributionBuild =
-    (findProperty("obscuraDistributionBuild") ?: "false").toBoolean()
+def signedBundleBuild =
+    (findProperty("obscuraSignedBundle") ?: "false").toBoolean()
 def obscuraEnv =
     (findProperty("obscuraEnv") ?: "dev").toString()
 if (obscuraEnv != "dev" && obscuraEnv != "prod") {
@@ -48,26 +48,26 @@ if (obscuraVersionCode <= 0) {
 if (obscuraVersionName.trim().isEmpty()) {
     throw new GradleException("obscuraVersionName must not be empty")
 }
-if (distributionBuild) {
+if (signedBundleBuild) {
     if (!releaseSigningConfigured) {
         throw new GradleException(
-            "Distribution builds require a readable release keystore and all signing credentials"
+            "Signed bundle builds require a readable release keystore and all signing credentials"
         )
     }
     if (!hasProperty("obscuraVersionCode") || !hasProperty("obscuraVersionName")) {
         throw new GradleException(
-            "Distribution builds require obscuraVersionCode and obscuraVersionName"
+            "Signed bundle builds require obscuraVersionCode and obscuraVersionName"
         )
     }
 
     def firebaseConfig = file("google-services.json")
     def firebaseStub = file("google-services.stub.json")
     if (!firebaseConfig.isFile()) {
-        throw new GradleException("Distribution builds require android/app/google-services.json")
+        throw new GradleException("Signed bundle builds require android/app/google-services.json")
     }
     if (firebaseStub.isFile() && firebaseConfig.bytes == firebaseStub.bytes) {
         throw new GradleException(
-            "Distribution builds require the real Firebase config, not google-services.stub.json"
+            "Signed bundle builds require the real Firebase config, not google-services.stub.json"
         )
     }
 }

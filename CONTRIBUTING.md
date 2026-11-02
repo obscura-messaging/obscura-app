@@ -24,11 +24,11 @@ Gradle recipes reject any JDK except 21. They find it through `JAVA_HOME`, or
 ```bash
 git clone --recurse-submodules https://github.com/obscura-messaging/obscura-app.git
 cd obscura-app && just setup && just doctor
-just doctor-android && just android-release   # or: just android-run
+just doctor-android && just android-apk       # or: just android-run
 just doctor-ios && just ios-build             # simulator
 ```
 
-For a faster build, use `just android-release arm64-v8a false` (one ABI, no R8)
+For a faster build, use `just android-apk arm64-v8a false` (one ABI, no R8)
 or `just ios-build arm64`.
 
 - **Firebase.** Android needs `android/app/google-services.json`. When the
@@ -76,8 +76,8 @@ state logic. It does not cover rendered UI or device behavior.
 
 | CI job | Runs | On |
 | --- | --- | --- |
-| `JavaScript` | `just check`, `scripts/test-verify-internal-build.py` | PRs, `main` |
-| `Android Release Build` | `just android-release arm64-v8a false` | PRs |
+| `JavaScript` | `just check`, `scripts/test-verify-release-build.py` | PRs, `main` |
+| `Android Release Build` | `just android-apk arm64-v8a false` | PRs |
 | `iOS Debug Build` | `just ios-build arm64` | PRs |
 
 ## Updating `obscura-native`
