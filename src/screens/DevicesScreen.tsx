@@ -3,11 +3,10 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { DeviceInfo } from '../native/ObscuraModule';
 import { toast } from '../components/Toast';
 import { confirm } from '../components/confirm';
 import { deviceLabel } from '../domain/devices';
-import { approveLink, linkCodeDeviceName, loadDevices, unlinkDevice } from '../state/devices';
+import { approveLink, linkCodeDeviceName, loadDevices, unlinkDevice, type DeviceInfo } from '../state/devices';
 import { useSession } from '../state/store';
 import { errorMessage } from '../utils/log';
 import type { RootStackParamList } from '../navigation/types';

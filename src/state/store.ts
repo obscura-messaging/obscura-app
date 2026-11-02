@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -9,7 +9,7 @@ import { drainInboxFully } from './drainInbox';
 import { writeEntry, flushOutbox } from './writeEntry';
 import { primaryOnly } from './devices';
 import { requestStartupPermissions } from '../application/requestStartupPermissions';
-import { logError } from '../utils/log';
+import { getJsLog, logError } from '../utils/log';
 import type { Entry } from '../domain/merge';
 import type { ModelData, ModelName } from '../models/schema';
 import { EPHEMERAL_MODELS, isEphemeral } from '../domain/expiry';
@@ -19,8 +19,14 @@ import { SEEN_MODEL, indexReceipts, seenEntryId, viewedAtFor } from '../domain/s
 import { readEntries } from './entryStore';
 import { sweepExpired } from './expiry';
 
+export type { Friend, ConnectionState };
+
 /** An entry as screens see it: `data` as sent, plus when its recipient saw it (ephemeral models). */
 export type ScreenEntry<D = Record<string, unknown>> = Entry<D> & { viewedAt: number | null };
+
+type ModelEntryMap = {
+  [M in ModelName]?: ScreenEntry<ModelData<M>>[];
+} & Record<string, ScreenEntry[] | undefined>;
 
 interface Session {
   /** The cold-start auth check has finished, so `authed` can be trusted. */
@@ -35,7 +41,7 @@ interface Session {
   friends: Friend[];
   connState: ConnectionState;
   /** Entries per model; `undefined` until a screen first reads the model. */
-  entries: Record<string, ScreenEntry[] | undefined>;
+  entries: ModelEntryMap;
 }
 
 const SIGNED_OUT = {
@@ -100,7 +106,7 @@ export function useModelEntries<M extends ModelName>(model: M): ScreenEntry<Mode
   useEffect(() => {
     if (entries === undefined) loadEntries(model);
   }, [model, entries]);
-  return (entries ?? []) as unknown as ScreenEntry<ModelData<M>>[];
+  return (entries ?? []) as ScreenEntry<ModelData<M>>[];
 }
 
 // ─── Entry cache ─────────────────────────────────────────
@@ -221,6 +227,58 @@ export async function removeFriend(userId: string): Promise<void> {
   await refreshFriends();
 }
 
+export function getFriendCode(): Promise<string> {
+  return Obscura.getFriendCode();
+}
+
+export function copyToClipboard(text: string): Promise<void> {
+  return Obscura.setClipboard(text);
+}
+
+export async function loadDebugLog(): Promise<string[]> {
+  const native = await Obscura.getDebugLog();
+  return [...native, ...getJsLog()];
+}
+
+export function subscribeToLaunchScreen(onScreen: (screen: string) => void): () => void {
+  Obscura.getLaunchIntent()
+    .then((intent) => { if (intent) onScreen(intent.screen); })
+    .catch((e) => logError('launchIntent', e));
+  return onObscuraEvent((event) => {
+    if (event.type === 'launchedFrom') onScreen(event.screen);
+  });
+}
+
+export function notifyTyping(friendUserId: string, convId: string): void {
+  Obscura.sendTyping([friendUserId], convId).catch((e) => logError('typing.send', e));
+}
+
+export async function sendChatMessage(convId: string, friendUserId: string, content: string): Promise<void> {
+  await Obscura.stopTyping([friendUserId], convId);
+  await saveEntry('directMessage', { conversationId: convId, content });
+}
+
+export function usePeerTyping(convId: string, friendUserId: string): boolean {
+  const [peerTyping, setPeerTyping] = useState(false);
+  useEffect(() => {
+    setPeerTyping(false);
+    const unsubscribe = onObscuraEvent((event) => {
+      if (event.type === 'messageReceived' && event.model === 'directMessage') {
+        setPeerTyping(false);
+      } else if (event.type === 'typingChanged' && event.conversationId === convId) {
+        // Anyone can signal under this id; only this conversation's friend counts.
+        setPeerTyping(event.userIds.includes(friendUserId));
+      }
+    });
+    Obscura.observeTyping(convId).catch((e) => logError('typing.observe', e));
+    return () => {
+      unsubscribe();
+      Obscura.stopObservingTyping(convId).catch((e) => logError('typing.unobserve', e));
+    };
+  }, [convId, friendUserId]);
+  return peerTyping;
+}
+
 export function applyObscuraEvent(event: ObscuraEvent): void {
   switch (event.type) {
     case 'friendsChanged':
@@ -249,17 +307,26 @@ export function applyObscuraEvent(event: ObscuraEvent): void {
   }
 }
 
-/** Load the session identity and friends, then sync: the drain needs the identity to authorize. */
+/** Load the session identity and friends atomically, then sync: the drain needs the identity to authorize. */
 export async function loadSession(): Promise<void> {
-  const set = (state: Partial<Session>) => useStore.setState(state);
-  await Promise.all([
-    Obscura.getUserId().then((id) => set({ myUserId: id ?? '' })),
-    Obscura.getUsername().then((name) => set({ myUsername: name ?? '' })),
-    Obscura.getDeviceId().then((id) => set({ myDeviceId: id ?? '' })),
-    Obscura.isPrimary().then((isPrimary) => set({ isPrimary })),
-    Obscura.getConnectionState().then((connState) => set({ connState })),
-    refreshFriends(),
-  ].map((pull) => pull.catch((e) => logError('session.load', e))));
+  const pull = <T>(p: Promise<T>, fallback: T): Promise<T> =>
+    p.catch((e) => { logError('session.load', e); return fallback; });
+  const [userId, username, deviceId, isPrimary, connState, friends] = await Promise.all([
+    pull(Obscura.getUserId(), null),
+    pull(Obscura.getUsername(), null),
+    pull(Obscura.getDeviceId(), null),
+    pull(Obscura.isPrimary(), null),
+    pull(Obscura.getConnectionState(), 'disconnected' as ConnectionState),
+    pull(Obscura.getFriends(), [] as Friend[]),
+  ]);
+  useStore.setState({
+    myUserId: userId ?? '',
+    myUsername: username ?? '',
+    myDeviceId: deviceId ?? '',
+    isPrimary,
+    connState,
+    friends,
+  });
   // Push can store rows with no JS running and `messageReceived` may be dropped, so cold start syncs.
   syncAll();
 }
@@ -268,7 +335,12 @@ export async function loadSession(): Promise<void> {
 export function ObscuraBootstrap(): null {
   useEffect(() => {
     Obscura.getAuthState()
-      .then((state) => { if (state === 'authenticated') useStore.setState({ authed: true }); })
+      .then(async (state) => {
+        if (state === 'authenticated') {
+          await loadSession();
+          useStore.setState({ authed: true });
+        }
+      })
       .catch((e) => logError('bootstrap.authState', e))
       .finally(() => useStore.setState({ bootstrapped: true }));
   }, []);

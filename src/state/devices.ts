@@ -4,6 +4,8 @@ import { cleanCode } from '../domain/qr';
 import { errorCode } from '../utils/log';
 import { resetSession, useStore } from './store';
 
+export type { DeviceInfo };
+
 /** Run an action only the primary may take. `NOT_PRIMARY` means the session was wrong, so correct it. */
 export async function primaryOnly<T>(action: () => Promise<T>): Promise<T> {
   try {

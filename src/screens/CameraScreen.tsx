@@ -6,8 +6,8 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Obscura } from '../native/ObscuraModule';
 import { useCameraActive } from '../navigation/CameraActiveContext';
+import { createTestCapture, prewarmAudio } from '../state/sendMedia';
 import { logError } from '../utils/log';
 import { toPath } from '../utils/files';
 import { clamp, touchDist } from '../utils/gesture';
@@ -44,10 +44,7 @@ export function CameraScreen() {
   ]);
 
   // Re-warmed after each recording, because VisionCamera deactivates the audio session.
-  const prewarmAudio = useCallback(() => {
-    Obscura.prewarmAudioSession().catch((e) => logError('prewarmAudio', e));
-  }, []);
-  useEffect(() => { prewarmAudio(); }, [prewarmAudio]);
+  useEffect(() => { prewarmAudio(); }, []);
 
   // Read by the PanResponder, which is created once.
   const zoomRef = useRef(1);
@@ -113,7 +110,7 @@ export function CameraScreen() {
       },
       onRecordingError: (e) => { setRecording(false); prewarmAudio(); logError('record', e); },
     });
-  }, [nav, prewarmAudio]);
+  }, [nav]);
 
   const stopRecording = useCallback(async () => {
     try { await camera.current?.stopRecording(); } catch (e) { logError('stopRecording', e); }
@@ -140,8 +137,8 @@ export function CameraScreen() {
   // Emulators without a camera get a synthesized JPEG.
   const takeTestPhoto = useCallback(async () => {
     try {
-      const img = await Obscura.writeTestImage(100, 100);
-      nav.navigate('PhotoPreview', { path: img.path, mediaType: 'photo' });
+      const path = await createTestCapture();
+      nav.navigate('PhotoPreview', { path, mediaType: 'photo' });
     } catch (e) {
       logError('takeTestPhoto', e);
     }

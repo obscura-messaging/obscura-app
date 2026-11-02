@@ -6,12 +6,14 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Obscura, type ConnectionState } from '../native/ObscuraModule';
-import { errorMessage, logError, getJsLog } from '../utils/log';
+import { errorMessage, logError } from '../utils/log';
 import { toast } from '../components/Toast';
 import { confirm } from '../components/confirm';
 import type { RootStackParamList } from '../navigation/types';
-import { useSession, useIdentity, useModelEntries, saveEntry, logout } from '../state/store';
+import {
+  useSession, useIdentity, useModelEntries, saveEntry, logout, loadDebugLog,
+  type ConnectionState,
+} from '../state/store';
 import { profileEntryId } from '../models/schema';
 import { displayNameFor } from '../domain/friends';
 import { s, colors } from '../styles';
@@ -58,8 +60,8 @@ export function ProfileScreen() {
   useEffect(() => {
     if (!showLog) return;
     const refresh = () =>
-      Obscura.getDebugLog()
-        .then((native) => setDebugLog([...native, ...getJsLog()]))
+      loadDebugLog()
+        .then(setDebugLog)
         .catch((e) => logError('debugLog.fetch', e));
     refresh();
     const interval = setInterval(refresh, DEBUG_LOG_POLL_MS);

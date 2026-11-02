@@ -10,12 +10,11 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { CaptionView, parseCaptionMeta } from '../components/Caption';
 import { CloseIcon } from '../components/icons';
 import { Avatar } from '../components/Avatar';
-import { Obscura } from '../native/ObscuraModule';
 import { displayMs } from '../domain/pix';
-import { storyGroups } from '../domain/stories';
-import type { StoryGroup } from '../domain/stories';
+import { storyGroups, type StoryGroup } from '../domain/stories';
+import { stepViewer } from '../domain/viewer';
+import { attachmentOf, loadAttachmentUri, type Attachment } from '../state/sendMedia';
 import { useIdentity, useModelEntries, markSeen } from '../state/store';
-import { fileUri } from '../utils/files';
 import { timeAgo } from '../utils/format';
 import { logError } from '../utils/log';
 import type { RootStackParamList, RootStackScreenProps, ViewerEntry } from '../navigation/types';
@@ -64,29 +63,6 @@ function cubeFace(width: number, angle: Animated.AnimatedInterpolation<string>) 
 /** A group's story as it was when the cube started turning. */
 interface Face { group: StoryGroup<ViewerEntry>; storyIdx: number; mediaUri: string | null }
 interface Transition { outgoing: Face; direction: 1 | -1 }
-
-type Attachment = { mediaRef: string; contentKey: string; nonce: string };
-
-function attachmentOf(story: ViewerEntry | undefined): Attachment | null {
-  const mediaRef = story?.data.mediaRef;
-  const contentKey = story?.data.contentKey;
-  const nonce = story?.data.nonce;
-  if (typeof mediaRef !== 'string' || typeof contentKey !== 'string' || typeof nonce !== 'string') return null;
-  return { mediaRef, contentKey, nonce };
-}
-
-/**
- * Decrypt an attachment to the native cache and remember its `file://` URI by `mediaRef`. The
- * native side returns the cached file when it already has one, so repeating this is cheap.
- */
-async function loadMedia(att: Attachment, cache: Map<string, string>): Promise<string> {
-  const cached = cache.get(att.mediaRef);
-  if (cached) return cached;
-  const path = await Obscura.downloadAttachment(att.mediaRef, att.contentKey, att.nonce);
-  const uri = fileUri(path);
-  cache.set(att.mediaRef, uri);
-  return uri;
-}
 
 // ─── Story Face (one group's current story, full screen) ──
 
@@ -177,10 +153,34 @@ function StoryFace({
   );
 }
 
-/** Full-screen viewer for stories and, with `markViewed`, view-once pix. */
+/** Full-screen viewer for live stories (`mode: 'stories'`) and view-once pix (`mode: 'pix'`). */
 export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryViewer'>) {
-  const { groups, startIndex, markViewed } = route.params;
-  const [groupIdx, setGroupIdx] = useState(startIndex);
+  const params = route.params;
+  const markViewed = params.mode === 'pix';
+  const identity = useIdentity();
+  const allStories = useModelEntries('story');
+  const allPix = useModelEntries('pix');
+  const [openedAt] = useState(() => Date.now());
+
+  const { groups, initialGroupIdx } = useMemo((): { groups: StoryGroup<ViewerEntry>[]; initialGroupIdx: number } => {
+    if (params.mode === 'pix') {
+      const wanted = new Set(params.entryIds);
+      const stories = allPix
+        .filter((p) => wanted.has(p.id))
+        .sort((a, b) => a.sentAt - b.sentAt);
+      const username = identity.friends.find((f) => f.userId === params.userId)?.username ?? params.username;
+      return {
+        groups: stories.length > 0 ? [{ userId: params.userId, username, stories }] : [],
+        initialGroupIdx: 0,
+      };
+    }
+    const { mine, others } = storyGroups(allStories, identity, openedAt);
+    const populated = [mine, ...others].filter((g) => g.stories.length > 0);
+    const idx = populated.findIndex((g) => g.userId === params.initialUserId);
+    return { groups: populated, initialGroupIdx: Math.max(0, idx) };
+  }, [params, allStories, allPix, identity, openedAt]);
+
+  const [groupIdx, setGroupIdx] = useState(initialGroupIdx);
   const [storyIdx, setStoryIdx] = useState(0);
   const [mediaUri, setMediaUri] = useState<string | null>(null);
   const [mediaLoading, setMediaLoading] = useState(false);
@@ -222,27 +222,30 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
     }).start(() => setTransition(null));
   }, [group, storyIdx, mediaUri, cube]);
 
-  const advance = useCallback(() => {
-    if (!group || transition) return;
-    markCurrentViewed();
-    if (storyIdx < group.stories.length - 1) {
-      setStoryIdx((i) => i + 1);
-    } else if (groupIdx < groups.length - 1) {
-      turnTo(groupIdx + 1, 1);
-    } else {
-      navigation.goBack();
-    }
-  }, [group, groupIdx, storyIdx, groups.length, transition, markCurrentViewed, turnTo, navigation]);
+  const groupLengths = useMemo(() => groups.map((g) => g.stories.length), [groups]);
 
-  const rewind = useCallback(() => {
-    // A view-once pix must not be shown again.
-    if (markViewed || transition) return;
-    if (storyIdx > 0) {
-      setStoryIdx((i) => i - 1);
-    } else if (groupIdx > 0) {
-      turnTo(groupIdx - 1, -1);
+  const applyStep = useCallback((action: 'advance' | 'rewind') => {
+    if (!group || transition) return;
+    if (action === 'advance') markCurrentViewed();
+    const step = stepViewer({ groupIdx, storyIdx }, groupLengths, action, !!markViewed);
+    switch (step.kind) {
+      case 'stay':
+        return;
+      case 'step':
+        setGroupIdx(step.cursor.groupIdx);
+        setStoryIdx(step.cursor.storyIdx);
+        return;
+      case 'turnCube':
+        turnTo(step.cursor.groupIdx, step.direction);
+        return;
+      case 'close':
+        navigation.goBack();
+        return;
     }
-  }, [storyIdx, groupIdx, markViewed, transition, turnTo]);
+  }, [group, transition, markCurrentViewed, groupIdx, storyIdx, groupLengths, markViewed, turnTo, navigation]);
+
+  const advance = useCallback(() => applyStep('advance'), [applyStep]);
+  const rewind = useCallback(() => applyStep('rewind'), [applyStep]);
 
   // Resolve the attachment ref into a stable object so the load effect's
   // dep array is honest. Without this, the effect either drops deps and
@@ -269,7 +272,7 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
     (async () => {
       try {
         setMediaLoading(true);
-        const uri = await loadMedia(attachment, mediaUris);
+        const uri = await loadAttachmentUri(attachment, mediaUris);
         if (!cancelled) setMediaUri(uri);
       } catch (e) {
         logError('storyMedia.load', e);
@@ -285,7 +288,7 @@ export function StoryViewer({ route, navigation }: RootStackScreenProps<'StoryVi
     for (const neighbour of [groups[groupIdx + 1], groups[groupIdx - 1]]) {
       const att = attachmentOf(neighbour?.stories[0]);
       if (att && !mediaUris.has(att.mediaRef)) {
-        loadMedia(att, mediaUris).catch((e) => logError('storyMedia.prefetch', e));
+        loadAttachmentUri(att, mediaUris).catch((e) => logError('storyMedia.prefetch', e));
       }
     }
   }, [groups, groupIdx, mediaUris]);
@@ -369,8 +372,7 @@ export function StoriesRow() {
   const { mine, others } = useMemo(() => storyGroups(stories, identity, Date.now()), [stories, identity]);
 
   const open = (group: typeof mine) => {
-    const populated = [mine, ...others].filter((g) => g.stories.length > 0);
-    nav.navigate('StoryViewer', { groups: populated, startIndex: populated.indexOf(group) });
+    nav.navigate('StoryViewer', { mode: 'stories', initialUserId: group.userId });
   };
 
   return (

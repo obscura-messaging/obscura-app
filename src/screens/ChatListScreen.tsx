@@ -3,12 +3,11 @@ import { View, Text, TouchableOpacity, FlatList, Pressable, StyleSheet } from 'r
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { Friend } from '../native/ObscuraModule';
 import { activityPreview, friendActivities } from '../domain/chats';
 import type { PixStatus } from '../domain/pix';
 import {
   useSession, useModelEntries, useAcceptedFriends, usePendingFriends,
-  acceptFriend, removeFriend,
+  acceptFriend, removeFriend, type Friend,
 } from '../state/store';
 import { StoriesRow } from './StoriesScreen';
 import { Avatar } from '../components/Avatar';
@@ -116,7 +115,7 @@ export function ChatListScreen() {
     }
   };
 
-  const openChat = (friend: Friend) => nav.navigate('Chat', { friend });
+  const openChat = (friend: Friend) => nav.navigate('Chat', { userId: friend.userId, username: friend.username });
 
   const confirmRemoveFriend = async (friend: Friend) => {
     if (isPrimary !== true) return;

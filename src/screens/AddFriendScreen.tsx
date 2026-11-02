@@ -3,11 +3,10 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-nativ
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Obscura } from '../native/ObscuraModule';
 import { toast } from '../components/Toast';
 import { CodeCard } from '../components/CodeCard';
 import { cleanCode } from '../domain/qr';
-import { useSession, addFriend } from '../state/store';
+import { useSession, addFriend, getFriendCode } from '../state/store';
 import { errorMessage, logError } from '../utils/log';
 import type { RootStackParamList } from '../navigation/types';
 import { s, colors } from '../styles';
@@ -21,7 +20,7 @@ export function AddFriendScreen() {
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
-    Obscura.getFriendCode().then(setMyCode).catch((e) => logError('getFriendCode', e));
+    getFriendCode().then(setMyCode).catch((e) => logError('getFriendCode', e));
   }, []);
 
   const addByCode = async () => {

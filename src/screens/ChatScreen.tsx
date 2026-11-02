@@ -7,12 +7,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Obscura, onObscuraEvent } from '../native/ObscuraModule';
 import { conversationEntries } from '../domain/chats';
 import { conversationId } from '../domain/conversation';
 import { pixStatus } from '../domain/pix';
 import type { ScreenEntry } from '../domain/seen';
-import { useSession, useModelEntries, useAcceptedFriends, saveEntry, markSeen } from '../state/store';
+import {
+  useSession, useModelEntries, useAcceptedFriends, markSeen,
+  usePeerTyping, notifyTyping, sendChatMessage,
+} from '../state/store';
 import { useAppActive } from '../hooks/useAppActive';
 import { errorMessage, logError } from '../utils/log';
 import type { ModelData } from '../models/schema';
@@ -54,15 +56,16 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { myUserId } = useSession();
   const friends = useAcceptedFriends();
-  const friend = friends.find((f) => f.userId === route.params.friend.userId) ?? route.params.friend;
+  const friend = friends.find((f) => f.userId === route.params.userId)
+    ?? { userId: route.params.userId, username: route.params.username, status: 'accepted' as const };
   const headerHeight = useHeaderHeight();
   const allMessages = useModelEntries('directMessage');
   const allPix = useModelEntries('pix');
   const [text, setText] = useState('');
-  const [peerTyping, setPeerTyping] = useState(false);
   const listRef = useRef<FlatList<TimelineItem>>(null);
   const prevCountRef = useRef(0);
   const convId = conversationId(myUserId, friend.userId);
+  const peerTyping = usePeerTyping(convId, friend.userId);
 
   const messages = useMemo(() => conversationEntries(allMessages, convId), [allMessages, convId]);
   const timeline: TimelineItem[] = useMemo(() => [
@@ -88,29 +91,12 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
     }
   }, [isFocused, appActive, visibleIds, messages, myUserId]);
 
-  useEffect(() => {
-    const unsubscribe = onObscuraEvent((event) => {
-      if (event.type === 'messageReceived' && event.model === 'directMessage') {
-        setPeerTyping(false);
-      } else if (event.type === 'typingChanged' && event.conversationId === convId) {
-        // Anyone can signal under this id; only this conversation's friend counts.
-        setPeerTyping(event.userIds.includes(friend.userId));
-      }
-    });
-    Obscura.observeTyping(convId).catch((e) => logError('typing.observe', e));
-    return () => {
-      unsubscribe();
-      Obscura.stopObservingTyping(convId).catch((e) => logError('typing.unobserve', e));
-    };
-  }, [convId, friend.userId]);
-
   const send = async () => {
     if (!text.trim()) return;
     const content = text;
     setText('');
     try {
-      await Obscura.stopTyping([friend.userId], convId);
-      await saveEntry('directMessage', { conversationId: convId, content });
+      await sendChatMessage(convId, friend.userId, content);
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -118,7 +104,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
 
   const onChangeText = (t: string) => {
     setText(t);
-    if (t.length > 0) Obscura.sendTyping([friend.userId], convId).catch((e) => logError('typing.send', e));
+    if (t.length > 0) notifyTyping(friend.userId, convId);
   };
 
   const renderItem = ({ item }: { item: TimelineItem }) => {

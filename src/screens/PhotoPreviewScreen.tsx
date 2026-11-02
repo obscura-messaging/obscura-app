@@ -9,7 +9,6 @@ import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackScreenProps, RootStackParamList } from '../navigation/types';
-import { Obscura } from '../native/ObscuraModule';
 import { colors } from '../styles';
 import { CloseIcon } from '../components/icons';
 import { clamp, touchDist } from '../utils/gesture';
@@ -18,8 +17,8 @@ import {
   serializeCaptionMeta, type CaptionMeta, type CaptionStyle,
 } from '../components/Caption';
 import { DEFAULT_DISPLAY_SECONDS } from '../domain/pix';
+import { discardCapture } from '../state/sendMedia';
 import { fileUri } from '../utils/files';
-import { logError } from '../utils/log';
 
 const TIMER_OPTIONS = [
   { label: '3s', value: 3 },
@@ -58,7 +57,7 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
     });
     const unsubRemove = nav.addListener('beforeRemove', () => {
       if (!forwardedToPicker.current) {
-        Obscura.deleteFile(path).catch((e) => logError('preview.cleanup', e));
+        discardCapture(path);
       }
     });
     return () => {
