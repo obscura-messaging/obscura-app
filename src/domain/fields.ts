@@ -20,3 +20,15 @@ export function invalidFields(
     .filter(([name, type]) => !matches(type, data[name]))
     .map(([name]) => name);
 }
+
+/** Parse a JSON string into a plain object, returning `null` for non-JSON, primitives, null, or arrays. */
+export function parseJsonObject(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}

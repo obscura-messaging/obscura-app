@@ -6,7 +6,7 @@
 import type { InboxRow } from '../native/ObscuraModule';
 import { parseConversationId } from './conversation';
 import { merge, type Entry } from './merge';
-import { invalidFields } from './fields';
+import { invalidFields, parseJsonObject } from './fields';
 import { erasedKey } from './expiry';
 import type { ModelDeclaration } from './model';
 
@@ -44,17 +44,6 @@ function authorize(
   return null;
 }
 
-function parseObject(payload: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(payload);
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 export interface DrainPlan {
   /** Entries to write per model, already merged against current state. */
   writes: Map<string, Entry[]>;
@@ -87,7 +76,7 @@ export function planDrain(
     if (rules === undefined) { discard(row.id, 'unknown-model'); continue; }
 
     // Retrying an unreadable payload fails the same way forever, so it is discarded, not kept.
-    const data = parseObject(row.payload);
+    const data = parseJsonObject(row.payload);
     if (data === null) { discard(row.id, 'unparsable-payload'); continue; }
 
     if (invalidFields(rules.fields, data).length > 0) { discard(row.id, 'invalid-fields'); continue; }

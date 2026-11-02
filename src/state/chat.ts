@@ -5,8 +5,12 @@ import { saveEntry } from './store';
 
 /** Real-time typing indicator and message sending for a 1:1 conversation. */
 
-export function notifyTyping(friendUserId: string, convId: string): void {
-  Obscura.sendTyping([friendUserId], convId).catch((e) => logError('typing.send', e));
+export function notifyTyping(friendUserId: string, convId: string, prevText: string, nextText: string): void {
+  if (nextText.length > 0) {
+    Obscura.sendTyping([friendUserId], convId).catch((e) => logError('typing.send', e));
+  } else if (prevText.length > 0) {
+    Obscura.stopTyping([friendUserId], convId).catch((e) => logError('typing.stop', e));
+  }
 }
 
 export async function sendChatMessage(convId: string, friendUserId: string, content: string): Promise<void> {

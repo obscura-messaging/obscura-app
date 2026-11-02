@@ -8,7 +8,7 @@ import Video from 'react-native-video';
 import { CaptionView, parseCaptionMeta } from '../components/Caption';
 import { CloseIcon } from '../components/icons';
 import { Avatar } from '../components/Avatar';
-import { attachmentOf, displayMs, type Attachment } from '../domain/pix';
+import { attachmentOf, displayMs } from '../domain/pix';
 import { storyGroups, type StoryGroup } from '../domain/stories';
 import { stepViewer } from '../domain/viewer';
 import { loadAttachmentUri } from '../state/sendMedia';
@@ -213,13 +213,7 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const advance = useCallback(() => applyStep('advance'), [applyStep]);
   const rewind = useCallback(() => applyStep('rewind'), [applyStep]);
 
-  const mediaRef = story?.data.mediaRef;
-  const contentKey = story?.data.contentKey;
-  const nonce = story?.data.nonce;
-  const attachment = useMemo<Attachment | null>(
-    () => (mediaRef && contentKey && nonce ? { mediaRef, contentKey, nonce } : null),
-    [mediaRef, contentKey, nonce],
-  );
+  const attachment = useMemo(() => attachmentOf(story), [story]);
 
   useEffect(() => {
     setMediaLoading(false);
@@ -251,7 +245,7 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
     }
   }, [groups, groupIdx, mediaUris]);
 
-  const hasMedia = !!story?.data.mediaRef;
+  const hasMedia = attachment !== null;
   const isVideo = story?.data.mediaType === 'video';
   const durationMs = displayMs(story?.data.displayDuration);
   const readyToPlay = (!hasMedia || (!!mediaUri && !mediaLoading)) && !transition;

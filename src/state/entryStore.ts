@@ -1,5 +1,6 @@
 import { Obscura, type StoredEntry } from '../native/ObscuraModule';
 import { ERASED_MODEL } from '../domain/expiry';
+import { parseJsonObject } from '../domain/fields';
 import type { Entry } from '../domain/merge';
 import { logError } from '../utils/log';
 
@@ -72,8 +73,8 @@ function decodeAll(model: string, entries: readonly StoredEntry[]): StoredRow[] 
 }
 
 function decode(e: StoredEntry): StoredRow {
-  const parsed: unknown = JSON.parse(e.data);
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  const data = parseJsonObject(e.data);
+  if (data === null) {
     throw new Error(`entry ${e.id} is not a JSON object`);
   }
   if (e.authorUserId === '') {
@@ -84,7 +85,7 @@ function decode(e: StoredEntry): StoredRow {
     sentAt: e.sentAt,
     authorUserId: e.authorUserId,
     authorDeviceId: e.authorDeviceId,
-    data: parsed as Record<string, unknown>,
+    data,
     undelivered: e.localMetadata === UNDELIVERED_METADATA,
   };
 }

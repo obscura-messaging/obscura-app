@@ -5,7 +5,6 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { toast } from '../components/Toast';
 import { CodeCard } from '../components/CodeCard';
-import { cleanCode } from '../domain/qr';
 import { useSession, addFriend, getFriendCode } from '../state/store';
 import { errorMessage, logError } from '../utils/log';
 import type { RootStackParamList } from '../navigation/types';
@@ -24,11 +23,10 @@ export function AddFriendScreen() {
   }, []);
 
   const addByCode = async () => {
-    const code = cleanCode('friend', codeInput);
-    if (!code || adding) return;
+    if (!codeInput.trim() || adding) return;
     setAdding(true);
     try {
-      await addFriend(code);
+      await addFriend(codeInput);
       setCodeInput('');
       toast.success('Friend request sent');
     } catch (e) {

@@ -101,8 +101,8 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   };
 
   const onChangeText = (t: string) => {
+    notifyTyping(friend.userId, convId, text, t);
     setText(t);
-    if (t.length > 0) notifyTyping(friend.userId, convId);
   };
 
   const renderItem = ({ item }: { item: TimelineItem }) => {

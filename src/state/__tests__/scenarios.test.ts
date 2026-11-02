@@ -1,7 +1,8 @@
 import {
-  useStore, loadSession, loadEntries, drainAndRefresh, sweepAndRefresh,
-  applyObscuraEvent, addFriend, acceptFriend, removeFriend, markSeen, resetSession,
+  useStore, loadSession, loadEntries, drainAndRefresh, flushOutboxFromStore, sweepAndRefresh,
+  applyObscuraEvent, addFriend, acceptFriend, removeFriend, saveEntry, markSeen, resetSession,
 } from '../store';
+import { notifyTyping } from '../chat';
 import { logIn, linkThisDevice } from '../login';
 import { sendCapture, type Capture } from '../sendMedia';
 import { activityPreview, friendActivities } from '../../domain/chats';
@@ -196,5 +197,54 @@ describe('Scenario 3: incoming pix viewed locally + concurrent first-load race',
     [activity] = friendActivities(useStore.getState().friends, ALICE, [], useStore.getState().entries.pix!);
     expect(activity.unopenedPix).toHaveLength(0);
     expect(activityPreview(activity, ALICE)).toEqual({ text: 'Pix viewed', highlight: false });
+  });
+
+  it('re-projects viewedAt in memory on markSeen without re-reading directMessage or pix from SQLite', async () => {
+    bridge.__setFriends([BOB]);
+    await loadSession();
+    await Obscura.entryPut(
+      'directMessage', 'dm_mem', JSON.stringify({ conversationId: CONV, content: 'hi' }), 1_000, BOB.userId, 'd', null,
+    );
+    await loadEntries('directMessage');
+    await loadEntries('pix');
+
+    const callsBefore = bridge.__calls.length;
+    await markSeen('directMessage', useStore.getState().entries.directMessage![0]);
+    const recentCalls = bridge.__calls.slice(callsBefore);
+
+    expect(useStore.getState().entries.directMessage?.[0].viewedAt).not.toBeNull();
+    // Only `seen` is read from SQLite; `directMessage` and `pix` are updated in memory.
+    expect(recentCalls.filter((c) => c === 'entryAll')).toHaveLength(1);
+  });
+
+  it('coalesces concurrent flushOutboxFromStore triggers and gates foreground outbox flush on connected state', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    bridge.__setFriends([BOB]);
+    await loadSession();
+
+    bridge.__failNext('sendEntry', 'SEND_FAILED', 'offline');
+    await expect(saveEntry('story', { content: 'once' })).rejects.toThrow('offline');
+    expect(bridge.__sent).toHaveLength(0);
+
+    // Foregrounding while disconnected drains/sweeps, but does NOT flush the outbox yet.
+    useStore.setState({ connState: 'disconnected' });
+    applyObscuraEvent({ type: 'appStateChanged', state: 'active' });
+    await flush();
+    expect(bridge.__sent).toHaveLength(0);
+
+    // Concurrent outbox flushes coalesce so the entry is sent once, not duplicated.
+    await Promise.all([flushOutboxFromStore(), flushOutboxFromStore(), flushOutboxFromStore()]);
+    expect(bridge.__sent.filter((s) => s.modelKey === 'story')).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  it('sends sendTyping on non-empty input and stopTyping when cleared to empty', async () => {
+    notifyTyping(BOB.userId, CONV, '', 'h');
+    notifyTyping(BOB.userId, CONV, 'h', 'hi');
+    notifyTyping(BOB.userId, CONV, 'hi', '');
+    await flush();
+
+    expect(bridge.__calls.filter((c) => c === 'sendTyping')).toHaveLength(2);
+    expect(bridge.__calls.filter((c) => c === 'stopTyping')).toHaveLength(1);
   });
 });
