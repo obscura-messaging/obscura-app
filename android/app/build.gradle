@@ -17,7 +17,7 @@ def signingValue = { String propertyName, String environmentName ->
 def releaseStoreFilePath = signingValue("storeFile", "ANDROID_RELEASE_STORE_FILE")
 def releaseStorePassword = signingValue("storePassword", "ANDROID_RELEASE_STORE_PASSWORD")
 def releaseKeyAlias = signingValue("keyAlias", "ANDROID_RELEASE_KEY_ALIAS")
-def releaseKeyPassword = signingValue("keyPassword", "ANDROID_RELEASE_KEY_PASSWORD")
+def releaseKeyPassword = signingValue("keyPassword", "ANDROID_RELEASE_KEY_PASSWORD") ?: releaseStorePassword
 def releaseStoreFile = releaseStoreFilePath ? file(releaseStoreFilePath) : null
 def releaseSigningConfigured =
     releaseStoreFile?.isFile() &&

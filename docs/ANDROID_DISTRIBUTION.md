@@ -86,7 +86,6 @@ approval.
 | `ANDROID_RELEASE_KEYSTORE_BASE64` | Base64 of the environment's PKCS12 upload key (`android-dev.p12` or `android-prod.p12`) |
 | `ANDROID_RELEASE_STORE_PASSWORD` | PKCS12 password |
 | `ANDROID_RELEASE_KEY_ALIAS` | Normally `obscura-release` |
-| `ANDROID_RELEASE_KEY_PASSWORD` | PKCS12 password |
 
 Before building, the build job checks that `google-services.json` includes the
 environment's package name. It writes credentials only to runner-temporary or
