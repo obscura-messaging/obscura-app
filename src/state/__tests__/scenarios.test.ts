@@ -5,10 +5,9 @@ import {
 import { notifyTyping } from '../chat';
 import { logIn, linkThisDevice } from '../login';
 import { sendCapture, type Capture } from '../sendMedia';
-import { activityPreview, friendActivities } from '../../domain/chats';
-import { conversationId } from '../../domain/conversation';
-import { EXPIRE_AFTER_MS } from '../../domain/expiry';
-import { SEEN_MODEL, seenEntryId } from '../../domain/seen';
+import { conversationId } from '../../domain/audience';
+import { activityPreview, chatTimeline, friendActivities } from '../../domain/chats';
+import { EXPIRE_AFTER_MS, SEEN_MODEL, seenEntryId } from '../../domain/expiry';
 import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
@@ -191,12 +190,17 @@ describe('Scenario 3: incoming pix viewed locally + concurrent first-load race',
     let [activity] = friendActivities(useStore.getState().friends, ALICE, [], useStore.getState().entries.pix!);
     expect(activity.unopenedPix).toHaveLength(1);
     expect(activityPreview(activity, ALICE)).toEqual({ text: 'New pix · tap to view', highlight: true });
+    expect(chatTimeline([], useStore.getState().entries.pix!, CONV, ALICE)).toEqual([
+      { kind: 'pix', id: 'pix_in_1', sentAt: expect.any(Number), authorUserId: BOB.userId, status: 'received_new' },
+    ]);
 
     await markSeen('pix', activity.unopenedPix[0]);
 
     [activity] = friendActivities(useStore.getState().friends, ALICE, [], useStore.getState().entries.pix!);
     expect(activity.unopenedPix).toHaveLength(0);
     expect(activityPreview(activity, ALICE)).toEqual({ text: 'Pix viewed', highlight: false });
+    // Once a received pix is seen, the chat timeline hides it immediately even before the 15m sweep.
+    expect(chatTimeline([], useStore.getState().entries.pix!, CONV, ALICE)).toEqual([]);
   });
 
   it('re-projects viewedAt in memory on markSeen without re-reading directMessage or pix from SQLite', async () => {

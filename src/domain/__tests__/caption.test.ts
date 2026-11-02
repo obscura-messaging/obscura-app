@@ -48,12 +48,10 @@ describe('parseCaptionMeta', () => {
   });
 
   it('returns null on empty, malformed, or unknown style payloads', () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     expect(parseCaptionMeta(null)).toBeNull();
     expect(parseCaptionMeta('')).toBeNull();
     expect(parseCaptionMeta('not-json')).toBeNull();
     expect(parseCaptionMeta(JSON.stringify({ style: 'neon', y: 0.5 }))).toBeNull();
     expect(parseCaptionMeta(JSON.stringify({ style: 'bar', y: 'nope' }))).toBeNull();
-    warn.mockRestore();
   });
 });

@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-nati
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Avatar } from './Avatar';
-import { storyGroups } from '../domain/stories';
+import { storyGroups } from '../domain/viewer';
 import { useIdentity, useModelEntries } from '../state/store';
 import type { RootStackParamList } from '../navigation/types';
 import { colors } from '../styles';

@@ -3,8 +3,7 @@ import { Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { CodeCard } from './CodeCard';
 import { confirm } from './confirm';
 import { linkProblem, type LinkProblem } from '../domain/devices';
-import { cancelLink, linkThisDevice, resetAccount } from '../state/login';
-import { useStore } from '../state/store';
+import { cancelLink, cancelPendingLinkOnUnmount, linkThisDevice, resetAccount } from '../state/login';
 import { errorMessage, logError } from '../utils/log';
 import { s, colors } from '../styles';
 
@@ -32,9 +31,7 @@ export function LinkThisDevice({ username, password, onBack }: LinkThisDevicePro
   useEffect(() => {
     start();
     return () => {
-      if (!useStore.getState().authed) {
-        cancelLink().catch((e) => logError('link.cancel', e));
-      }
+      cancelPendingLinkOnUnmount().catch((e) => logError('link.cancel', e));
     };
   }, [start]);
 

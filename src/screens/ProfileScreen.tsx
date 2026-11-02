@@ -14,7 +14,7 @@ import {
   useSession, useIdentity, useModelEntries, saveEntry, logout, loadDebugLog,
   type ConnectionState,
 } from '../state/store';
-import { profileEntryId } from '../models/schema';
+import { profileEntryId } from '../domain/schema';
 import { displayNameFor } from '../domain/friends';
 import { s, colors } from '../styles';
 

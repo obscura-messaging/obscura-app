@@ -1,0 +1,105 @@
+CREATE TABLE IF NOT EXISTS SignalLocalIdentity (
+    id INTEGER NOT NULL PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    identity_key_pair BLOB NOT NULL,
+    registration_id INTEGER NOT NULL
+);
+
+-- The trusted identity key of each peer account, keyed by user id.
+CREATE TABLE IF NOT EXISTS SignalIdentity (
+    user_id TEXT NOT NULL PRIMARY KEY,
+    identity_key BLOB NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS SignalPreKey (
+    id INTEGER NOT NULL PRIMARY KEY,
+    record BLOB NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS SignalSignedPreKey (
+    id INTEGER NOT NULL PRIMARY KEY,
+    record BLOB NOT NULL,
+    superseded_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS SignalSession (
+    address TEXT NOT NULL PRIMARY KEY,
+    record BLOB NOT NULL
+);
+
+selectLocalIdentity:
+SELECT * FROM SignalLocalIdentity WHERE id = 1;
+
+insertLocalIdentity:
+INSERT OR REPLACE INTO SignalLocalIdentity(id, identity_key_pair, registration_id) VALUES (1, ?, ?);
+
+deleteLocalIdentity:
+DELETE FROM SignalLocalIdentity;
+
+selectIdentityByUser:
+SELECT identity_key FROM SignalIdentity WHERE user_id = ?;
+
+insertIdentity:
+INSERT OR REPLACE INTO SignalIdentity(user_id, identity_key) VALUES (?, ?);
+
+deleteAllIdentities:
+DELETE FROM SignalIdentity;
+
+selectPreKey:
+SELECT record FROM SignalPreKey WHERE id = ?;
+
+insertPreKey:
+INSERT OR REPLACE INTO SignalPreKey(id, record) VALUES (?, ?);
+
+deletePreKey:
+DELETE FROM SignalPreKey WHERE id = ?;
+
+countPreKeys:
+SELECT COUNT(*) FROM SignalPreKey;
+
+highestPreKeyId:
+SELECT MAX(id) FROM SignalPreKey;
+
+deleteAllPreKeys:
+DELETE FROM SignalPreKey;
+
+selectSignedPreKey:
+SELECT record FROM SignalSignedPreKey WHERE id = ?;
+
+selectAllSignedPreKeys:
+SELECT record FROM SignalSignedPreKey;
+
+highestSignedPreKeyId:
+SELECT MAX(id) FROM SignalSignedPreKey;
+
+insertSignedPreKey:
+INSERT OR REPLACE INTO SignalSignedPreKey(id, record) VALUES (?, ?);
+
+deleteSignedPreKey:
+DELETE FROM SignalSignedPreKey WHERE id = ?;
+
+supersedeSignedPreKeysBelow:
+UPDATE SignalSignedPreKey SET superseded_at = :now WHERE id < :publishedId AND superseded_at IS NULL;
+
+deleteSignedPreKeysSupersededBefore:
+DELETE FROM SignalSignedPreKey WHERE superseded_at <= :cutoff;
+
+deleteAllSignedPreKeys:
+DELETE FROM SignalSignedPreKey;
+
+selectSession:
+SELECT record FROM SignalSession WHERE address = ?;
+
+insertSession:
+INSERT OR REPLACE INTO SignalSession(address, record) VALUES (?, ?);
+
+deleteSession:
+DELETE FROM SignalSession WHERE address = ?;
+
+deleteSessionsByPrefix:
+DELETE FROM SignalSession WHERE address LIKE ?;
+
+deleteSessionsOfUser:
+DELETE FROM SignalSession WHERE address IN (SELECT device_id || '.1' FROM Device WHERE user_id = ?);
+
+deleteAllSessions:
+DELETE FROM SignalSession;

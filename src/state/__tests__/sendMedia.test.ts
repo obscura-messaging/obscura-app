@@ -1,6 +1,6 @@
 import { sendCapture, type Capture } from '../sendMedia';
 import { resetSession, useStore } from '../store';
-import { conversationId } from '../../domain/conversation';
+import { conversationId } from '../../domain/audience';
 import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 

@@ -1,4 +1,8 @@
-import type { Friend } from '../native/ObscuraModule';
+export interface Friend {
+  userId: string;
+  username: string;
+  status: 'pending_sent' | 'pending_received' | 'accepted';
+}
 
 export function isAccepted(friend: Friend): boolean {
   return friend.status === 'accepted';

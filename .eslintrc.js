@@ -3,7 +3,7 @@ module.exports = {
   extends: '@react-native',
   // The native submodule has its own language-specific gates. Its generated build output and
   // vendored dependencies must not become inputs to the app's JavaScript lint.
-  ignorePatterns: ['obscura-native/**', 'ios/build/**'],
+  ignorePatterns: ['kotlin/**', 'swift/**', 'ios/build/**'],
   rules: {
     // Ban silently-swallowed errors. Empty catches hid two real bugs
     // (pix view-once, camera file:// path). Route errors through
@@ -36,9 +36,15 @@ module.exports = {
           {
             patterns: [
               {
-                group: ['**/native/ObscuraModule*'],
+                group: [
+                  '**/native/ObscuraModule*',
+                  '**/state/entryStore*',
+                  '**/state/drainInbox*',
+                  '**/state/writeEntry*',
+                  '**/state/expiry*',
+                ],
                 message:
-                  'UI and navigation layers must not import ObscuraModule directly; go through src/state/ or src/domain/.',
+                  'UI and navigation layers must not import ObscuraModule, entryStore, or sync internals directly; go through src/state/ or src/domain/.',
               },
             ],
           },
@@ -47,15 +53,22 @@ module.exports = {
     },
     {
       files: ['src/domain/**/*.{ts,tsx}'],
-      excludedFiles: ['src/domain/__tests__/**'],
       rules: {
         'no-restricted-imports': [
           'error',
           {
             patterns: [
               {
-                group: ['react', 'react-native', '**/state/**', '**/screens/**', '**/components/**'],
-                message: 'src/domain/ must remain pure and independent of React, UI, and stateful orchestration.',
+                group: [
+                  'react',
+                  'react-native',
+                  '**/native/**',
+                  '**/state/**',
+                  '**/screens/**',
+                  '**/components/**',
+                  '**/navigation/**',
+                ],
+                message: 'src/domain/ must remain pure and independent of React, native, state, and UI.',
               },
             ],
           },

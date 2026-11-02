@@ -1,141 +1,74 @@
-# Application domain contract
+# Application domain rationale
 
-These are the semantics the app owns in `src/models/`, `src/domain/` and
-`src/state/`. The kit only stores and sends opaque bytes
-([`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/6b52e491fdc10e4ded1fedce12023c6bb3f4cfb2/docs/KIT_API.md)).
+Executable schemas, types, and tests in `src/domain/` and `src/state/` define
+application behaviour. This document records only **why** those boundaries and
+invariants exist.
 
-## Models
+## Why the kit is opaque
 
-| Model           | Merge   | Audience             | Inbound authorization                    | Expires        |
-| --------------- | ------- | -------------------- | ---------------------------------------- | -------------- |
-| `directMessage` | APPEND  | conversation         | conversation names self and sender       | yes            |
-| `pix`           | APPEND  | conversation         | conversation names self and sender       | yes            |
-| `seen`          | APPEND  | conversation         | conversation names self and sender       | with its entry |
-| `story`         | APPEND  | all accepted friends | none; the transport sender is the author | 24 h after post |
-| `profile`       | REPLACE | all accepted friends | entry ID is `profile_<senderUserId>`     | no             |
+ObscuraKit ([`KIT_API.md`](KIT_API.md))
+handles Signal sessions, transport, and encrypted SQLite storage, but never
+interprets application models. Keeping model schemas, authorization, merge, and
+expiry in TypeScript means application changes do not require coordinated Kotlin
+and Swift releases or migrations across two native codebases.
 
-A `pix` is a direct photo or video message. The model key is independent of
-the `obscura-app` repository name.
+## Why attribution and authorization ignore payloads
 
-`src/models/schema.ts` is the executable source: sends, local writes and the
-drain all read a model's declaration through `declarationOf` or `MODELS`, and
-an undeclared model throws. Screen entry types derive from it. Field types are `string`, `string?`, `number` and `number?`
-(`?` means optional). A local write with a bad field throws, and a received
-entry with one is discarded as `invalid-fields`. Undeclared fields are allowed.
+Any authenticated account can deliver an envelope to any device, and a peer can
+put arbitrary JSON inside an encrypted payload.
 
-An entry's author is `Entry.authorUserId`, stored as a first-class column alongside
-`authorDeviceId` in the kit's entry store—never a payload field: a local write
-sets it to this user, and the drain sets it to the transport sender.
-`src/state/entryStore.ts` is the only code that reads or writes the kit's entry
-store for app models.
+- **Envelope attribution:** Author user and device IDs come strictly from the
+  authenticated transport envelope, never from payload fields, so a peer cannot
+  spoof authorship or manipulate `REPLACE` tie-breaks.
+- **Why drain authorization does not check friendship:** The friend graph can
+  lag behind message delivery (for example, when a friend acceptance and the
+  first message race on the wire). Gating permanent inbox discards on current
+  friend-graph state would silently drop real mail. Instead, drain authorization
+  checks structural ownership (such as canonical conversation membership or
+  profile ID prefix), and friend-graph filtering happens at projection/render
+  time.
+- **Why audience resolution fails closed:** A malformed or unresolvable target
+  throws rather than falling back to a broader audience, so a bug can never
+  widen a 1:1 message into a broadcast.
 
-## Audience
+## Why merge and local writes work without cross-store transactions
 
-`src/domain/audience.ts` turns a declaration into the recipient user IDs for
-`sendEntry`. When a required value is missing or malformed, it throws
-`DIRECT_ROUTING_UNRESOLVED` and sends nothing. It never widens to a broadcast.
+Inbox consumption and entry-store writes do not share a database transaction,
+and peer clocks can skew up to the kit's 60 s clamp:
 
-- **`friends`:** every accepted friend.
-- **`conversation`:** the entry's `conversationId`, a canonical conversation ID
-  that must name the local user, intersected with accepted friends.
+- **Idempotent merge:** Because a crash between `entryPut` and `inboxConsume`
+  replays the inbox row on the next drain, merge must be deterministic and
+  idempotent (`APPEND` keeps the first write; `REPLACE` orders by
+  `(sentAt, authorDeviceId)`).
+- **Monotonic local `sentAt`:** Stepping a local write at least 1 ms past any
+  existing stored copy ensures a user's own edit wins locally and remotely even
+  when a peer's clock was ahead.
+- **Locking:** Because `entryPut` is a blind upsert, `withEntryLock` serializes
+  read-merge-write cycles so a concurrent drain cannot overwrite a local write
+  with a stale snapshot.
 
-### Canonical conversation ID
+## Why disappearing messages and receipts avoid synced deletes
 
-The two participant user IDs, sorted and joined with `_`. User IDs are UUIDs,
-so they never contain `_`. `src/domain/conversation.ts` has the only
-constructor and parser. The parser rejects any noncanonical ID, including a
-reversed pair.
+- **Separate `APPEND` receipts:** If marking a message or pix as seen rewrote
+  the original entry via `REPLACE`, either participant could mutate or roll back
+  the message payload. Making `seen` its own `APPEND` entry authored by the
+  recipient keeps both the original message and the receipt immutable, and
+  capping `viewedAt` at the receipt's clamped `sentAt` prevents a peer from
+  backdating or far-future-dating expiry.
+- **Independent local expiry + tombstones:** Syncing delete messages would leak
+  timing metadata and fail whenever a device is offline. Instead, every device
+  runs the same expiry clock locally and records an `_erased` tombstone before
+  erasing, preventing a delayed self-sync or replayed envelope from
+  resurrecting expired content.
+- **Domain projection before presentation:** Presentation components never read
+  raw stored entries. Domain projections strip viewer-only fields (such as pix
+  captions) from chat timelines and omit seen incoming pix before data reaches
+  React components, making accidental UI leaks impossible.
 
-## Inbound authorization
+## Why primary authority is never promoted
 
-Any authenticated account can deliver to any device. The drain therefore
-authorizes against the inbox row's `senderUserId`, never a payload field.
-Friendship is not required; names come from the friend graph at render time.
-
-- A `conversation` entry's `conversationId` must name both the local user and
-  the sender. In a
-  self-sync, the sender is the local user.
-- A profile entry ID must equal `profile_<senderUserId>`.
-- A story has no binding field. Its sender is its author.
-
-## Drain
-
-```text
-peek -> classify -> parse -> validate fields -> authorize -> merge -> entryPut -> consume
-```
-
-A row that can never be processed is discarded with a reason:
-`unknown-model`, `unparsable-payload`, `invalid-fields` or
-`unauthorized-sender`. A transient failure leaves the row pending, and a merge
-loser is consumed without a write. Nothing is drained until `getUserId` returns
-a value. The drain runs on cold start, reconnect, foreground and
-`messageReceived`.
-
-## Merge
-
-`src/domain/merge.ts` merges by entry ID. Entry writes and `consume` share no
-transaction, so merge must be idempotent.
-
-- **APPEND:** the first write wins.
-- **REPLACE:** the greater `sentAt` wins. On a tie, the lexicographically
-  greater `authorDeviceId` wins. Equal on both is the same write.
-
-`authorDeviceId` is the device whose session decrypted the entry, or this
-device for a local write.
-
-## Local writes
-
-`src/state/writeEntry.ts` resolves the audience and validates fields first;
-either may throw before anything is stored. It then writes locally, then sends.
-A local write's `sentAt` is at least 1 ms after the stored copy's, so it wins
-even when a peer's clock is ahead. A send fails when it names recipients and
-none of their devices accepted it (`src/domain/delivery.ts`); the author's own
-devices do not count, and reaching some recipients is a success. A failed send
-is rethrown. The entry is kept and marked undelivered in `localMetadata`, then
-retried on cold start, reconnect and foreground.
-
-## Disappearing messages
-
-The rules for `directMessage` and `pix` are in `src/domain/seen.ts` and
-`src/domain/expiry.ts`.
-
-- **Seen.** The recipient writes a `seen` entry with ID
-  `seen_<model>_<entryId>` and data `{ conversationId, viewedAt }`. A message
-  counts as seen when it is on screen in the focused chat with the app in the
-  foreground. A pix counts as seen when the viewer moves past it or closes. A
-  receipt counts only if someone other than the entry's author wrote it, in the
-  entry's conversation. `viewedAt` is capped at the receipt's `sentAt`. Screens
-  read the result as `entry.viewedAt`.
-- **Expiry.** An entry expires 15 minutes after it is seen, and no later than 30
-  days after it is sent. Every device that holds it erases its own copy,
-  receipt and decrypted media, including the sender's. No delete is synced.
-- **View-once is not immediate erasure.** The pix viewer disables backward
-  navigation and the chat hides received pix after they are seen. Stored
-  entries and decrypted media remain until the expiry sweep erases them.
-- **No resurrection.** Before erasing, a device records the entry in the
-  local-only `_erased` model, and the drain consumes later writes for it
-  without storing them. Markers are pruned after 30 days, as are receipts whose
-  entry never arrived.
-- **Stories.** A story has no receipts. It expires 24 hours after it was
-  posted, on every device, with the same marker and media purge. The stories
-  row hides an expired story until the sweep erases it.
-- **Sweep.** `src/state/expiry.ts` runs on cold start, reconnect, foreground and
-  every 30 s while signed in.
-
-## Devices
-
-An account has one primary device, the first one provisioned, and any number of
-linked devices that share its identity. Only the primary adds, accepts and
-removes friends, links devices and unlinks other devices; a linked device hides
-those actions and treats `NOT_PRIMARY` as proof that it is not the primary
-(`src/state/devices.ts`). A linked device is never promoted: losing the primary
-means resetting the account, which signs out every device and shows friends a
-safety-number change.
-
-`src/state/login.ts` drives sign-in: registration and account reset provision
-this device as the primary, existing devices sign in directly, and an
-unprovisioned device on an existing account links via the primary. The new
-device shows
-its link code as a QR code (`obscura:link:<code>`, `src/domain/qr.ts`); the
-primary scans or pastes it, sees the device name the kit reads from the code
-and approves it. The app never parses the code itself.
+Linked devices share the account's Signal identity key, which is generated on
+the primary device. Promoting a linked device without rotating the account
+identity would leave a lost or compromised primary trusted by peers. Losing the
+primary therefore requires an account reset, which provisions a fresh identity
+and surfaces a safety-number change to friends.

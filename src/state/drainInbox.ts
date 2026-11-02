@@ -2,10 +2,9 @@ import { Obscura } from '../native/ObscuraModule';
 import { planDrain } from '../domain/drain';
 import { erasedKey } from '../domain/expiry';
 import type { Entry } from '../domain/merge';
-import { MODELS } from '../models/schema';
+import { MODELS } from '../domain/schema';
 import { groupBy } from '../utils/collections';
-import { withEntryLock } from './entryLock';
-import { putEntry, readEntriesById, readErasedKeys } from './entryStore';
+import { putEntry, readEntriesById, readErasedKeys, withEntryLock } from './entryStore';
 import { logError } from '../utils/log';
 
 const BATCH_SIZE = 50;

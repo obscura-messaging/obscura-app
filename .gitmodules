@@ -1,3 +1,4 @@
-[submodule "obscura-native"]
-	path = obscura-native
-	url = https://github.com/obscura-messaging/obscura-native.git
+[submodule "proto"]
+	path = proto
+	url = https://github.com/obscura-messaging/obscura-proto.git
+	branch = main

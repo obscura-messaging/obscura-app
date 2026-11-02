@@ -1,5 +1,4 @@
 import { clamp } from '../utils/gesture';
-import { logError } from '../utils/log';
 
 /**
  * Pure domain types and parser for styled media captions.
@@ -51,8 +50,7 @@ export function parseCaptionMeta(raw?: string | null): CaptionMeta | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch (e) {
-    logError('caption.parse', e);
+  } catch {
     return null;
   }
   if (!parsed || typeof parsed !== 'object') return null;

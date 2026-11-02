@@ -1,47 +1,42 @@
 # Obscura
 
-End-to-end encrypted messaging: a React Native app over ObscuraKit, the
-Kotlin and Swift kits in the [`obscura-native`](obscura-native/) submodule.
-Android is the release target. iOS ships internal TestFlight builds and works in
-the foreground; push is not implemented ([iOS status](docs/IOS_PARITY.md)).
+End-to-end encrypted messaging over ObscuraKit ([`kotlin/`](kotlin/), [`swift/`](swift/)).
+Android is the release target; iOS ships internal TestFlight builds and works in
+the foreground without push ([`docs/IOS_PARITY.md`](docs/IOS_PARITY.md)).
 
-The product is **Obscura**; `obscura-app` is this repository. A **pix** is a
-direct, disappearing photo or video message, not the app's name. Its `pix`
-model key is part of stored and transmitted data and does not change with the
-repository name.
+A **pix** is a direct, disappearing photo or video message, not the app's name.
+Its `pix` model key is part of stored and transmitted data and does not change
+with the repository name.
 
-## Ownership
+## Layer boundaries
 
-| Layer | Owns |
-| --- | --- |
-| TypeScript app (`src/`) | Model schemas, payload parsing, audience, authorization, merge, expiry, outbox, rendering |
-| ObscuraKit | Auth, friends/devices, Signal, transport, typing, attachment encryption, durable inbox, opaque entry store |
-| Android/iOS hosts | OS lifecycle, permissions, files, push, local notifications, React Native marshalling |
+Code and tests are the authority on behaviour; Markdown documents explain only
+**why** boundaries and constraints exist.
 
-Never move application semantics into native code. Contracts:
-[`DOMAIN_CONTRACT.md`](docs/DOMAIN_CONTRACT.md) (app),
-[`BRIDGE.md`](docs/BRIDGE.md) (React Native bridge),
-[`KIT_API.md`](https://github.com/obscura-messaging/obscura-native/blob/6b52e491fdc10e4ded1fedce12023c6bb3f4cfb2/docs/KIT_API.md) (kit).
+- **Bridge & storage (`src/native/`, `src/state/entryStore.ts`, `android/`, `ios/`):**
+  Native hosts manage OS lifecycle, permissions, files, push, and React Native
+  marshalling. `src/state/entryStore.ts` is the sole module allowed to read or
+  write the kit's entry store (`Obscura.entryPut/Get/All/Erase`) so serialization
+  and lock ordering cannot be bypassed.
+- **Domain (`src/domain/`):** Pure, synchronous logic, model schemas, and
+  narrowed view-model projections. Independent of React, React Native, native
+  bridges, and stateful orchestration. Domain types make invalid UI states
+  unrepresentable before data reaches a screen.
+- **State (`src/state/`):** Orchestrates storage, bridge events, and domain
+  rules into reactive Zustand state and actions.
+- **UI (`src/screens/`, `src/components/`, `src/navigation/`):** Renders domain
+  projections and dispatches actions. Enforced by ESLint (`no-restricted-imports`),
+  UI code cannot import the native bridge, `entryStore`, or sync internals.
 
-## Where things live
+## Rationale & guides
 
-| Responsibility | Path |
-| --- | --- |
-| Models | `src/models/schema.ts` |
-| Conversation IDs, audience, field types | `src/domain/{conversation,audience,fields}.ts` |
-| Authorization and drain planning | `src/domain/drain.ts` |
-| Merge | `src/domain/merge.ts` |
-| Seen receipts and expiry rules | `src/domain/{seen,expiry}.ts` |
-| Inbox drain, writes and outbox, expiry sweep, login | `src/state/{drainInbox,writeEntry,expiry,login}.ts` |
-| Own devices: linking, unlinking, primary-only actions | `src/domain/devices.ts`, `src/state/devices.ts` |
-| Session, events and reactive state | `src/state/store.ts` |
-| Bridge facade | `src/native/ObscuraModule.ts` |
-| Native hosts | `android/app/src/main/java/dev/barrelmaker/obscura/`, `ios/Obscura/` |
-
-## Docs
-
-- [`CONTRIBUTING.md`](CONTRIBUTING.md): setup, checks, workflow, native pin.
-- [`PUSH_NOTIFICATIONS.md`](docs/PUSH_NOTIFICATIONS.md): push privacy and transport.
-- [`ANDROID_DISTRIBUTION.md`](docs/ANDROID_DISTRIBUTION.md),
-  [`IOS_DISTRIBUTION.md`](docs/IOS_DISTRIBUTION.md): internal tester builds.
-- [`ROADMAP.md`](ROADMAP.md): what is done and what is next.
+- [`docs/DOMAIN_CONTRACT.md`](docs/DOMAIN_CONTRACT.md): why the domain rules are
+  shaped as they are.
+- [`docs/BRIDGE.md`](docs/BRIDGE.md): why the React Native bridge is constrained
+  as it is ([kit rationale](docs/KIT_API.md)).
+- [`docs/PUSH_NOTIFICATIONS.md`](docs/PUSH_NOTIFICATIONS.md): push privacy
+  rationale.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md): setup, `just check`, and native pin.
+- [`docs/ANDROID_DISTRIBUTION.md`](docs/ANDROID_DISTRIBUTION.md),
+  [`docs/IOS_DISTRIBUTION.md`](docs/IOS_DISTRIBUTION.md): tester builds.
+- [`ROADMAP.md`](ROADMAP.md): product direction.

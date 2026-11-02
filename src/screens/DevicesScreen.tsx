@@ -4,43 +4,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { toast } from '../components/Toast';
-import { confirm } from '../components/confirm';
-import { deviceLabel } from '../domain/devices';
-import { approveLink, linkCodeDeviceName, loadDevices, unlinkDevice, type DeviceInfo } from '../state/devices';
+import { confirm, confirmAndApproveLink } from '../components/confirm';
+import { deviceLabel, errorMessage } from '../domain/devices';
+import { loadDevices, unlinkDevice, type DeviceInfo } from '../state/devices';
 import { useSession } from '../state/store';
-import { errorMessage } from '../utils/log';
 import type { RootStackParamList } from '../navigation/types';
 import { s, colors } from '../styles';
-
-/** Show the device named in a link code, and approve it once the user confirms. Resolves whether it linked. */
-export async function confirmAndApproveLink(code: string): Promise<boolean> {
-  let name: string | null;
-  try {
-    name = await linkCodeDeviceName(code);
-  } catch (e) {
-    toast.error(errorMessage(e));
-    return false;
-  }
-  if (name === null) {
-    toast.error('That is not a device link code');
-    return false;
-  }
-  const label = deviceLabel({ name });
-  const confirmed = await confirm(
-    `Link “${label}”?`,
-    'It gets your account, friends and message history, and can send and receive as you. Only link a device you own.',
-    'Link',
-  );
-  if (!confirmed) return false;
-  try {
-    await approveLink(code);
-    toast.success(`${label} linked`);
-    return true;
-  } catch (e) {
-    toast.error(errorMessage(e));
-    return false;
-  }
-}
 
 export function DevicesScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();

@@ -1,0 +1,44 @@
+-- Every device this client can address, its own included. A device belongs to one user.
+CREATE TABLE IF NOT EXISTS Device (
+    device_id TEXT NOT NULL PRIMARY KEY,
+    user_id TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS Device_user_id ON Device(user_id);
+
+-- This device, and the account's primary device. One row.
+CREATE TABLE IF NOT EXISTS DeviceIdentity (
+    id INTEGER NOT NULL PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    device_id TEXT NOT NULL,
+    primary_device_id TEXT NOT NULL
+);
+
+selectByUser:
+SELECT device_id FROM Device WHERE user_id = ? ORDER BY device_id;
+
+selectUser:
+SELECT user_id FROM Device WHERE device_id = ?;
+
+insert:
+INSERT OR REPLACE INTO Device(user_id, device_id) VALUES (?, ?);
+
+delete:
+DELETE FROM Device WHERE user_id = ? AND device_id = ?;
+
+deleteByUser:
+DELETE FROM Device WHERE user_id = ?;
+
+deleteOtherDevicesOfUser:
+DELETE FROM Device WHERE user_id = ? AND device_id != ?;
+
+deleteAll:
+DELETE FROM Device;
+
+selectIdentity:
+SELECT device_id, primary_device_id FROM DeviceIdentity WHERE id = 1;
+
+insertIdentity:
+INSERT OR REPLACE INTO DeviceIdentity(id, device_id, primary_device_id) VALUES (1, ?, ?);
+
+deleteIdentity:
+DELETE FROM DeviceIdentity;

@@ -1,10 +1,12 @@
-import { activityPreview, friendActivities, conversationEntries } from '../chats';
-import { conversationId } from '../conversation';
-import { STORY_MAX_AGE_MS } from '../expiry';
-import { displayMs, pixStatus } from '../pix';
-import type { ScreenEntry } from '../seen';
-import { storyGroups } from '../stories';
-import type { Friend } from '../../native/ObscuraModule';
+import { conversationId } from '../audience';
+import {
+  activityPreview, chatTimeline, friendActivities, conversationEntries,
+  pixBadgeFor, pixStatus,
+} from '../chats';
+import { STORY_MAX_AGE_MS, type ScreenEntry } from '../expiry';
+import type { Friend } from '../friends';
+import { displayMs, storyGroups } from '../viewer';
+import { isBackSwipeGesture, shouldCompleteBackSwipe } from '../../utils/gesture';
 
 const ME = 'uMe';
 const BOB: Friend = { userId: 'uBob', username: 'bob', status: 'accepted' };
@@ -44,6 +46,66 @@ describe('conversationEntries', () => {
   });
 });
 
+describe('chatTimeline', () => {
+  const convId = conversationId(ME, BOB.userId);
+
+  it('orders messages and active pix chronologically and hides received_viewed pix', () => {
+    const messages = [
+      entry('m1', 10, BOB.userId, { conversationId: convId, content: 'hi' }),
+      entry('m2', 40, ME, { conversationId: convId, content: 'yo' }),
+    ];
+    const pix = [
+      entry('p_viewed', 15, BOB.userId, { conversationId: convId, caption: 'secret' }, 16),
+      entry('p_new', 20, BOB.userId, { conversationId: convId, caption: 'do not leak' }, null),
+      entry('p_sent_pending', 25, ME, { conversationId: convId, caption: 'mine' }, null),
+      entry('p_sent_opened', 30, ME, { conversationId: convId, caption: 'opened' }, 35),
+    ];
+
+    const timeline = chatTimeline(messages, pix, convId, ME);
+
+    expect(timeline.map((item) => [item.kind, item.id])).toEqual([
+      ['message', 'm1'],
+      ['pix', 'p_new'],
+      ['pix', 'p_sent_pending'],
+      ['pix', 'p_sent_opened'],
+      ['message', 'm2'],
+    ]);
+  });
+
+  it('omits payload data and captions from pix timeline items so captions cannot leak in chat', () => {
+    const pix = [
+      entry('p_new', 20, BOB.userId, { conversationId: convId, caption: 'hidden until opened', mediaRef: 'r1' }),
+    ];
+
+    const [item] = chatTimeline([], pix, convId, ME);
+
+    expect(item).toEqual({
+      kind: 'pix',
+      id: 'p_new',
+      sentAt: 20,
+      authorUserId: BOB.userId,
+      status: 'received_new',
+    });
+    expect('data' in item).toBe(false);
+  });
+});
+
+describe('back swipe gesture helpers', () => {
+  it('recognizes a deliberate horizontal right swipe and ignores vertical scrolling or left swipes', () => {
+    expect(isBackSwipeGesture(24, 4)).toBe(true);
+    expect(isBackSwipeGesture(10, 2)).toBe(false);
+    expect(isBackSwipeGesture(-30, 2)).toBe(false);
+    expect(isBackSwipeGesture(24, 15)).toBe(false);
+  });
+
+  it('completes a back swipe on sufficient distance or velocity', () => {
+    expect(shouldCompleteBackSwipe(80, 0.1)).toBe(true);
+    expect(shouldCompleteBackSwipe(40, 0.7)).toBe(true);
+    expect(shouldCompleteBackSwipe(40, 0.2)).toBe(false);
+    expect(shouldCompleteBackSwipe(20, 0.9)).toBe(false);
+  });
+});
+
 describe('friendActivities', () => {
   it('summarizes each conversation and orders by latest activity', () => {
     const messages = [withBob('m1', 10, BOB.userId), withBob('m2', 20, ME)];
@@ -56,18 +118,30 @@ describe('friendActivities', () => {
     expect(bob.unopenedPix.map((p) => p.id)).toEqual(['p1', 'p3']);
     expect(bob.latestPix).toBe('received_viewed');
     expect(bob.latestAt).toBe(30);
-    expect(carol).toEqual({ friend: CAROL, lastMessage: undefined, unopenedPix: [], latestPix: undefined, latestAt: 0 });
+    // Even though the newest pix is `received_viewed`, older unopened pix take precedence in the badge.
+    expect(bob.badge).toEqual({ kind: 'new', count: 2 });
+    expect(carol).toEqual({
+      friend: CAROL,
+      lastMessage: undefined,
+      unopenedPix: [],
+      latestPix: undefined,
+      latestAt: 0,
+      badge: null,
+    });
   });
 
-  it('computes activityPreview from unopened pix, latest message, or latest pix status', () => {
+  it('computes activityPreview and badge from unopened pix, latest message, or latest pix status', () => {
     const [unopenedActivity] = friendActivities([BOB], ME, [], [withBob('p1', 10, BOB.userId), withBob('p2', 20, BOB.userId)]);
     expect(activityPreview(unopenedActivity, ME)).toEqual({ text: '2 new pix · tap to view', highlight: true });
+    expect(unopenedActivity.badge).toEqual({ kind: 'new', count: 2 });
 
     const [sentPixActivity] = friendActivities([BOB], ME, [], [withBob('p3', 30, ME)]);
     expect(activityPreview(sentPixActivity, ME)).toEqual({ text: 'Pix delivered', highlight: false });
+    expect(sentPixActivity.badge).toEqual({ kind: 'sent' });
 
     const [msgActivity] = friendActivities([BOB], ME, [entry('m1', 40, ME, { conversationId: conversationId(ME, BOB.userId), content: 'yo' })], [withBob('p3', 30, ME)]);
     expect(activityPreview(msgActivity, ME)).toEqual({ text: 'You: yo', highlight: false });
+    expect(pixBadgeFor(0, 'sent_opened')).toEqual({ kind: 'opened' });
   });
 });
 

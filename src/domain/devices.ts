@@ -1,5 +1,22 @@
-import type { DeviceInfo } from '../native/ObscuraModule';
-import { errorCode, errorMessage } from '../utils/log';
+/** A readable message for anything thrown. */
+export function errorMessage(e: unknown): string {
+  const message = (e as { message?: unknown } | null)?.message;
+  return typeof message === 'string' ? message : String(e);
+}
+
+/** The `code` of a bridge rejection, if any. */
+export function errorCode(e: unknown): string | undefined {
+  const code = (e as { code?: unknown } | null)?.code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+/** One device of the signed-in account. */
+export interface DeviceInfo {
+  deviceId: string;
+  name: string | null;
+  isPrimary: boolean;
+  isThisDevice: boolean;
+}
 
 /** Primary first, then by name, so the list does not reorder between loads. */
 export function orderDevices(devices: readonly DeviceInfo[]): DeviceInfo[] {

@@ -11,18 +11,17 @@ import { primaryOnly } from './devices';
 import { requestStartupPermissions } from './permissions';
 import { getJsLog, logError } from '../utils/log';
 import type { Entry } from '../domain/merge';
-import type { ModelData, ModelName } from '../models/schema';
-import { EPHEMERAL_MODELS, isEphemeral } from '../domain/expiry';
+import { MODELS, type ModelData, type ModelName } from '../domain/schema';
 import { acceptedFriends, pendingFriends, type Identity } from '../domain/friends';
 import { cleanCode } from '../domain/qr';
-import { SEEN_MODEL, indexReceipts, seenEntryId, viewedAtFor } from '../domain/seen';
+import {
+  SEEN_MODEL, indexReceipts, isEphemeral, seenEntryId, viewedAtFor,
+  type ScreenEntry,
+} from '../domain/expiry';
 import { readEntries } from './entryStore';
 import { sweepExpired } from './expiry';
 
-export type { Friend, ConnectionState };
-
-/** An entry as screens see it: `data` as sent, plus when its recipient saw it (ephemeral models). */
-export type ScreenEntry<D = Record<string, unknown>> = Entry<D> & { viewedAt: number | null };
+export type { Friend, ConnectionState, ScreenEntry };
 
 type ModelEntryMap = {
   [M in ModelName]?: ScreenEntry<ModelData<M>>[];
@@ -163,8 +162,8 @@ async function refreshLoaded(models: Iterable<string>): Promise<void> {
   }
 
   if (seenChanged && receipts) {
-    const toReproject = EPHEMERAL_MODELS.filter(
-      (m) => !changed.has(m) && useStore.getState().entries[m] !== undefined,
+    const toReproject = [...MODELS.keys()].filter(
+      (m) => isEphemeral(m) && !changed.has(m) && useStore.getState().entries[m] !== undefined,
     );
     if (toReproject.length > 0) {
       useStore.setState((s) => {
@@ -391,7 +390,7 @@ export function ObscuraBootstrap(): null {
   const authed = useStore((s) => s.authed);
   useEffect(() => {
     if (!authed) return;
-    loadSession();
+    if (useStore.getState().myUserId === '') loadSession();
     const timer = setInterval(() => { sweepAndRefresh(); }, SWEEP_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [authed]);

@@ -1,10 +1,9 @@
-import { putEntry } from '../entryStore';
+import { putEntry, withEntryLock } from '../entryStore';
 import { PIX_MEDIA } from '../../native/__fixtures__/payloads';
 import { drainInbox } from '../drainInbox';
 import { writeEntry } from '../writeEntry';
 import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
-import { withEntryLock } from '../entryLock';
 
 const bridge = getFakeBridge();
 

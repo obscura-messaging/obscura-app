@@ -65,7 +65,7 @@ jobs:
 
       - uses: actions/cache@v6
         with:
-          path: obscura-native/swift/vendored/libsignal
+          path: swift/vendored/libsignal
           key: libsignal-${{ env.LIBSIGNAL_REF }}-ios-device-macos26
 
       - name: Install protobuf

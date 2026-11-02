@@ -16,7 +16,7 @@ import {
   CAPTION_FONTS, CAPTION_FONT_LABELS, CAPTION_COLORS, DEFAULT_BAR, captionStyles, boldTextStyle,
   serializeCaptionMeta, type CaptionMeta, type CaptionStyle,
 } from '../components/Caption';
-import { DEFAULT_DISPLAY_SECONDS } from '../domain/pix';
+import { DEFAULT_DISPLAY_SECONDS } from '../domain/viewer';
 import { discardCapture } from '../state/sendMedia';
 import { fileUri } from '../utils/files';
 

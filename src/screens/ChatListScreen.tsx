@@ -3,8 +3,7 @@ import { View, Text, TouchableOpacity, FlatList, Pressable, StyleSheet } from 'r
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { activityPreview, friendActivities } from '../domain/chats';
-import type { PixStatus } from '../domain/pix';
+import { activityPreview, friendActivities, type PixBadge } from '../domain/chats';
 import {
   useSession, useModelEntries, useAcceptedFriends, usePendingFriends,
   acceptFriend, removeFriend, type Friend,
@@ -20,8 +19,8 @@ import { timeAgo } from '../utils/format';
 import { errorMessage } from '../utils/log';
 import { colors } from '../styles';
 
-function PixAvatar({ status, unopened, friend }: { status: PixStatus | undefined; unopened: number; friend: Friend }) {
-  const hasNew = unopened > 0;
+function PixAvatar({ badge, friend }: { badge: PixBadge; friend: Friend }) {
+  const hasNew = badge?.kind === 'new';
   return (
     <View style={cl.avatarWrap}>
       <Avatar
@@ -30,14 +29,14 @@ function PixAvatar({ status, unopened, friend }: { status: PixStatus | undefined
         background={hasNew ? colors.accent : colors.surface}
         color={hasNew ? colors.onAccent : colors.text}
       />
-      {status !== undefined && (
+      {badge !== null && (
         <View style={[
           cl.statusBadge,
-          hasNew && cl.badgeNew,
-          status === 'sent_pending' && cl.badgeSent,
-          (status === 'received_viewed' || status === 'sent_opened') && cl.badgeOpened,
+          badge.kind === 'new' && cl.badgeNew,
+          badge.kind === 'sent' && cl.badgeSent,
+          badge.kind === 'opened' && cl.badgeOpened,
         ]}>
-          {unopened > 1 && <Text style={cl.badgeCount}>{unopened}</Text>}
+          {badge.kind === 'new' && badge.count > 1 && <Text style={cl.badgeCount}>{badge.count}</Text>}
         </View>
       )}
     </View>
@@ -171,27 +170,22 @@ export function ChatListScreen() {
         renderItem={({ item }) => {
           const { text: preview, highlight } = activityPreview(item, myUserId);
           return (
-            <View style={cl.row}>
-              <TouchableOpacity
-                style={cl.iconZone}
-                onPress={() => (item.unopenedPix.length > 0
-                  ? openPixViewer(nav, item.friend, item.unopenedPix)
-                  : openChat(item.friend))}
-              >
-                <PixAvatar status={item.latestPix} unopened={item.unopenedPix.length} friend={item.friend} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={cl.chatZone}
-                onPress={() => openChat(item.friend)}
-                onLongPress={isPrimary === true ? () => confirmRemoveFriend(item.friend) : undefined}
-              >
+            <TouchableOpacity
+              style={cl.row}
+              onPress={() => (item.unopenedPix.length > 0
+                ? openPixViewer(nav, item.friend, item.unopenedPix)
+                : openChat(item.friend))}
+              onLongPress={isPrimary === true ? () => confirmRemoveFriend(item.friend) : undefined}
+            >
+              <PixAvatar badge={item.badge} friend={item.friend} />
+              <View style={cl.chatZone}>
                 <View style={cl.info}>
                   <Text style={cl.username}>{item.friend.username}</Text>
                   <Text style={[cl.preview, highlight && cl.previewHighlight]} numberOfLines={1}>{preview}</Text>
                 </View>
                 {item.latestAt > 0 && <Text style={cl.time}>{timeAgo(item.latestAt)}</Text>}
-              </TouchableOpacity>
-            </View>
+              </View>
+            </TouchableOpacity>
           );
         }}
         ListEmptyComponent={
@@ -216,7 +210,6 @@ const cl = StyleSheet.create({
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginVertical: 4 },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 16, gap: 12 },
   pendingRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 16, gap: 12 },
-  iconZone: { alignItems: 'center', justifyContent: 'center' },
   chatZone: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingVertical: 4, gap: 8 },
   avatarWrap: { width: 48, height: 48 },
   statusBadge: {

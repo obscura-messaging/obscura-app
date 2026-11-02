@@ -22,7 +22,6 @@ module.exports = {
   },
   roots: [
     '<rootDir>/src/domain',
-    '<rootDir>/src/models',
     '<rootDir>/src/native',
     '<rootDir>/src/state',
   ],

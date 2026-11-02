@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "kind": "link",
+  "description": "Device-link conformance. Envelope: X25519(own ephemeral private, peer ephemeral public) -> HKDF-SHA256(salt empty, info \"Obscura link v1\", 32 bytes) -> AES-256-GCM(12-byte nonce, no associated data) over the serialized LinkBundle; ciphertext is ciphertext || 16-byte tag. Public keys are libsignal serialized (0x05 || 32 bytes), private keys 32 raw bytes, identityKeyPair is libsignal IdentityKeyPair.serialize(). Byte strings are lowercase hex. Link codes are base64url without padding of a serialized LinkCode. Sealing plaintext with key and nonce yields ciphertext exactly; a kit's own encoding of a LinkBundle, LinkEnvelope or LinkCode is compared with plaintext, linkEnvelope or code by decoded value.",
+  "envelopes": [
+    {
+      "name": "bundle with friends and history",
+      "newDevicePrivateKey": "f873fa4fddbb8d848d336f8c8427ead7a4ffab9a73773dcbb7441d9a8fc8534b",
+      "newDevicePublicKey": "05b1b3f21f7e6630b41297e78b696b734c5ec755a70deb17b152ee7887f9f2a42b",
+      "primaryPrivateKey": "485e3fd8e65e15c5a442de8de96b8a3be2cb4f5eaf325fb3123752f8997a1170",
+      "primaryPublicKey": "05a91a3868a0d1e29281f8984e49a3df795e5bb59f2766df1d68f90ec0ee3dfd77",
+      "sharedSecret": "1eef750e1b5f13582492163925b85767d94ca95aa4071e3df36ca109bc857d4e",
+      "key": "87349db1bed008468a99884b1a57f8fc9cd1fec0aed3e8aa934f44e279cad26f",
+      "nonce": "9479372b2ffccd76c2d469fb",
+      "linkBundle": {
+        "identityPrivateKey": "60f4c77aa1225c0d0d3502c48d50bfec63329ed0accaabdb63239f65cb1db44d",
+        "identityPublicKey": "05ffb7253596244dd5273635aa6b918dd6cf09426a9354a42ae62e66bde3464b39",
+        "identityKeyPair": "0a2105ffb7253596244dd5273635aa6b918dd6cf09426a9354a42ae62e66bde3464b39122060f4c77aa1225c0d0d3502c48d50bfec63329ed0accaabdb63239f65cb1db44d",
+        "userId": "3f6c1a2e-8b4d-4e7a-9c1f-2d5e8a7b6c40",
+        "primaryDeviceId": "11111111-2222-4333-8444-555555555555",
+        "username": "alice",
+        "friendListVersion": 4294967296,
+        "friends": [
+          {
+            "userId": "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+            "username": "bob",
+            "status": "FRIEND_STATUS_ACCEPTED"
+          },
+          {
+            "userId": "0e9d8c7b-6a5f-4e3d-8c2b-1a0f9e8d7c6b",
+            "username": "carol",
+            "status": "FRIEND_STATUS_PENDING_SENT"
+          },
+          {
+            "userId": "5c4b3a29-1807-4f6e-9d5c-4b3a29180716",
+            "username": "dave",
+            "status": "FRIEND_STATUS_PENDING_RECEIVED"
+          }
+        ],
+        "history": {
+          "attachmentId": "b2a1c3d4-e5f6-4789-8abc-def012345678",
+          "contentKey": "6217b8be8306c17ebf27ccac64a98aeefb40e5d86b5f39b2050fb034f08f0aca",
+          "nonce": "21e9eaffd19482ad8ef94ce4"
+        }
+      },
+      "plaintext": "0a450a2105ffb7253596244dd5273635aa6b918dd6cf09426a9354a42ae62e66bde3464b39122060f4c77aa1225c0d0d3502c48d50bfec63329ed0accaabdb63239f65cb1db44d122433663663316132652d386234642d346537612d396331662d3264356538613762366334301a2431313131313131312d323232322d343333332d383434342d3535353535353535353535352205616c696365288080808010322d0a2437613162326333642d346535662d346136622d386337642d3965306631613262336334641203626f621803322f0a2430653964386337622d366135662d346533642d386332622d31613066396538643763366212056361726f6c1801322e0a2435633462336132392d313830372d346636652d396435632d34623361323931383037313612046461766518023a560a2462326131633364342d653566362d343738392d386162632d64656630313233343536373812206217b8be8306c17ebf27ccac64a98aeefb40e5d86b5f39b2050fb034f08f0aca1a0c21e9eaffd19482ad8ef94ce4",
+      "ciphertext": "4546178ed9151e3353f53e28d940ef35147dbad69dcc4d02cd2c419f9cc6e98b6b3c5ec761f9dbe41dbf75ee9923d7c7740f768cdbdd8d6b95f1183b9cc0f6d2782eece2516b3e000bf2e637b94a13fe90e8038304cd0a0fbbff1b969c85f1969d8a192d702eb89a106b350ed22df139534c718b0aff67beeff4b87aad3cac3cdc34c315d8ce743a4d79509013888160ab20d332931b7899b0c5aa57ab153fb71f9d469999856c771d39d52e9fd181198b79dcac712743bdaa77b0763d0003d0b6e198a42cc747d1339d50a91e7cfd6a3ea69c6d0e99035dcfbd8c51d5259bc2d4b960aae651efb3417b61c1179335e67b00c2d8b8e988775dc3cc458881682016da47b08e5ae0b0ec8573900f98254520c66c0f683fd23ede8972aac5d46d85c24b53a18995b245c1b987316eb0a8dee9172222c383e98016cd7b50291a488225eba1bd3cb2748826360e09cd64bf76bfb592a25c774779bfc77dd1ea171d09ee4dbc20aa00d7afc97fdeb6e8e37cd13fc68d35efd067a90cccd58e8d677d087209ed1d21f43e276d2a51ffb1ba7a74d553ec41d5e707b1",
+      "linkEnvelope": "0a2105a91a3868a0d1e29281f8984e49a3df795e5bb59f2766df1d68f90ec0ee3dfd77120c9479372b2ffccd76c2d469fb1a98034546178ed9151e3353f53e28d940ef35147dbad69dcc4d02cd2c419f9cc6e98b6b3c5ec761f9dbe41dbf75ee9923d7c7740f768cdbdd8d6b95f1183b9cc0f6d2782eece2516b3e000bf2e637b94a13fe90e8038304cd0a0fbbff1b969c85f1969d8a192d702eb89a106b350ed22df139534c718b0aff67beeff4b87aad3cac3cdc34c315d8ce743a4d79509013888160ab20d332931b7899b0c5aa57ab153fb71f9d469999856c771d39d52e9fd181198b79dcac712743bdaa77b0763d0003d0b6e198a42cc747d1339d50a91e7cfd6a3ea69c6d0e99035dcfbd8c51d5259bc2d4b960aae651efb3417b61c1179335e67b00c2d8b8e988775dc3cc458881682016da47b08e5ae0b0ec8573900f98254520c66c0f683fd23ede8972aac5d46d85c24b53a18995b245c1b987316eb0a8dee9172222c383e98016cd7b50291a488225eba1bd3cb2748826360e09cd64bf76bfb592a25c774779bfc77dd1ea171d09ee4dbc20aa00d7afc97fdeb6e8e37cd13fc68d35efd067a90cccd58e8d677d087209ed1d21f43e276d2a51ffb1ba7a74d553ec41d5e707b1"
+    },
+    {
+      "name": "bundle without friends or history",
+      "newDevicePrivateKey": "d837b7007f5dd2ab001f266a3956996ba5c1a809fa369e0a284d6d635d9cb442",
+      "newDevicePublicKey": "05c407e53c342f42989eb7fe17d0a2b16e4f2ac9617500f4728b707410ee258973",
+      "primaryPrivateKey": "6087728bd6e59b2d61770abbb9c30341ab0483220d6ceccc56cf8d31603d1958",
+      "primaryPublicKey": "056716becda0dffc246b2287223f96ac73fb51fec0aa7b9ca229ee00cb83afa666",
+      "sharedSecret": "25c57bc9876b73ea3bf0ff9f5e8c56d3b02bc2369ddadad6294fa55a6cf37a27",
+      "key": "b83a23c9146c02361c63a286c2f2bd7efe9a916aff037b84e0ecfc803ad4cec4",
+      "nonce": "4727e9ae76473cfaf9f03ee2",
+      "linkBundle": {
+        "identityPrivateKey": "a8ddd04afb23bdb4505f3ed4d40c4a7fb6cf31057b08aca1b1ba161e617dc54a",
+        "identityPublicKey": "055ac6734d809b5eaab33fd8aa8b0b2a2a1a52c7cc3a10c3c671cf2f51a5516f2e",
+        "identityKeyPair": "0a21055ac6734d809b5eaab33fd8aa8b0b2a2a1a52c7cc3a10c3c671cf2f51a5516f2e1220a8ddd04afb23bdb4505f3ed4d40c4a7fb6cf31057b08aca1b1ba161e617dc54a",
+        "userId": "c0ffee00-1234-4abc-8def-000000000001",
+        "primaryDeviceId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "username": "erin",
+        "friendListVersion": 0,
+        "friends": []
+      },
+      "plaintext": "0a450a21055ac6734d809b5eaab33fd8aa8b0b2a2a1a52c7cc3a10c3c671cf2f51a5516f2e1220a8ddd04afb23bdb4505f3ed4d40c4a7fb6cf31057b08aca1b1ba161e617dc54a122463306666656530302d313233342d346162632d386465662d3030303030303030303030311a2461616161616161612d626262622d346363632d386464642d65656565656565656565656522046572696e",
+      "ciphertext": "a8031ae62879f749586a6278fde6b61b0134da6655cf5a782a8bb249cd3a13f45d23f3f971b04c9af9276efcb0c80a2a6862f72bf112bb93bf15fc1b2a17b0df7f6b8b926cd8c89895d2c373cd4310955f0aab1f7297dffa36f61e5f3d035d029c9bb765ea669f66c07cb1a470dd82e82c20dafb29bc304ed83d28a84e6062f45c330b2501fda5b3c98ec2ef6951cd618c51b91d763b6ef2f2c83267034cbbbcc60f3602b60178e073",
+      "linkEnvelope": "0a21056716becda0dffc246b2287223f96ac73fb51fec0aa7b9ca229ee00cb83afa666120c4727e9ae76473cfaf9f03ee21aa901a8031ae62879f749586a6278fde6b61b0134da6655cf5a782a8bb249cd3a13f45d23f3f971b04c9af9276efcb0c80a2a6862f72bf112bb93bf15fc1b2a17b0df7f6b8b926cd8c89895d2c373cd4310955f0aab1f7297dffa36f61e5f3d035d029c9bb765ea669f66c07cb1a470dd82e82c20dafb29bc304ed83d28a84e6062f45c330b2501fda5b3c98ec2ef6951cd618c51b91d763b6ef2f2c83267034cbbbcc60f3602b60178e073"
+    }
+  ],
+  "linkCodes": [
+    {
+      "name": "link code",
+      "sessionId": "Zq3vX9mT2pL8sR4wK7nB1cY6hJ0dF5gA",
+      "ephemeralPublicKey": "05b1b3f21f7e6630b41297e78b696b734c5ec755a70deb17b152ee7887f9f2a42b",
+      "deviceName": "Alice's iPhone",
+      "code": "CiBacTN2WDltVDJwTDhzUjR3SzduQjFjWTZoSjBkRjVnQRIhBbGz8h9-ZjC0Epfni2lrc0xex1WnDesXsVLueIf58qQrGg5BbGljZSdzIGlQaG9uZQ"
+    },
+    {
+      "name": "link code with non-ASCII device name",
+      "sessionId": "ls_01HZX4K8Q2M7N3P5R9T6V0W1Y2",
+      "ephemeralPublicKey": "05c407e53c342f42989eb7fe17d0a2b16e4f2ac9617500f4728b707410ee258973",
+      "deviceName": "Pixel 9 \u2013 \u0112rin",
+      "code": "Ch1sc18wMUhaWDRLOFEyTTdOM1A1UjlUNlYwVzFZMhIhBcQH5Tw0L0KYnrf-F9CisW5PKslhdQD0cotwdBDuJYlzGhFQaXhlbCA5IOKAkyDEknJpbg"
+    }
+  ]
+}

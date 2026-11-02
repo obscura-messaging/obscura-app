@@ -1,21 +1,21 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList,
-  KeyboardAvoidingView, Platform, Animated, StyleSheet, type ViewToken,
+  KeyboardAvoidingView, Platform, Animated, PanResponder, StyleSheet, type ViewToken,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { conversationEntries } from '../domain/chats';
-import { conversationId } from '../domain/conversation';
-import { pixStatus } from '../domain/pix';
-import type { ScreenEntry } from '../domain/seen';
+import { conversationId } from '../domain/audience';
+import { chatTimeline, conversationEntries, pixStatus, type ChatTimelineItem } from '../domain/chats';
+import type { ScreenEntry } from '../domain/expiry';
+import type { ModelData } from '../domain/schema';
 import { useSession, useModelEntries, useAcceptedFriends, markSeen } from '../state/store';
 import { usePeerTyping, notifyTyping, sendChatMessage } from '../state/chat';
 import { useAppActive } from '../hooks/useAppActive';
+import { isBackSwipeGesture, shouldCompleteBackSwipe } from '../utils/gesture';
 import { errorMessage, logError } from '../utils/log';
-import type { ModelData } from '../models/schema';
 import { toast } from '../components/Toast';
 import { SendIcon } from '../components/icons';
 import type { RootStackScreenProps, RootStackParamList } from '../navigation/types';
@@ -44,9 +44,7 @@ function TypingBubble() {
   );
 }
 
-type TimelineItem =
-  | (ScreenEntry<ModelData<'directMessage'>> & { kind: 'message' })
-  | (ScreenEntry<ModelData<'pix'>> & { kind: 'pix' });
+type TimelineItem = ChatTimelineItem<ScreenEntry<ModelData<'directMessage'>>>;
 
 const VIEWABILITY = { itemVisiblePercentThreshold: 50 };
 
@@ -66,10 +64,35 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const peerTyping = usePeerTyping(convId, friend.userId);
 
   const messages = useMemo(() => conversationEntries(allMessages, convId), [allMessages, convId]);
-  const timeline: TimelineItem[] = useMemo(() => [
-    ...messages.map((m) => ({ ...m, kind: 'message' as const })),
-    ...conversationEntries(allPix, convId).map((p) => ({ ...p, kind: 'pix' as const })),
-  ].sort((a, b) => a.sentAt - b.sentAt), [messages, allPix, convId]);
+  const unopenedPix = useMemo(
+    () => conversationEntries(allPix, convId).filter((p) => pixStatus(p, myUserId) === 'received_new'),
+    [allPix, convId, myUserId],
+  );
+  const timeline = useMemo(
+    () => chatTimeline(allMessages, allPix, convId, myUserId),
+    [allMessages, allPix, convId, myUserId],
+  );
+  // Inverted FlatList renders index 0 at the visual bottom (above the composer), so newest is first.
+  const invertedTimeline = useMemo(() => [...timeline].reverse(), [timeline]);
+
+  useEffect(() => {
+    if (timeline.length > prevCountRef.current && prevCountRef.current > 0) {
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    }
+    prevCountRef.current = timeline.length;
+  }, [timeline.length]);
+
+  // Android native-stack fragments do not support interactive swipe-back; handle right-swipes directly.
+  const backSwipe = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponderCapture: (_e, gs) =>
+        Platform.OS === 'android' && isBackSwipeGesture(gs.dx, gs.dy),
+      onPanResponderRelease: (_e, gs) => {
+        if (shouldCompleteBackSwipe(gs.dx, gs.vx)) nav.goBack();
+      },
+    }),
+  ).current;
 
   // A received message is seen once it is on screen in the focused chat with the app foregrounded.
   const isFocused = useIsFocused();
@@ -85,7 +108,10 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
       if (!visibleIds.has(m.id) || m.viewedAt !== null || m.authorUserId === myUserId) continue;
       if (marked.current.has(m.id)) continue;
       marked.current.add(m.id);
-      markSeen('directMessage', m).catch((e) => logError('seen.message:' + m.id, e));
+      markSeen('directMessage', m).catch((e) => {
+        marked.current.delete(m.id);
+        logError('seen.message:' + m.id, e);
+      });
     }
   }, [isFocused, appActive, visibleIds, messages, myUserId]);
 
@@ -116,23 +142,13 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
         </View>
       );
     }
-    switch (pixStatus(item, myUserId)) {
+    switch (item.status) {
       case 'received_new':
         return (
           <View style={[cs.msgRow, cs.msgRowLeft]}>
-            <TouchableOpacity style={cs.pixBarFilled} onPress={() => openPixViewer(nav, friend, [item])}>
-              <Text style={cs.pixBarFilledText}>
-                {item.data.caption ? `New pix: ${item.data.caption}` : 'New pix · Tap to view'}
-              </Text>
+            <TouchableOpacity style={cs.pixBarFilled} onPress={() => openPixViewer(nav, friend, unopenedPix)}>
+              <Text style={cs.pixBarFilledText}>New pix · Tap to view</Text>
             </TouchableOpacity>
-          </View>
-        );
-      case 'received_viewed':
-        return (
-          <View style={[cs.msgRow, cs.msgRowLeft]}>
-            <View style={cs.pixBarViewed}>
-              <Text style={cs.pixBarViewedText}>{item.data.caption || 'Pix viewed'}</Text>
-            </View>
           </View>
         );
       case 'sent_pending':
@@ -155,41 +171,46 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   };
 
   return (
-    <SafeAreaView style={s.container} edges={['bottom']}>
+    <SafeAreaView style={s.container} edges={['bottom']} {...backSwipe.panHandlers}>
       <KeyboardAvoidingView
         style={s.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={headerHeight}
       >
-        <FlatList
-          ref={listRef}
-          data={timeline}
-          keyExtractor={(item) => item.id}
-          style={cs.messageList}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          renderItem={renderItem}
-          onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={VIEWABILITY}
-          onContentSizeChange={() => {
-            if (timeline.length > prevCountRef.current) {
-              listRef.current?.scrollToEnd({ animated: prevCountRef.current > 0 });
-            }
-            prevCountRef.current = timeline.length;
-          }}
-          ListEmptyComponent={
+        {invertedTimeline.length === 0 ? (
+          <View style={cs.emptyContainer}>
             <View style={cs.emptyWrap}>
               <Text style={cs.emptyText}>
                 Messages and pix with {friend.username} are end-to-end encrypted and disappear after they are seen.
               </Text>
             </View>
-          }
-          ListFooterComponent={peerTyping ? (
-            <View style={[cs.msgRow, cs.msgRowLeft]}>
-              <TypingBubble />
-            </View>
-          ) : null}
-        />
+            {peerTyping && (
+              <View style={[cs.msgRow, cs.msgRowLeft]}>
+                <TypingBubble />
+              </View>
+            )}
+          </View>
+        ) : (
+          <FlatList
+            ref={listRef}
+            inverted
+            data={invertedTimeline}
+            keyExtractor={(item) => item.id}
+            style={cs.messageList}
+            contentContainerStyle={cs.listContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            renderItem={renderItem}
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={VIEWABILITY}
+            // In an inverted FlatList, ListHeaderComponent renders at the visual bottom (offset 0).
+            ListHeaderComponent={peerTyping ? (
+              <View style={[cs.msgRow, cs.msgRowLeft]}>
+                <TypingBubble />
+              </View>
+            ) : null}
+          />
+        )}
 
         <View style={cs.composer}>
           <TextInput style={cs.composerInput} placeholder="Message" placeholderTextColor={colors.textDim}
@@ -208,7 +229,10 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
 }
 
 const cs = StyleSheet.create({
-  messageList: { flex: 1, paddingHorizontal: 12, paddingTop: 8 },
+  messageList: { flex: 1, paddingHorizontal: 12 },
+  // In an inverted FlatList, flex-end aligns short conversations to the visual top of the screen.
+  listContent: { flexGrow: 1, justifyContent: 'flex-end', paddingVertical: 8 },
+  emptyContainer: { flex: 1, paddingHorizontal: 12, paddingVertical: 8, justifyContent: 'space-between' },
   msgRow: { marginVertical: 3 },
   msgRowRight: { alignItems: 'flex-end' },
   msgRowLeft: { alignItems: 'flex-start' },
@@ -235,11 +259,6 @@ const cs = StyleSheet.create({
     backgroundColor: colors.accent, borderRadius: 16, paddingHorizontal: 16, paddingVertical: 12,
   },
   pixBarFilledText: { color: colors.onAccent, fontWeight: '700', fontSize: 15 },
-  pixBarViewed: {
-    borderWidth: 1.5, borderColor: colors.surfaceMuted, borderStyle: 'dashed', borderRadius: 16,
-    paddingHorizontal: 16, paddingVertical: 10,
-  },
-  pixBarViewedText: { color: colors.textSecondary, fontWeight: '600', fontSize: 14 },
   pixSentPill: {
     borderRadius: 16, paddingHorizontal: 14, paddingVertical: 8,
     backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,

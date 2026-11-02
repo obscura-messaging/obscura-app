@@ -41,8 +41,8 @@ describe('native exports match the bridge contract', () => {
       }
       return type.literal.text;
     });
-    const kotlin = source('obscura-native/kotlin/lib/src/main/kotlin/dev/barrelmaker/obscura/kit/ObscuraError.kt');
-    const swiftErrors = source('obscura-native/swift/Sources/ObscuraKit/ObscuraError.swift');
+    const kotlin = source('kotlin/lib/src/main/kotlin/dev/barrelmaker/obscura/kit/ObscuraError.kt');
+    const swiftErrors = source('swift/Sources/ObscuraKit/ObscuraError.swift');
     expect(sorted([...kotlin.matchAll(/ObscuraError\(\s*"([A-Z_]+)"/g)].map((match) => match[1])))
       .toEqual(sorted(codes));
     expect(sorted([...swiftErrors.matchAll(/return "([A-Z_]+)"/g)].map((match) => match[1])))

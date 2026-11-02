@@ -1,14 +1,24 @@
 import { Obscura, type StoredEntry } from '../native/ObscuraModule';
 import { ERASED_MODEL } from '../domain/expiry';
-import { parseJsonObject } from '../domain/fields';
+import { parseJsonObject } from '../domain/schema';
 import type { Entry } from '../domain/merge';
 import { logError } from '../utils/log';
 
 /**
- * The only module that reads or writes the kit's entry store.
+ * The only module that reads or writes the kit's entry store, together with the mutex that
+ * serializes read-merge-write cycles against `entryPut`'s blind upsert.
  *
  * An entry's `data` is stored verbatim; the outbox mark travels in `localMetadata`.
  */
+
+let tail: Promise<unknown> = Promise.resolve();
+
+/** Run `work` after all earlier entry-store work settles. */
+export function withEntryLock<T>(work: () => Promise<T>): Promise<T> {
+  const result = tail.then(work, work);
+  tail = result.catch(() => undefined);
+  return result;
+}
 
 const UNDELIVERED_METADATA = JSON.stringify({ undelivered: true });
 
@@ -48,6 +58,11 @@ export function putEntry(model: string, entry: Entry, undelivered = false): Prom
 /** Record an erased entry's `erasedKey`, so a replayed write for it is not stored again. */
 export function putErasedMarker(key: string, erasedAt: number): Promise<void> {
   return Obscura.entryPut(ERASED_MODEL, key, '{}', erasedAt, '', '', null);
+}
+
+/** Securely erase entries of `model` in one batch. */
+export function eraseEntries(model: string, ids: readonly string[]): Promise<void> {
+  return Obscura.entryErase(model, [...ids]);
 }
 
 /** The given erased keys that have a marker. */

@@ -1,6 +1,6 @@
 import { Obscura, type Friend } from '../native/ObscuraModule';
-import { conversationId } from '../domain/conversation';
-import { attachmentOf, type Attachment } from '../domain/pix';
+import { conversationId } from '../domain/audience';
+import { attachmentOf, type Attachment } from '../domain/viewer';
 import { fileUri } from '../utils/files';
 import { logError } from '../utils/log';
 import { saveEntry, useStore } from './store';

@@ -36,8 +36,8 @@ or `just ios-build arm64`.
   push, download the Firebase config (containing `dev.barrelmaker.obscura.dev`
   and `dev.barrelmaker.obscura`) into that path. It is gitignored. Never commit
   it, or any Firebase Admin credential.
-- **iOS.** The first build fetches the libsignal commit that `obscura-native`
-  pins. It then builds the simulator FFI, the Swift package and the pods, and
+- **iOS.** The first build fetches the pinned libsignal commit.
+  It then builds the simulator FFI, the Swift package and the pods, and
   caches them (gitignored). Simulator builds do not exercise APNs, background
   delivery or release signing.
 - **Environments (`dev` vs `prod`).** Builds default to `dev`
@@ -56,7 +56,7 @@ falls back to its private container.
 
 ```bash
 just ios-build   # once, to prepare dependencies
-./obscura-native/swift/scripts/bootstrap-libsignal.sh ios-device
+./swift/scripts/bootstrap-libsignal.sh ios-device
 cd ios && mkdir -p build
 printf '<plist version="1.0"><dict/></plist>' > build/Personal.entitlements
 xcodebuild -workspace Obscura.xcworkspace -scheme Obscura \
@@ -70,25 +70,11 @@ xcrun devicectl device install app --device <DEVICE_ID> \
 
 ## Checks
 
-`just check` runs Jest, both typechecks, ESLint and
-`scripts/check-native-doc-links.sh`. Jest covers the domain, bridge facade and
-state logic. It does not cover rendered UI or device behavior.
+`just check` runs Jest, both typechecks, and ESLint; `just kotlin-check`
+runs protocol conformance and the Kotlin kit unit/coverage suite.
 
 | CI job | Runs | On |
 | --- | --- | --- |
 | `JavaScript` | `just check`, `scripts/test-verify-release-build.py` | PRs, `main` |
 | `Android Release Build` | `just android-apk arm64-v8a false` | PRs |
 | `iOS Debug Build` | `just ios-build arm64` | PRs |
-
-## Updating `obscura-native`
-
-Kit changes land in `obscura-native` first. After that merges, bump the gitlink
-here in its own PR. Then point every `obscura-native/blob/<sha>` doc link at the
-new SHA; `just check` enforces this.
-
-```bash
-git -C obscura-native fetch origin
-git -C obscura-native switch --detach <full-commit-sha>
-git -C obscura-native submodule update --init --recursive
-git add obscura-native
-```

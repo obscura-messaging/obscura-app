@@ -1,12 +1,6 @@
-import { planDrain } from '../drain';
-import type { ModelDeclaration } from '../model';
-import type { InboxRow } from '../../native/ObscuraModule';
+import { planDrain, type InboxRow } from '../drain';
+import type { ModelDeclaration } from '../schema';
 import type { Entry } from '../merge';
-
-/**
- * The drain plan (`docs/DOMAIN_CONTRACT.md`): not losing a row (it is the only copy) and not
- * believing one (authorization and attribution come from the envelope, never the payload).
- */
 
 const SELF = 'uMe';
 const PEER = 'uPeer';
@@ -14,12 +8,12 @@ const STRANGER = 'uStranger';
 const CONV = [SELF, PEER].sort().join('_');
 
 const models = new Map<string, ModelDeclaration>([
-  ['directMessage', { merge: 'APPEND', fields: { content: 'string' }, audience: 'conversation' }],
-  ['story', { merge: 'APPEND', fields: {}, audience: 'friends' }],
-  ['pix', { merge: 'APPEND', fields: {}, audience: 'conversation' }],
-  ['profile', { merge: 'REPLACE', fields: {}, audience: 'friends', ownerIdPrefix: 'profile_' }],
+  ['directMessage', { merge: 'APPEND', fields: { content: 'string' }, audience: 'conversation', expiry: { kind: 'never' } }],
+  ['story', { merge: 'APPEND', fields: {}, audience: 'friends', expiry: { kind: 'never' } }],
+  ['pix', { merge: 'APPEND', fields: {}, audience: 'conversation', expiry: { kind: 'never' } }],
+  ['profile', { merge: 'REPLACE', fields: {}, audience: 'friends', ownerIdPrefix: 'profile_', expiry: { kind: 'never' } }],
   // A conversation-scoped REPLACE model, for the merge mechanics below.
-  ['note', { merge: 'REPLACE', fields: {}, audience: 'conversation' }],
+  ['note', { merge: 'REPLACE', fields: {}, audience: 'conversation', expiry: { kind: 'never' } }],
 ]);
 
 let nextId = 1;

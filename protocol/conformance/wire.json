@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "kind": "wire",
+  "description": "Client wire mapping + round-trip conformance. Pins every ClientMessage payload arm, TypingState mappings, and value-preserving AppEntry round trips. Byte-canonicity is intentionally not required; see docs/KIT_API.md.",
+  "messageTypes": [
+    { "wire": "friend_request", "app": "FRIEND_REQUEST" },
+    { "wire": "friend_accept", "app": "FRIEND_ACCEPT" },
+    { "wire": "app_entry", "app": "APP_ENTRY" },
+    { "wire": "typing_signal", "app": "TYPING_SIGNAL" },
+    { "wire": "friend_list_sync", "app": "FRIEND_LIST_SYNC" }
+  ],
+  "typingStates": [
+    { "wire": "TYPING_STATE_STARTED", "app": "started" },
+    { "wire": "TYPING_STATE_STOPPED", "app": "stopped" }
+  ],
+  "roundTrip": [
+    {
+      "name": "AppEntry round-trips preserving model, id, timestamp, and data",
+      "appEntry": {
+        "model": "story",
+        "id": "story_1706389200_abc",
+        "timestamp": 1706389200000,
+        "data": { "content": "hi", "authorUsername": "me" }
+      }
+    },
+    {
+      "name": "AppEntry data round-trips by VALUE regardless of key order (not bytes)",
+      "appEntry": {
+        "model": "pix",
+        "id": "pix_1706389200_def",
+        "timestamp": 1706389200001,
+        "data": { "z_last": "1", "a_first": "2", "conversationId": "uA_uB" }
+      }
+    }
+  ]
+}

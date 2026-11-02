@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { QRScanner } from '../components/QRScanner';
-import { confirmAndApproveLink } from './DevicesScreen';
+import { confirmAndApproveLink } from '../components/confirm';
 
 export function ScanLinkScreen() {
   const nav = useNavigation();

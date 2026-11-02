@@ -1,0 +1,130 @@
+// Obscura client content protocol (v1)
+//
+// The client-to-client payload carried inside the server transport's encrypted
+// bytes. The server never parses this layer.
+//
+// Behavioral contract: docs/KIT_API.md and protocol/conformance/.
+
+syntax = "proto3";
+package obscura.client.v1;
+
+message EncryptedMessage {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_PREKEY_MESSAGE = 1;
+    TYPE_ENCRYPTED_MESSAGE = 2;
+  }
+  Type type = 1;
+  bytes content = 2;
+}
+
+message ClientMessage {
+  uint64 timestamp = 1;
+
+  reserved 4, 5;
+  reserved "device_link_approval", "device_announce";
+
+  oneof payload {
+    FriendRequest friend_request = 2;
+    FriendAccept friend_accept = 3;
+    AppEntry app_entry = 6;
+    TypingSignal typing_signal = 7;
+    FriendListSync friend_list_sync = 8;
+  }
+}
+
+message FriendRequest {
+  string username = 1;
+}
+
+message FriendAccept {}
+
+message AppEntry {
+  string model = 1;
+  string id = 2;
+  uint64 timestamp = 3;
+  bytes data = 4;
+}
+
+enum TypingState {
+  TYPING_STATE_UNSPECIFIED = 0;
+  TYPING_STATE_STARTED = 1;
+  TYPING_STATE_STOPPED = 2;
+}
+
+message TypingSignal {
+  string context_id = 1;
+  TypingState state = 2;
+}
+
+enum FriendStatus {
+  FRIEND_STATUS_UNSPECIFIED = 0;
+  FRIEND_STATUS_PENDING_SENT = 1;
+  FRIEND_STATUS_PENDING_RECEIVED = 2;
+  FRIEND_STATUS_ACCEPTED = 3;
+}
+
+message FriendRecord {
+  string user_id = 1;
+  string username = 2;
+  FriendStatus status = 3;
+}
+
+// The full friend list, sent by the primary to the account's other devices.
+message FriendListSync {
+  uint64 version = 1;
+  repeated FriendRecord friends = 2;
+}
+
+// Shown by the new device as a QR code: base64url (no padding) of the serialized message.
+message LinkCode {
+  // The server's link session id, verbatim.
+  string session_id = 1;
+  // libsignal serialized public key: 0x05 || 32-byte X25519 key (33 bytes).
+  bytes ephemeral_public_key = 2;
+  string device_name = 3;
+}
+
+// Body of PUT /v1/link-sessions/{id}. Derivation: protocol/conformance/link.json.
+message LinkEnvelope {
+  // libsignal serialized public key: 0x05 || 32-byte X25519 key (33 bytes).
+  bytes ephemeral_public_key = 1;
+  // 12 bytes.
+  bytes nonce = 2;
+  // AES-256-GCM over a serialized LinkBundle, 16-byte tag appended, no associated data.
+  bytes ciphertext = 3;
+}
+
+message LinkBundle {
+  // libsignal IdentityKeyPair.serialize().
+  bytes identity_key_pair = 1;
+  string user_id = 2;
+  string primary_device_id = 3;
+  string username = 4;
+  uint64 friend_list_version = 5;
+  repeated FriendRecord friends = 6;
+  // Absent when the primary's entry store is empty.
+  HistorySnapshot history = 7;
+}
+
+// An attachment holding a serialized EntrySnapshot, encrypted like any attachment.
+message HistorySnapshot {
+  string attachment_id = 1;
+  // 32 bytes.
+  bytes content_key = 2;
+  // 12 bytes.
+  bytes nonce = 3;
+}
+
+message EntrySnapshot {
+  repeated SnapshotEntry entries = 1;
+}
+
+message SnapshotEntry {
+  string model = 1;
+  string id = 2;
+  bytes data = 3;
+  uint64 sent_at = 4;
+  string author_user_id = 5;
+  string author_device_id = 6;
+}

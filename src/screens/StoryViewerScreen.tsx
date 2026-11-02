@@ -8,9 +8,10 @@ import Video from 'react-native-video';
 import { CaptionView, parseCaptionMeta } from '../components/Caption';
 import { CloseIcon } from '../components/icons';
 import { Avatar } from '../components/Avatar';
-import { attachmentOf, displayMs } from '../domain/pix';
-import { storyGroups, type StoryGroup } from '../domain/stories';
-import { stepViewer } from '../domain/viewer';
+import {
+  attachmentOf, displayMs, stepViewer, storyGroups,
+  type StoryGroup,
+} from '../domain/viewer';
 import { loadAttachmentUri } from '../state/sendMedia';
 import { useIdentity, useModelEntries, markSeen } from '../state/store';
 import { timeAgo } from '../utils/format';
@@ -213,7 +214,13 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const advance = useCallback(() => applyStep('advance'), [applyStep]);
   const rewind = useCallback(() => applyStep('rewind'), [applyStep]);
 
-  const attachment = useMemo(() => attachmentOf(story), [story]);
+  const mediaRef = story?.data.mediaRef;
+  const contentKey = story?.data.contentKey;
+  const nonce = story?.data.nonce;
+  const attachment = useMemo(
+    () => attachmentOf({ data: { mediaRef, contentKey, nonce } }),
+    [mediaRef, contentKey, nonce],
+  );
 
   useEffect(() => {
     setMediaLoading(false);
@@ -237,13 +244,18 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   }, [attachment, mediaUris]);
 
   useEffect(() => {
-    for (const neighbour of [groups[groupIdx + 1], groups[groupIdx - 1]]) {
-      const att = attachmentOf(neighbour?.stories[0]);
+    const candidates = [
+      group?.stories[storyIdx + 1],
+      groups[groupIdx + 1]?.stories[0],
+      groups[groupIdx - 1]?.stories[0],
+    ];
+    for (const candidate of candidates) {
+      const att = attachmentOf(candidate);
       if (att && !mediaUris.has(att.mediaRef)) {
         loadAttachmentUri(att, mediaUris).catch((e) => logError('storyMedia.prefetch', e));
       }
     }
-  }, [groups, groupIdx, mediaUris]);
+  }, [group, storyIdx, groups, groupIdx, mediaUris]);
 
   const hasMedia = attachment !== null;
   const isVideo = story?.data.mediaType === 'video';

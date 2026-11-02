@@ -1,6 +1,37 @@
-import { resolveAudience, DirectRoutingUnresolved } from '../audience';
-import { conversationId } from '../conversation';
-import type { Friend } from '../../native/ObscuraModule';
+import {
+  resolveAudience, DirectRoutingUnresolved, conversationId, parseConversationId,
+  reachedRecipients, type SubmissionResult,
+} from '../audience';
+import type { Friend } from '../friends';
+
+const result = (userId: string, status: SubmissionResult['status']): SubmissionResult =>
+  ({ userId, deviceId: `${userId}-d`, status, error: null });
+
+describe('conversationId & parseConversationId', () => {
+  it('is identical from either side and always accepted by the parser', () => {
+    expect(conversationId('bbb', 'aaa')).toBe(conversationId('aaa', 'bbb'));
+    expect(conversationId('aaa', 'bbb')).toBe('aaa_bbb');
+    expect(parseConversationId(conversationId('bbb', 'aaa'))).toEqual(['aaa', 'bbb']);
+  });
+
+  it('refuses reversed or malformed conversation ids', () => {
+    expect(parseConversationId('bbb_aaa')).toBeNull();
+    for (const bad of ['a__b', '_a_b', 'a_b_', '__a___b__', '_a', 'a_', '', '_', 'abc', 'a_b_c']) {
+      expect(parseConversationId(bad)).toBeNull();
+    }
+  });
+});
+
+describe('reachedRecipients', () => {
+  it('is true when any recipient device accepted or when nobody was named', () => {
+    expect(reachedRecipients(['a', 'b'], { recipients: [result('a', 'rejected'), result('b', 'accepted')], selfSync: [] })).toBe(true);
+    expect(reachedRecipients([], { recipients: [], selfSync: [] })).toBe(true);
+  });
+
+  it('is false when no recipient device accepted, even if own devices accepted', () => {
+    expect(reachedRecipients(['a'], { recipients: [result('a', 'unknown')], selfSync: [result('me', 'accepted')] })).toBe(false);
+  });
+});
 
 const SELF = 'uMe';
 const FRIENDS: Friend[] = [

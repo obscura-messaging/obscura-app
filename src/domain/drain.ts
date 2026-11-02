@@ -3,12 +3,24 @@
  * the plan.
  */
 
-import type { InboxRow } from '../native/ObscuraModule';
-import { parseConversationId } from './conversation';
+import { parseConversationId } from './audience';
 import { merge, type Entry } from './merge';
-import { invalidFields, parseJsonObject } from './fields';
+import { invalidFields, parseJsonObject, type ModelDeclaration } from './schema';
 import { erasedKey } from './expiry';
-import type { ModelDeclaration } from './model';
+
+/** One row of the kit's durable inbox. */
+export interface InboxRow {
+  /** Monotonic per install: the drain order, not a message id. */
+  id: number;
+  /** Server-stamped sender. */
+  senderUserId: string;
+  /** The device whose Signal session decrypted the row: attribution and the merge tie-break. */
+  senderDeviceId: string;
+  modelKey: string;
+  entryId: string;
+  sentAt: number;
+  payload: string;
+}
 
 /** Why a row could not be processed. Carried into `inboxDiscard` and the log. */
 export type DiscardReason =

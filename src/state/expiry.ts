@@ -1,8 +1,10 @@
 import { Obscura } from '../native/ObscuraModule';
-import { EPHEMERAL_MODELS, STORY_MODEL, planSweep } from '../domain/expiry';
-import { SEEN_MODEL } from '../domain/seen';
-import { withEntryLock } from './entryLock';
-import { putErasedMarker, readEntries, readErasedMarkers, type StoredRow } from './entryStore';
+import { planSweep } from '../domain/expiry';
+import { MODELS } from '../domain/schema';
+import {
+  eraseEntries, putErasedMarker, readEntries, readErasedMarkers, withEntryLock,
+  type StoredRow,
+} from './entryStore';
 import { logError } from '../utils/log';
 
 /**
@@ -12,19 +14,19 @@ import { logError } from '../utils/log';
  */
 export async function sweepExpired(now: number = Date.now()): Promise<string[]> {
   return withEntryLock(async () => {
-    const ephemeral = new Map<string, StoredRow[]>();
-    for (const model of EPHEMERAL_MODELS) ephemeral.set(model, await readEntries(model));
+    const entriesByModel = new Map<string, StoredRow[]>();
+    for (const [model, { expiry }] of MODELS) {
+      if (expiry.kind !== 'never') entriesByModel.set(model, await readEntries(model));
+    }
     const plan = planSweep({
       now,
-      ephemeral,
-      stories: await readEntries(STORY_MODEL),
-      receipts: await readEntries(SEEN_MODEL),
+      entriesByModel,
       markers: await readErasedMarkers(),
     });
 
     for (const id of plan.purge) await Obscura.purgeAttachment(id);
     for (const key of plan.mark) await putErasedMarker(key, now);
-    for (const [model, ids] of plan.erase) await Obscura.entryErase(model, ids);
+    for (const [model, ids] of plan.erase) await eraseEntries(model, ids);
     return plan.touched;
   }).catch((e) => {
     logError('expiry.sweep', e);

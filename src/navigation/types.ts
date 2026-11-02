@@ -1,7 +1,7 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { NavigatorScreenParams } from '@react-navigation/native';
-import type { ScreenEntry } from '../domain/seen';
-import type { ModelData } from '../models/schema';
+import type { ScreenEntry } from '../domain/expiry';
+import type { ModelData } from '../domain/schema';
 import type { Capture, MediaType } from '../state/sendMedia';
 
 export type MainTabParamList = {

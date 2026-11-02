@@ -3,8 +3,9 @@ import { drainInbox } from '../drainInbox';
 import { Obscura } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 import { PIX_MEDIA } from '../../native/__fixtures__/payloads';
-import { ERASED_MODEL, EXPIRE_AFTER_MS, MAX_AGE_MS, STORY_MAX_AGE_MS } from '../../domain/expiry';
-import { SEEN_MODEL, seenEntryId } from '../../domain/seen';
+import {
+  ERASED_MODEL, EXPIRE_AFTER_MS, MAX_AGE_MS, SEEN_MODEL, STORY_MAX_AGE_MS, seenEntryId,
+} from '../../domain/expiry';
 
 const bridge = getFakeBridge();
 

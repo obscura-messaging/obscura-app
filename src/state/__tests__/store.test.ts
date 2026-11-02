@@ -3,7 +3,7 @@ import {
   useStore, loadEntries, drainAndRefresh, saveEntry, markSeen,
   applyObscuraEvent, loadSession, refreshFriends, resetSession, logout,
 } from '../store';
-import { SEEN_MODEL, seenEntryId } from '../../domain/seen';
+import { SEEN_MODEL, seenEntryId } from '../../domain/expiry';
 import { Obscura } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 

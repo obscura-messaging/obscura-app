@@ -1,10 +1,10 @@
 import { NativeEventEmitter, TurboModuleRegistry, type TurboModule } from 'react-native';
+import type { SendReport, SubmissionResult } from '../domain/audience';
+import type { DeviceInfo } from '../domain/devices';
+import type { InboxRow } from '../domain/drain';
+import type { Friend } from '../domain/friends';
 
-export interface Friend {
-  userId: string;
-  username: string;
-  status: 'pending_sent' | 'pending_received' | 'accepted';
-}
+export type { DeviceInfo, Friend, InboxRow, SendReport, SubmissionResult };
 
 export interface ResizedImage {
   path: string;
@@ -18,20 +18,6 @@ export interface AttachmentRef {
   nonce: string;
 }
 
-/** One row of the kit's durable inbox. */
-export interface InboxRow {
-  /** Monotonic per install: the drain order, not a message id. */
-  id: number;
-  /** Server-stamped sender. */
-  senderUserId: string;
-  /** The device whose Signal session decrypted the row: attribution and the merge tie-break. */
-  senderDeviceId: string;
-  modelKey: string;
-  entryId: string;
-  sentAt: number;
-  payload: string;
-}
-
 export interface StoredEntry {
   id: string;
   data: string;
@@ -39,20 +25,6 @@ export interface StoredEntry {
   authorUserId: string;
   authorDeviceId: string;
   localMetadata: string | null;
-}
-
-/** `accepted` means queued by the server. A null `deviceId` is a user-level result. */
-export interface SubmissionResult {
-  userId: string;
-  deviceId: string | null;
-  status: 'accepted' | 'rejected' | 'unknown';
-  error: string | null;
-}
-
-export interface SendReport {
-  recipients: SubmissionResult[];
-  /** The author's own other devices. */
-  selfSync: SubmissionResult[];
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'reconnecting' | 'connected';
@@ -68,14 +40,6 @@ export type LoginScenario =
   | 'linkRequired'
   | 'deviceMismatch'
   | 'invalidCredentials';
-
-/** One device of the signed-in account. */
-export interface DeviceInfo {
-  deviceId: string;
-  name: string | null;
-  isPrimary: boolean;
-  isThisDevice: boolean;
-}
 
 /** The `code` of a kit rejection, mirroring `ObscuraError.kt`. Other failures use a per-method code. */
 export type ObscuraErrorCode =

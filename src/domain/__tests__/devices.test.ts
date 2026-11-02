@@ -1,5 +1,4 @@
-import { deviceLabel, linkProblem, orderDevices } from '../devices';
-import type { DeviceInfo } from '../../native/ObscuraModule';
+import { deviceLabel, linkProblem, orderDevices, type DeviceInfo } from '../devices';
 
 const device = (deviceId: string, name: string | null, isPrimary = false): DeviceInfo =>
   ({ deviceId, name, isPrimary, isThisDevice: false });
