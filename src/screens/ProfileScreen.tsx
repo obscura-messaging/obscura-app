@@ -103,17 +103,17 @@ export function ProfileScreen() {
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={pf.sectionTitle}>edit profile</Text>
+        <Text style={s.sectionTitle}>edit profile</Text>
         <TextInput style={s.input} placeholder="Display name" placeholderTextColor={colors.textDim}
           value={displayName} onChangeText={onChangeDisplayName} />
         <TextInput style={s.input} placeholder="Bio" placeholderTextColor={colors.textDim}
           value={bio} onChangeText={onChangeBio} />
-        <TouchableOpacity style={pf.smallBtn} onPress={save} disabled={saving}>
-          <Text style={pf.smallBtnText}>{saving ? 'Saving…' : 'Save'}</Text>
+        <TouchableOpacity style={[s.primaryBtn, saving && s.btnDisabled]} onPress={save} disabled={saving}>
+          <Text style={s.primaryBtnText}>{saving ? 'Saving…' : 'Save'}</Text>
         </TouchableOpacity>
 
         {friendProfiles.length > 0 && (<>
-          <Text style={pf.sectionTitle}>friend profiles</Text>
+          <Text style={s.sectionTitle}>friend profiles</Text>
           {friendProfiles.map(({ entry, name }) => (
             <View key={entry.id} style={pf.profileCard}>
               <Text style={pf.profileAuthor}>{name}</Text>
@@ -123,21 +123,21 @@ export function ProfileScreen() {
           ))}
         </>)}
 
-        <Text style={pf.sectionTitle}>status</Text>
+        <Text style={s.sectionTitle}>status</Text>
         <View style={pf.statusRow}>
           <Text style={[pf.statusDot, { color: conn.color }]}>●</Text>
           <Text style={pf.statusText}>{conn.label}</Text>
         </View>
 
-        <Text style={pf.sectionTitle}>account</Text>
+        <Text style={s.sectionTitle}>account</Text>
         <Text style={pf.settingsLabel}>{myUsername}</Text>
         <Text style={pf.hint}>{myUserId.slice(0, 16)}...</Text>
 
-        <TouchableOpacity style={pf.menuBtn} onPress={() => nav.navigate('Devices')}>
+        <TouchableOpacity style={s.secondaryBtn} onPress={() => nav.navigate('Devices')}>
           <Text style={pf.codeBtnText}>Devices</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={pf.debugToggle} onPress={() => setShowLog(!showLog)}>
+        <TouchableOpacity style={[s.secondaryBtn, pf.debugToggle]} onPress={() => setShowLog(!showLog)}>
           <Text style={pf.codeBtnText}>{showLog ? 'Hide debug log' : 'Show debug log'}</Text>
         </TouchableOpacity>
 
@@ -150,10 +150,10 @@ export function ProfileScreen() {
         )}
 
         <TouchableOpacity
-          style={pf.dangerBtn}
+          style={[s.dangerBtn, pf.logoutBtn]}
           onPress={confirmLogout}
         >
-          <Text style={pf.dangerBtnText}>Log out</Text>
+          <Text style={s.dangerBtnText}>Log out</Text>
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -162,10 +162,7 @@ export function ProfileScreen() {
 
 const pf = StyleSheet.create({
   screen: { flex: 1, padding: 16 },
-  sectionTitle: { color: colors.textDim, fontSize: 12, fontWeight: '700', marginTop: 20, marginBottom: 8, textTransform: 'uppercase' },
-  smallBtn: { backgroundColor: colors.accent, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
-  smallBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 14 },
-  profileCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 14, marginBottom: 8 },
+  profileCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: colors.border },
   profileAuthor: { color: colors.accent, fontSize: 13, fontWeight: '700', marginBottom: 4 },
   profileContent: { color: colors.text, fontSize: 16 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, marginBottom: 12 },
@@ -173,11 +170,9 @@ const pf = StyleSheet.create({
   statusText: { color: colors.text, fontSize: 15, fontWeight: '600' },
   settingsLabel: { color: colors.text, fontSize: 18, fontWeight: '600' },
   hint: { color: colors.textMuted, fontSize: 12, marginTop: 4, marginBottom: 12 },
-  menuBtn: { backgroundColor: colors.surface, borderRadius: 12, padding: 14, alignItems: 'center' },
-  debugToggle: { backgroundColor: colors.surface, borderRadius: 12, padding: 14, alignItems: 'center', marginBottom: 12, marginTop: 16 },
-  codeBtnText: { color: colors.accent, fontWeight: '600' },
+  debugToggle: { marginBottom: 12, marginTop: 12 },
+  codeBtnText: { color: colors.accent, fontWeight: '600', fontSize: 15 },
   logBox: { marginTop: 8 },
   logLine: { color: colors.textDim, fontSize: 10, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', marginBottom: 2 },
-  dangerBtn: { borderWidth: 1, borderColor: colors.error, borderRadius: 12, padding: 14, alignItems: 'center', marginTop: 24, marginBottom: 32 },
-  dangerBtnText: { color: colors.error, fontWeight: '700', fontSize: 16 },
+  logoutBtn: { marginTop: 24, marginBottom: 32 },
 });

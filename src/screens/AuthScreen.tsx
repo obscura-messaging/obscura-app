@@ -58,11 +58,11 @@ export function AuthScreen() {
           <TextInput style={s.input} placeholder={`Password (${MIN_PASSWORD_LENGTH}+ chars)`}
             placeholderTextColor={colors.textDim} value={password} onChangeText={setPassword} secureTextEntry editable={!busy} />
           <View style={a.buttons}>
-            <TouchableOpacity style={[a.primaryBtn, busy && a.btnDisabled]} onPress={onLogIn} disabled={busy}>
-              <Text style={a.primaryBtnText}>Log in</Text>
+            <TouchableOpacity style={[s.primaryBtn, busy && s.btnDisabled]} onPress={onLogIn} disabled={busy}>
+              <Text style={s.primaryBtnText}>Log in</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[a.secondaryBtn, busy && a.btnDisabled]} onPress={onRegister} disabled={busy}>
-              <Text style={a.secondaryBtnText}>Sign up</Text>
+            <TouchableOpacity style={[s.secondaryBtn, busy && s.btnDisabled]} onPress={onRegister} disabled={busy}>
+              <Text style={s.secondaryBtnText}>Sign up</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -78,9 +78,4 @@ const a = StyleSheet.create({
   error: { color: colors.error, textAlign: 'center', marginBottom: 12, fontSize: 13 },
   progress: { color: colors.textSecondary, textAlign: 'center', marginBottom: 12, fontSize: 13 },
   buttons: { flexDirection: 'column', gap: 12, marginTop: 8 },
-  primaryBtn: { backgroundColor: colors.accent, borderRadius: 12, padding: 14, alignItems: 'center' },
-  primaryBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 16 },
-  secondaryBtn: { borderWidth: 1, borderColor: colors.surfaceMuted, borderRadius: 12, padding: 14, alignItems: 'center' },
-  secondaryBtnText: { color: colors.text, fontWeight: '600', fontSize: 16 },
-  btnDisabled: { opacity: 0.6 },
 });

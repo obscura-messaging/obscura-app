@@ -42,3 +42,41 @@ export function friendActivities<M extends ConversationEntry, P extends Conversa
     };
   }).sort((a, b) => b.latestAt - a.latestAt);
 }
+
+/** Subtitle and emphasis for a conversation row in the chat list. */
+export function activityPreview(
+  activity: FriendActivity<{ authorUserId: string; sentAt: number; data: Record<string, unknown> }, unknown>,
+  myUserId: string,
+): { text: string; highlight: boolean } {
+  const unopened = activity.unopenedPix.length;
+  if (unopened > 0) {
+    return {
+      text: unopened === 1 ? 'New pix · tap to view' : `${unopened} new pix · tap to view`,
+      highlight: true,
+    };
+  }
+  const msg = activity.lastMessage;
+  const content = typeof msg?.data.content === 'string' ? msg.data.content : '';
+  if (msg && msg.sentAt >= activity.latestAt && content !== '') {
+    return {
+      text: `${msg.authorUserId === myUserId ? 'You: ' : ''}${content}`,
+      highlight: false,
+    };
+  }
+  switch (activity.latestPix) {
+    case 'sent_pending':
+      return { text: 'Pix delivered', highlight: false };
+    case 'sent_opened':
+      return { text: 'Pix opened', highlight: false };
+    case 'received_viewed':
+      return { text: 'Pix viewed', highlight: false };
+    default:
+      if (content !== '') {
+        return {
+          text: `${msg!.authorUserId === myUserId ? 'You: ' : ''}${content}`,
+          highlight: false,
+        };
+      }
+      return { text: 'Tap to chat', highlight: false };
+  }
+}

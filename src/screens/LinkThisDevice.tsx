@@ -6,7 +6,7 @@ import { linkProblem, type LinkProblem } from '../domain/devices';
 import { cancelLink, linkThisDevice, resetAccount } from '../state/login';
 import { useStore } from '../state/store';
 import { errorMessage, logError } from '../utils/log';
-import { colors } from '../styles';
+import { s, colors } from '../styles';
 
 type Phase = { kind: 'starting' } | { kind: 'waiting'; code: string } | { kind: 'resetting' } | LinkProblem;
 
@@ -73,13 +73,13 @@ export function LinkThisDevice({ username, password, onBack }: LinkThisDevicePro
       {phase.kind === 'failed' && <Text style={lk.error}>{phase.message}</Text>}
 
       {(phase.kind === 'expired' || phase.kind === 'failed') && (
-        <TouchableOpacity style={lk.primaryBtn} onPress={start}>
-          <Text style={lk.primaryBtnText}>Try again</Text>
+        <TouchableOpacity style={[s.primaryBtn, lk.stretch]} onPress={start}>
+          <Text style={s.primaryBtnText}>Try again</Text>
         </TouchableOpacity>
       )}
 
-      <TouchableOpacity style={lk.secondaryBtn} onPress={onBack}>
-        <Text style={lk.secondaryBtnText}>Back</Text>
+      <TouchableOpacity style={[s.secondaryBtn, lk.stretch, lk.backBtn]} onPress={onBack}>
+        <Text style={s.secondaryBtnText}>Back</Text>
       </TouchableOpacity>
       <TouchableOpacity style={lk.resetBtn} onPress={reset} disabled={phase.kind === 'starting' || phase.kind === 'resetting'}>
         <Text style={lk.resetText}>Lost your primary device? Reset account</Text>
@@ -94,13 +94,8 @@ const lk = StyleSheet.create({
   body: { color: colors.textSecondary, fontSize: 14, textAlign: 'center', marginBottom: 8 },
   status: { color: colors.textDim, fontSize: 14, marginVertical: 24 },
   error: { color: colors.error, fontSize: 14, textAlign: 'center', marginVertical: 24 },
-  primaryBtn: { alignSelf: 'stretch', backgroundColor: colors.accent, borderRadius: 12, padding: 14, alignItems: 'center' },
-  primaryBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 16 },
-  secondaryBtn: {
-    alignSelf: 'stretch', borderWidth: 1, borderColor: colors.surfaceMuted, borderRadius: 12, padding: 14,
-    alignItems: 'center', marginTop: 24,
-  },
-  secondaryBtnText: { color: colors.text, fontWeight: '600', fontSize: 16 },
+  stretch: { alignSelf: 'stretch' },
+  backBtn: { marginTop: 24 },
   resetBtn: { marginTop: 20, padding: 8 },
   resetText: { color: colors.error, fontSize: 13, fontWeight: '600' },
 });

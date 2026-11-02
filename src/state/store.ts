@@ -7,12 +7,14 @@ import {
 } from '../native/ObscuraModule';
 import { drainInboxFully } from './drainInbox';
 import { writeEntry, flushOutbox } from './writeEntry';
+import { primaryOnly } from './devices';
 import { requestStartupPermissions } from '../application/requestStartupPermissions';
 import { logError } from '../utils/log';
 import type { Entry } from '../domain/merge';
 import type { ModelData, ModelName } from '../models/schema';
 import { EPHEMERAL_MODELS, isEphemeral } from '../domain/expiry';
 import { acceptedFriends, pendingFriends, type Identity } from '../domain/friends';
+import { cleanCode } from '../domain/qr';
 import { SEEN_MODEL, indexReceipts, seenEntryId, viewedAtFor } from '../domain/seen';
 import { readEntries } from './entryStore';
 import { sweepExpired } from './expiry';
@@ -49,7 +51,11 @@ const SIGNED_OUT = {
 
 export const useStore = create<Session>(() => ({ bootstrapped: false, ...SIGNED_OUT }));
 
+/** Models a screen has requested, tracked before the first async read finishes so concurrent refreshes are not dropped. */
+const openedModels = new Set<string>();
+
 export function resetSession(): void {
+  openedModels.clear();
   useStore.setState(SIGNED_OUT);
 }
 
@@ -99,10 +105,13 @@ export function useModelEntries<M extends ModelName>(model: M): ScreenEntry<Mode
 
 // ─── Entry cache ─────────────────────────────────────────
 
-export async function loadEntries(model: string): Promise<void> {
+export async function loadEntries(model: string, preloadedReceipts?: ReadonlyMap<string, Entry>): Promise<void> {
+  openedModels.add(model);
   try {
     const rows = await readEntries(model);
-    const receipts = indexReceipts(isEphemeral(model) ? await readEntries(SEEN_MODEL) : []);
+    const receipts = isEphemeral(model)
+      ? (preloadedReceipts ?? indexReceipts(await readEntries(SEEN_MODEL)))
+      : new Map<string, Entry>();
     const entries = rows.map(({ undelivered: _undelivered, ...entry }) => (
       { ...entry, viewedAt: viewedAtFor(model, entry, receipts) }
     ));
@@ -116,8 +125,14 @@ export async function loadEntries(model: string): Promise<void> {
 async function refreshLoaded(models: Iterable<string>): Promise<void> {
   const changed = new Set(models);
   if (changed.has(SEEN_MODEL)) EPHEMERAL_MODELS.forEach((m) => changed.add(m));
-  for (const model of changed) {
-    if (useStore.getState().entries[model] !== undefined) await loadEntries(model);
+  const targets = [...changed].filter(
+    (m) => m !== SEEN_MODEL && (openedModels.has(m) || useStore.getState().entries[m] !== undefined),
+  );
+  if (targets.length === 0) return;
+  const needsReceipts = targets.some(isEphemeral);
+  const receipts = needsReceipts ? indexReceipts(await readEntries(SEEN_MODEL)) : undefined;
+  for (const model of targets) {
+    await loadEntries(model, receipts);
   }
 }
 
@@ -184,10 +199,26 @@ export async function markSeen(model: string, entry: Entry): Promise<void> {
   await saveEntry(SEEN_MODEL, { conversationId, viewedAt: Date.now() }, seenEntryId(model, entry.id));
 }
 
-// ─── Session ─────────────────────────────────────────────
+// ─── Session & Friends ───────────────────────────────────
 
 export async function refreshFriends(): Promise<void> {
   useStore.setState({ friends: await Obscura.getFriends() });
+}
+
+export async function addFriend(rawCode: string): Promise<void> {
+  const code = cleanCode('friend', rawCode);
+  await primaryOnly(() => Obscura.addFriendByCode(code));
+  await refreshFriends();
+}
+
+export async function acceptFriend(userId: string): Promise<void> {
+  await primaryOnly(() => Obscura.acceptFriend(userId));
+  await refreshFriends();
+}
+
+export async function removeFriend(userId: string): Promise<void> {
+  await primaryOnly(() => Obscura.removeFriend(userId));
+  await refreshFriends();
 }
 
 export function applyObscuraEvent(event: ObscuraEvent): void {

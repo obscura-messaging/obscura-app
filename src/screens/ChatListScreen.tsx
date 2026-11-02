@@ -3,13 +3,13 @@ import { View, Text, TouchableOpacity, FlatList, Pressable, StyleSheet } from 'r
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Obscura, type Friend } from '../native/ObscuraModule';
-import { friendActivities } from '../domain/chats';
+import type { Friend } from '../native/ObscuraModule';
+import { activityPreview, friendActivities } from '../domain/chats';
 import type { PixStatus } from '../domain/pix';
 import {
-  useSession, useModelEntries, useAcceptedFriends, usePendingFriends, refreshFriends,
+  useSession, useModelEntries, useAcceptedFriends, usePendingFriends,
+  acceptFriend, removeFriend,
 } from '../state/store';
-import { primaryOnly } from '../state/devices';
 import { StoriesRow } from './StoriesScreen';
 import { Avatar } from '../components/Avatar';
 import { confirm } from '../components/confirm';
@@ -21,19 +21,28 @@ import { timeAgo } from '../utils/format';
 import { errorMessage } from '../utils/log';
 import { colors } from '../styles';
 
-function PixIcon({ status, unopened, friend }: { status: PixStatus | undefined; unopened: number; friend: Friend }) {
-  switch (status) {
-    case 'received_new':
-      return <View style={cl.circle}>{unopened > 1 && <Text style={cl.count}>{unopened}</Text>}</View>;
-    case 'received_viewed':
-      return <View style={cl.circle}><View style={cl.circleHole} /></View>;
-    case 'sent_pending':
-      return <View style={cl.arrow} />;
-    case 'sent_opened':
-      return <View style={[cl.arrow, cl.faded]} />;
-    case undefined:
-      return <Avatar name={friend.username} size={44} />;
-  }
+function PixAvatar({ status, unopened, friend }: { status: PixStatus | undefined; unopened: number; friend: Friend }) {
+  const hasNew = unopened > 0;
+  return (
+    <View style={cl.avatarWrap}>
+      <Avatar
+        name={friend.username}
+        size={48}
+        background={hasNew ? colors.accent : colors.surface}
+        color={hasNew ? colors.onAccent : colors.text}
+      />
+      {status !== undefined && (
+        <View style={[
+          cl.statusBadge,
+          hasNew && cl.badgeNew,
+          status === 'sent_pending' && cl.badgeSent,
+          (status === 'received_viewed' || status === 'sent_opened') && cl.badgeOpened,
+        ]}>
+          {unopened > 1 && <Text style={cl.badgeCount}>{unopened}</Text>}
+        </View>
+      )}
+    </View>
+  );
 }
 
 interface PendingRowProps {
@@ -50,7 +59,7 @@ function PendingRow({ friend, accepting, isPrimary, onAccept, onLongPress }: Pen
   const actionable = received && isPrimary === true;
   const content = (
     <>
-      <Avatar name={friend.username} size={44} background={colors.surfaceMuted} color={colors.text} />
+      <Avatar name={friend.username} size={48} background={colors.surfaceMuted} color={colors.text} />
       <View style={cl.info}>
         <Text style={cl.username}>{friend.username}</Text>
         <Text style={cl.preview}>
@@ -64,10 +73,10 @@ function PendingRow({ friend, accepting, isPrimary, onAccept, onLongPress }: Pen
       )}
     </>
   );
-  if (!actionable && !onLongPress) return <View style={cl.row}>{content}</View>;
+  if (!actionable && !onLongPress) return <View style={cl.pendingRow}>{content}</View>;
   return (
     <Pressable
-      style={cl.row}
+      style={cl.pendingRow}
       onPress={actionable ? onAccept : undefined}
       onLongPress={onLongPress}
       disabled={!actionable && !onLongPress}
@@ -98,8 +107,7 @@ export function ChatListScreen() {
   const accept = async (friend: Friend) => {
     setAcceptingUserId(friend.userId);
     try {
-      await primaryOnly(() => Obscura.acceptFriend(friend.userId));
-      await refreshFriends();
+      await acceptFriend(friend.userId);
       toast.success(`You and ${friend.username} are now friends`);
     } catch (e) {
       toast.error(errorMessage(e));
@@ -128,8 +136,7 @@ export function ChatListScreen() {
     const confirmed = await confirm(title, body, actionLabel, true);
     if (!confirmed) return;
     try {
-      await primaryOnly(() => Obscura.removeFriend(friend.userId));
-      await refreshFriends();
+      await removeFriend(friend.userId);
       toast.success(`Removed ${friend.username}`);
     } catch (e) {
       toast.error(errorMessage(e));
@@ -140,29 +147,30 @@ export function ChatListScreen() {
     // Padded clear of the floating header; horizontal swipes belong to the tab pager.
     <View style={[cl.page, { paddingTop: insets.top + MAIN_HEADER_CONTENT_HEIGHT + 8 }]}>
       <MainHeaderOverlay camera={false} />
-      <StoriesRow />
-
-      {pending.map((f) => (
-        <PendingRow
-          key={f.userId}
-          friend={f}
-          accepting={acceptingUserId === f.userId}
-          isPrimary={isPrimary}
-          onAccept={acceptingUserId === null ? () => accept(f) : undefined}
-          onLongPress={isPrimary === true ? () => confirmRemoveFriend(f) : undefined}
-        />
-      ))}
 
       <FlatList
         data={activities}
         keyExtractor={(item) => item.friend.userId}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
+        ListHeaderComponent={
+          <>
+            <StoriesRow />
+            <View style={cl.divider} />
+            {pending.map((f) => (
+              <PendingRow
+                key={f.userId}
+                friend={f}
+                accepting={acceptingUserId === f.userId}
+                isPrimary={isPrimary}
+                onAccept={acceptingUserId === null ? () => accept(f) : undefined}
+                onLongPress={isPrimary === true ? () => confirmRemoveFriend(f) : undefined}
+              />
+            ))}
+          </>
+        }
         renderItem={({ item }) => {
-          const content = item.lastMessage?.data.content;
-          const preview = content
-            ? `${item.lastMessage?.authorUserId === myUserId ? 'You: ' : ''}${content}`
-            : 'Tap to chat';
+          const { text: preview, highlight } = activityPreview(item, myUserId);
           return (
             <View style={cl.row}>
               <TouchableOpacity
@@ -171,7 +179,7 @@ export function ChatListScreen() {
                   ? openPixViewer(nav, item.friend, item.unopenedPix)
                   : openChat(item.friend))}
               >
-                <PixIcon status={item.latestPix} unopened={item.unopenedPix.length} friend={item.friend} />
+                <PixAvatar status={item.latestPix} unopened={item.unopenedPix.length} friend={item.friend} />
               </TouchableOpacity>
               <TouchableOpacity
                 style={cl.chatZone}
@@ -180,15 +188,25 @@ export function ChatListScreen() {
               >
                 <View style={cl.info}>
                   <Text style={cl.username}>{item.friend.username}</Text>
-                  <Text style={cl.preview} numberOfLines={1}>{preview}</Text>
+                  <Text style={[cl.preview, highlight && cl.previewHighlight]} numberOfLines={1}>{preview}</Text>
                 </View>
                 {item.latestAt > 0 && <Text style={cl.time}>{timeAgo(item.latestAt)}</Text>}
               </TouchableOpacity>
             </View>
           );
         }}
-        ListEmptyComponent={<Text style={cl.empty}>No friends yet — share your code</Text>}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 56 }}
+        ListEmptyComponent={
+          pending.length === 0 ? (
+            <View style={cl.emptyWrap}>
+              <Text style={cl.emptyTitle}>No friends yet</Text>
+              <Text style={cl.emptySub}>Share your QR or friend code to start messaging.</Text>
+              <TouchableOpacity style={cl.emptyBtn} onPress={() => nav.navigate('AddFriend')}>
+                <Text style={cl.emptyBtnText}>Add a friend</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null
+        }
+        contentContainerStyle={{ paddingBottom: insets.bottom + 72 }}
       />
     </View>
   );
@@ -196,22 +214,32 @@ export function ChatListScreen() {
 
 const cl = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.bg },
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
-  iconZone: { width: 64, alignItems: 'center', justifyContent: 'center', paddingLeft: 8 },
-  chatZone: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 4 },
-  circle: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.accent, justifyContent: 'center', alignItems: 'center' },
-  circleHole: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.bg },
-  arrow: {
-    width: 0, height: 0, borderLeftWidth: 24, borderTopWidth: 16, borderBottomWidth: 16,
-    borderLeftColor: colors.accent, borderTopColor: 'transparent', borderBottomColor: 'transparent',
+  divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginVertical: 4 },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 16, gap: 12 },
+  pendingRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 16, gap: 12 },
+  iconZone: { alignItems: 'center', justifyContent: 'center' },
+  chatZone: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingVertical: 4, gap: 8 },
+  avatarWrap: { width: 48, height: 48 },
+  statusBadge: {
+    position: 'absolute', right: -1, bottom: -1,
+    minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 3,
+    borderWidth: 2, borderColor: colors.bg,
+    justifyContent: 'center', alignItems: 'center',
   },
-  faded: { opacity: 0.4 },
-  count: { color: colors.onAccent, fontWeight: '700', fontSize: 16 },
+  badgeNew: { backgroundColor: colors.accent, borderColor: colors.bg },
+  badgeSent: { backgroundColor: colors.accent },
+  badgeOpened: { backgroundColor: colors.surfaceMuted },
+  badgeCount: { color: colors.onAccent, fontWeight: '800', fontSize: 10 },
   info: { flex: 1 },
   username: { color: colors.text, fontSize: 16, fontWeight: '600' },
   preview: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
+  previewHighlight: { color: colors.accent, fontWeight: '700' },
   time: { color: colors.textDim, fontSize: 12 },
   acceptBtn: { backgroundColor: colors.accent, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
   acceptBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 13 },
-  empty: { color: colors.textMuted, textAlign: 'center', marginTop: 32, fontSize: 14 },
+  emptyWrap: { alignItems: 'center', paddingHorizontal: 32, paddingTop: 56 },
+  emptyTitle: { color: colors.text, fontSize: 18, fontWeight: '700', marginBottom: 6 },
+  emptySub: { color: colors.textDim, fontSize: 14, textAlign: 'center', marginBottom: 20 },
+  emptyBtn: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 20, paddingVertical: 12 },
+  emptyBtnText: { color: colors.accent, fontWeight: '700', fontSize: 14 },
 });
