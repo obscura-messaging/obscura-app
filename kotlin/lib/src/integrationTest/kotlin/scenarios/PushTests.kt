@@ -17,14 +17,15 @@ class PushTests {
         becomeFriends(alice, bob)
         bob.disconnect()
 
-        for ((model, id) in listOf("model-a" to "a1", "model-a" to "a2", "model-b" to "b1")) {
-            alice.send(listOf(bob.userId!!), model, id, System.currentTimeMillis(), "opaque-$id".toByteArray())
-        }
+        alice.sendMessage(bob.userId!!, "a1")
+        alice.sendMessage(bob.userId!!, "a2")
+        alice.postStory("b1", null, null, null, null, null)
 
         assertEquals(3, bob.processPendingMessages(timeoutMs = 10_000))
         assertEquals(ConnectionState.CONNECTED, bob.connectionState.value)
-        assertEquals(listOf("model-a", "model-a", "model-b"), List(3) { bob.messageReceived.tryReceive().getOrNull() })
-        assertEquals(3L, bob.inbox.depth())
+        assertEquals(listOf("directMessage", "directMessage", "story"), List(3) { bob.messageReceived.tryReceive().getOrNull() })
+        assertEquals(2, bob.getMessages().size)
+        assertEquals(1, bob.getStories().size)
         alice.disconnect(); bob.disconnect()
     }
 

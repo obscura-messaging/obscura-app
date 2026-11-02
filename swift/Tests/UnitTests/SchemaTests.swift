@@ -32,11 +32,23 @@ final class SchemaTests: XCTestCase {
         try await FriendStore(db: db).add("peer", username: "alice", status: .accepted)
         try await db.write { try DeviceStore.setLocalDevice("me", primaryDeviceId: "me", in: $0) }
         try await DeviceStore(db: db).add(userId: "peer", deviceIds: ["d"])
-        _ = try await InboxStore(db: db, logger: SilentLogger()).put(InboxInsert(
-            envelopeId: "e", senderUserId: "peer", senderDeviceId: "d",
-            modelKey: "m", entryId: "1", sentAt: 1, payload: Data([1])))
-        try await EntryStore(db: db).put(model: "m", entry: StoredEntry(
-            id: "1", data: "x", sentAt: 1, authorUserId: "peer", authorDeviceId: "d", localMetadata: nil))
+        let content = ContentStore(db: db)
+        try await db.write { db in
+            try ContentStore.recordEnvelope("e", in: db)
+            try db.execute(sql: "INSERT INTO erased_entries (id, erased_at) VALUES (?, ?)", arguments: ["dead".storedText, 1])
+        }
+        try await content.insertConversationItem(ConversationItem(
+            id: "1", peerUserId: "peer", kind: "message", authorUserId: "peer",
+            sentAt: 1, viewedAt: nil, content: "x", mediaRef: nil, contentKey: nil,
+            nonce: nil, mediaType: nil, caption: nil, captionMeta: nil, displayDuration: 0
+        ))
+        try await content.insertStoryItem(StoryItem(
+            id: "s1", authorUserId: "peer", sentAt: 1, content: "s",
+            mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil
+        ))
+        try await content.upsertProfile(ProfileItem(
+            userId: "peer", authorDeviceId: "d", updatedAt: 1, displayName: "Alice", bio: "hi"
+        ))
 
         try await ObscuraDatabase.wipe(db)
 
@@ -49,14 +61,26 @@ final class SchemaTests: XCTestCase {
     func testIrreplaceableTableColumnsAreFrozen() throws {
         let db = try ObscuraDatabase.inMemory()
 
-        XCTAssertEqual(try columns(of: "model_entries", in: db), [
-            "model_name:BLOB", "id:BLOB", "data:BLOB", "sent_at:INTEGER",
-            "author_user_id:BLOB", "author_device_id:BLOB", "local_metadata:BLOB",
+        XCTAssertEqual(try columns(of: "processed_envelopes", in: db), [
+            "envelope_id:TEXT",
         ])
-        XCTAssertEqual(try columns(of: "inbox_rows", in: db), [
-            "id:INTEGER", "envelope_id:TEXT", "sender_user_id:TEXT",
-            "sender_device_id:TEXT", "model_key:BLOB", "entry_id:BLOB",
-            "sent_at:INTEGER", "payload:BLOB",
+        XCTAssertEqual(try columns(of: "conversation_entries", in: db), [
+            "id:BLOB", "peer_user_id:BLOB", "kind:TEXT", "author_user_id:BLOB",
+            "sent_at:INTEGER", "viewed_at:INTEGER", "expires_at:INTEGER", "content:BLOB",
+            "media_ref:BLOB", "content_key:BLOB", "nonce:BLOB", "media_type:BLOB",
+            "caption:BLOB", "caption_meta:BLOB", "display_duration:INTEGER", "undelivered:INTEGER",
+        ])
+        XCTAssertEqual(try columns(of: "story_entries", in: db), [
+            "id:BLOB", "author_user_id:BLOB", "sent_at:INTEGER", "expires_at:INTEGER",
+            "content:BLOB", "media_ref:BLOB", "content_key:BLOB", "nonce:BLOB",
+            "media_type:BLOB", "caption_meta:BLOB", "undelivered:INTEGER",
+        ])
+        XCTAssertEqual(try columns(of: "profile_entries", in: db), [
+            "user_id:BLOB", "author_device_id:BLOB", "updated_at:INTEGER",
+            "display_name:BLOB", "bio:BLOB", "undelivered:INTEGER",
+        ])
+        XCTAssertEqual(try columns(of: "erased_entries", in: db), [
+            "id:BLOB", "erased_at:INTEGER",
         ])
     }
 
@@ -69,21 +93,21 @@ final class SchemaTests: XCTestCase {
         )
     }
 
-    func testEntryPrimaryKeyMakesUpsertReplace() throws {
+    func testProfilePrimaryKeyMakesUpsertReplace() throws {
         let db = try ObscuraDatabase.inMemory()
         try db.write { db in
-            for value in ["first", "second"] {
+            for (ts, value) in [(1, "first"), (2, "second")] {
                 try db.execute(sql: """
-                    INSERT OR REPLACE INTO model_entries
-                        (model_name, id, data, sent_at, author_user_id, author_device_id)
-                    VALUES ('story', 'e1', ?, 1, 'user-a', 'device-a')
-                """, arguments: [value])
+                    INSERT OR REPLACE INTO profile_entries
+                        (user_id, author_device_id, updated_at, display_name, bio, undelivered)
+                    VALUES ('user-a', 'device-a', ?, ?, '', 0)
+                """, arguments: [ts, value])
             }
         }
 
         let values = try db.read { db in
             try String.fetchAll(db, sql: """
-                SELECT data FROM model_entries WHERE model_name = 'story' AND id = 'e1'
+                SELECT display_name FROM profile_entries WHERE user_id = 'user-a'
             """)
         }
         XCTAssertEqual(values, ["second"])

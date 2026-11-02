@@ -7,9 +7,13 @@ enum WireCodec {
         switch payload {
         case .friendRequest?: return "FRIEND_REQUEST"
         case .friendAccept?: return "FRIEND_ACCEPT"
-        case .appEntry?: return "APP_ENTRY"
         case .typingSignal?: return "TYPING_SIGNAL"
         case .friendListSync?: return "FRIEND_LIST_SYNC"
+        case .directMessage?: return "DIRECT_MESSAGE"
+        case .pix?: return "PIX"
+        case .seenReceipt?: return "SEEN_RECEIPT"
+        case .story?: return "STORY"
+        case .profile?: return "PROFILE"
         case nil: return ""
         }
     }

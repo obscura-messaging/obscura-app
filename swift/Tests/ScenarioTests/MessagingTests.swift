@@ -2,35 +2,33 @@ import XCTest
 @testable import ObscuraKit
 
 final class MessagingTests: XCTestCase {
-    func testAnEntryArrivesUntouchedAttributedToTheSendersDeviceAndNotToTheSender() async throws {
+    func testADirectMessageArrivesAndStoresLocallyOnBothSides() async throws {
         let (alice, bob) = try await TestUser.friends()
-        let payload = Data(#"{"content":"opaque to the kit","expiresAt":123}"#.utf8)
 
-        let report = try await alice.send("dm_1", to: [bob], model: "directMessage", payload: payload)
+        let id = try await alice.client.sendMessage(peerUserId: bob.userId, content: "hello bob")
 
-        XCTAssertEqual(report.recipients.map(\.status), [.accepted])
-        XCTAssertEqual(report.selfSync, [], "a single-device sender has no other device to sync")
-        let row = try await bob.waitForEntry("dm_1")
-        XCTAssertEqual(row.modelKey, "directMessage")
-        XCTAssertEqual(row.payload, payload)
-        XCTAssertEqual(row.senderUserId, alice.userId)
-        XCTAssertEqual(row.senderDeviceId, alice.deviceId)
-        let aliceDepth = try await alice.client.inbox.depth()
-        let aliceEntries = try await alice.client.entries.all(model: "directMessage")
-        XCTAssertEqual(aliceDepth, 0, "the sending device does not receive its own entry")
-        XCTAssertEqual(aliceEntries, [], "send stores nothing locally; the app writes its own copy")
+        let row = try await bob.waitForEntry(id)
+        XCTAssertEqual(row.kind, "message")
+        XCTAssertEqual(row.content, "hello bob")
+        XCTAssertEqual(row.authorUserId, alice.userId)
+        XCTAssertEqual(row.peerUserId, alice.userId)
+        let aliceMessages = try await alice.client.getMessages()
+        XCTAssertEqual(aliceMessages.map(\.id), [id])
+        XCTAssertEqual(aliceMessages.first?.peerUserId, bob.userId)
     }
 
     func testEachNewEntryWakesTheSingleMessageStreamOnce() async throws {
         let (alice, bob) = try await TestUser.friends()
         var wakes = bob.client.messageReceived.makeAsyncIterator()
 
-        try await alice.send("one", to: [bob], model: "model-a")
-        try await alice.send("two", to: [bob], model: "model-b")
+        _ = try await alice.client.sendMessage(peerUserId: bob.userId, content: "one")
+        _ = try await alice.client.postStory(
+            content: "two", mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil
+        )
 
         let first = await wakes.next()
         let second = await wakes.next()
-        XCTAssertEqual([first, second], ["model-a", "model-b"])
+        XCTAssertEqual([first, second], ["directMessage", "story"])
     }
 
     func testEntriesQueuedWhileOfflineArriveOnConnect() async throws {
@@ -70,14 +68,12 @@ final class MessagingTests: XCTestCase {
         let laptop = try await TestUser.link(to: alice)
         try await alice.client.connect()
 
-        let report = try await alice.send("profile_1", to: [], model: "profile")
+        let report = try await alice.send("dm_sync_1", to: [])
 
         XCTAssertEqual(report.recipients, [])
         XCTAssertEqual(report.selfSync.map(\.deviceId), [laptop.deviceId])
-        let row = try await laptop.waitForEntry("profile_1")
-        XCTAssertEqual(row.senderDeviceId, alice.deviceId)
-        let aliceDepth = try await alice.client.inbox.depth()
-        XCTAssertEqual(aliceDepth, 0)
+        let row = try await laptop.waitForEntry("dm_sync_1")
+        XCTAssertEqual(row.authorUserId, alice.userId)
     }
 
     func testEncryptedAttachmentsRoundTripAndTheServerOnlySeesCiphertext() async throws {
@@ -85,17 +81,21 @@ final class MessagingTests: XCTestCase {
         let image = Data([0xFF, 0xD8, 0xFF, 0xE0]) + Data((0..<(500 * 1024)).map { UInt8($0 % 256) })
 
         let uploaded = try await alice.client.uploadAttachment(image)
-        let payload = try JSONSerialization.data(withJSONObject: [
-            "mediaRef": uploaded.id, "key": uploaded.contentKey.base64EncodedString(),
-            "nonce": uploaded.nonce.base64EncodedString(),
-        ])
-        try await alice.send("story_media", to: [bob], model: "story", payload: payload)
+        let storyId = try await alice.client.postStory(
+            content: "caption",
+            mediaRef: uploaded.id,
+            contentKey: uploaded.contentKey.base64EncodedString(),
+            nonce: uploaded.nonce.base64EncodedString(),
+            mediaType: "photo",
+            captionMeta: nil
+        )
 
-        let row = try await bob.waitForEntry("story_media")
-        let reference = try XCTUnwrap(JSONSerialization.jsonObject(with: row.payload) as? [String: String])
+        let story = try await bob.waitForStory(storyId)
         let downloaded = try await bob.client.downloadDecryptedAttachment(
-            id: try XCTUnwrap(reference["mediaRef"]), contentKey: try XCTUnwrap(Data(base64Encoded: reference["key"]!)),
-            nonce: try XCTUnwrap(Data(base64Encoded: reference["nonce"]!)))
+            id: try XCTUnwrap(story.mediaRef),
+            contentKey: try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(story.contentKey))),
+            nonce: try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(story.nonce)))
+        )
         XCTAssertEqual(downloaded, image)
         let ciphertext = try await bob.client.api.fetchAttachment(uploaded.id)
         XCTAssertNotEqual(ciphertext.prefix(4), image.prefix(4))

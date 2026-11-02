@@ -23,8 +23,7 @@ final class MessageSenderTests: XCTestCase {
 
     private func entry(_ id: String) -> Data {
         try! clientMessage {
-            $0.appEntry.model = "m"
-            $0.appEntry.id = id
+            $0.directMessage.id = id
         }.serializedData()
     }
 
@@ -36,7 +35,7 @@ final class MessageSenderTests: XCTestCase {
         SubmissionResult(userId: device.userId, deviceId: device.deviceId, status: .accepted)
     }
 
-    private func ids(_ received: [Received]) -> [String] { received.map(\.message.appEntry.id) }
+    private func ids(_ received: [Received]) -> [String] { received.map(\.message.directMessage.id) }
 
     private func byDevice(_ results: [SubmissionResult]) -> [SubmissionResult] {
         results.sorted { ($0.deviceId ?? "") < ($1.deviceId ?? "") }

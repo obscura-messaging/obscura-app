@@ -5,7 +5,7 @@ enum ObscuraDatabase {
     static let tables = [
         "friends", "friend_list_version", "device_identity", "devices",
         "signal_local_identity", "signal_identities", "signal_prekeys", "signal_signed_prekeys", "signal_sessions",
-        "inbox_rows", "model_entries",
+        "processed_envelopes", "conversation_entries", "story_entries", "profile_entries", "erased_entries",
     ]
 
     /// SQLCipher-encrypted with a per-user key from the Keychain.
@@ -94,25 +94,51 @@ enum ObscuraDatabase {
                     address TEXT PRIMARY KEY,
                     record BLOB NOT NULL
                 );
-                CREATE TABLE inbox_rows (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    envelope_id TEXT NOT NULL UNIQUE,
-                    sender_user_id TEXT NOT NULL,
-                    sender_device_id TEXT NOT NULL,
-                    model_key BLOB NOT NULL,
-                    entry_id BLOB NOT NULL,
-                    sent_at INTEGER NOT NULL,
-                    payload BLOB NOT NULL
+                CREATE TABLE processed_envelopes (
+                    envelope_id TEXT PRIMARY KEY
                 );
-                CREATE TABLE model_entries (
-                    model_name BLOB NOT NULL,
-                    id BLOB NOT NULL,
-                    data BLOB NOT NULL,
-                    sent_at INTEGER NOT NULL,
+                CREATE TABLE conversation_entries (
+                    id BLOB PRIMARY KEY,
+                    peer_user_id BLOB NOT NULL,
+                    kind TEXT NOT NULL,
                     author_user_id BLOB NOT NULL,
+                    sent_at INTEGER NOT NULL,
+                    viewed_at INTEGER,
+                    expires_at INTEGER NOT NULL,
+                    content BLOB NOT NULL,
+                    media_ref BLOB,
+                    content_key BLOB,
+                    nonce BLOB,
+                    media_type BLOB,
+                    caption BLOB,
+                    caption_meta BLOB,
+                    display_duration INTEGER NOT NULL,
+                    undelivered INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE story_entries (
+                    id BLOB PRIMARY KEY,
+                    author_user_id BLOB NOT NULL,
+                    sent_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    content BLOB NOT NULL,
+                    media_ref BLOB,
+                    content_key BLOB,
+                    nonce BLOB,
+                    media_type BLOB,
+                    caption_meta BLOB,
+                    undelivered INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE profile_entries (
+                    user_id BLOB PRIMARY KEY,
                     author_device_id BLOB NOT NULL,
-                    local_metadata BLOB,
-                    PRIMARY KEY (model_name, id)
+                    updated_at INTEGER NOT NULL,
+                    display_name BLOB NOT NULL,
+                    bio BLOB NOT NULL,
+                    undelivered INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE erased_entries (
+                    id BLOB PRIMARY KEY,
+                    erased_at INTEGER NOT NULL
                 );
                 """)
         }

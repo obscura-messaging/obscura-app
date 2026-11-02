@@ -2,9 +2,13 @@ package dev.barrelmaker.obscura.kit
 
 import dev.barrelmaker.obscura.kit.crypto.LinkCrypto
 import dev.barrelmaker.obscura.kit.crypto.fromBase64
+import dev.barrelmaker.obscura.kit.stores.ConversationItemData
 import dev.barrelmaker.obscura.kit.stores.FriendData
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
-import dev.barrelmaker.obscura.kit.stores.StoredEntry
+import dev.barrelmaker.obscura.kit.stores.ProfileItemData
+import dev.barrelmaker.obscura.kit.stores.STORY_MAX_AGE_MS
+import dev.barrelmaker.obscura.kit.stores.StoryItemData
+import dev.barrelmaker.obscura.kit.stores.expiresAt
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
@@ -151,7 +155,9 @@ class AccountTest {
         val c = sessionClient(url, storage)
         assertTrue(c.auth.restore())
         val oldIdentity = c.signalStore.identityKeyPair.publicKey
-        c.entries.put("m", StoredEntry("e", "{}", 1, SELF_USER_ID, SELF_DEVICE_ID))
+        c.content.putConversation(
+            ConversationItemData("e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
+        )
 
         c.resetAccount("self", "password")
 
@@ -164,7 +170,7 @@ class AccountTest {
         assertEquals(newDeviceId, c.deviceId)
         assertEquals(newDeviceId, storage.data!!["deviceId"])
         assertTrue(c.isPrimary())
-        assertTrue(c.entries.all("m").isEmpty())
+        assertTrue(c.getMessages().isEmpty())
         c.auth.end()
         Unit
     }
@@ -172,10 +178,16 @@ class AccountTest {
     @Test fun `a linked device receives the account identity, friends and history and is not primary`() = runBlocking {
         val primary = sessionClient(url, storedSession())
         assertTrue(primary.auth.restore())
-        val friends = listOf(FriendData("019f025a-0000-7de6-84b6-000000000002", "alice", FriendStatus.ACCEPTED))
+        val peerId = "019f025a-0000-7de6-84b6-000000000002"
+        val friends = listOf(FriendData(peerId, "alice", FriendStatus.ACCEPTED))
         primary.db.friendQueries.insert(friends[0].userId, friends[0].username, friends[0].status.value)
         primary.db.friendQueries.incrementVersion()
-        primary.entries.put("chat", StoredEntry("e1", """{"text":"hi"}""", 42, SELF_USER_ID, SELF_DEVICE_ID, localMetadata = "private"))
+        val msg = ConversationItemData("dm_1", peerId, "message", SELF_USER_ID, 42, null, expiresAt(42, null), "hi", undelivered = true)
+        val story = StoryItemData("st_1", SELF_USER_ID, 100, 100 + STORY_MAX_AGE_MS, "my story", undelivered = true)
+        val profile = ProfileItemData(SELF_USER_ID, SELF_DEVICE_ID, 50, "Self", "Bio", undelivered = true)
+        primary.content.putConversation(msg)
+        primary.content.putStory(story)
+        primary.content.putProfile(profile)
         val storage = MemoryStorage()
         val tablet = newClient(url, storage)
 
@@ -193,7 +205,9 @@ class AccountTest {
         assertEquals(newDeviceId, storage.data!!["deviceId"])
         assertEquals(friends, tablet.getFriends())
         assertEquals(1L, tablet.db.friendQueries.selectVersion().executeAsOne())
-        assertEquals(listOf(StoredEntry("e1", """{"text":"hi"}""", 42, SELF_USER_ID, SELF_DEVICE_ID)), tablet.entries.all("chat"))
+        assertEquals(listOf(msg.copy(undelivered = false)), tablet.getMessages())
+        assertEquals(listOf(story.copy(undelivered = false)), tablet.getStories(now = 0))
+        assertEquals(listOf(profile.copy(undelivered = false)), tablet.getProfiles())
         assertEquals(ConnectionState.CONNECTED, tablet.connectionState.value)
         val created = JSONObject(requestsTo("/v1/devices").single { it.method == "POST" }.body!!.utf8())
         assertEquals("ls-1", created.getString("linkSessionId"))
@@ -212,7 +226,9 @@ class AccountTest {
     @Test fun `a history that cannot be imported throws but leaves the device linked and authenticated`() = runBlocking {
         val primary = sessionClient(url, storedSession())
         assertTrue(primary.auth.restore())
-        primary.entries.put("chat", StoredEntry("e1", "{}", 1, SELF_USER_ID, SELF_DEVICE_ID))
+        primary.content.putConversation(
+            ConversationItemData("e1", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
+        )
         val storage = MemoryStorage()
         val tablet = newClient(url, storage)
         val request = tablet.beginLink("self", "password", "Tablet")
@@ -225,7 +241,7 @@ class AccountTest {
         assertEquals(AuthState.AUTHENTICATED, tablet.authState.value)
         assertEquals(newDeviceId, storage.data!!["deviceId"])
         assertArrayEquals(primary.signalStore.identityKeyPair.serialize(), tablet.signalStore.identityKeyPair.serialize())
-        assertTrue(tablet.entries.all("chat").isEmpty())
+        assertTrue(tablet.getMessages().isEmpty())
         primary.auth.end()
         tablet.auth.end()
         Unit

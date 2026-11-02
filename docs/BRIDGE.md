@@ -30,7 +30,8 @@ constrained as it is.
 - **Wake-ups vs. delivery:** Bridge events (`messageReceived`, `friendsChanged`)
   are lossy wake-ups—for example, events emitted on iOS before JS attaches a
   listener are dropped, and background push drains run without JS. That is why
-  the durable inbox and entry store are the source of truth, and why the app
-  always drains and sweeps on cold start, reconnect, and foreground transition.
+  the kit's durable domain tables are the source of truth, and why the app
+  always refreshes all slices, flushes the outbox, and sweeps expired records on
+  cold start, reconnect, and foreground transition.
 
 [kit]: KIT_API.md

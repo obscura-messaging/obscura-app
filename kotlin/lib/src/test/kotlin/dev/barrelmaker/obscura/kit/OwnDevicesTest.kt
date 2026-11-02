@@ -74,13 +74,14 @@ class OwnDevicesTest {
             val peer = peers.register("019f025a-0000-7de6-84b6-000000000002")
             val c = sessionClient(url, storedSession())
             assertTrue(c.auth.restore())
+            c.db.friendQueries.insert(peer.userId, "bob", dev.barrelmaker.obscura.kit.stores.FriendStatus.ACCEPTED.value)
             server.enqueue(MockResponse.Builder().body(org.json.JSONObject().put("bundles", org.json.JSONArray().put(peer.consumeBundle())).toString()).build())
             server.enqueue(MockResponse.Builder().body("").build())
 
-            val report = c.send(listOf(peer.userId), "m", "e", 1, byteArrayOf(1))
+            val id = c.sendMessage(peer.userId, "hi")
 
-            assertEquals(SubmissionStatus.ACCEPTED, report.recipients.single().status)
-            assertEquals(emptyList<SubmissionResult>(), report.selfSync)
+            assertTrue(id.startsWith("dm_"))
+            assertEquals("hi", c.getMessages().single().content)
             val requests = List(server.requestCount) { server.takeRequest() }
             assertEquals(listOf("/v1/keys/${peer.userId}", "/v1/messages"), requests.map { it.url.encodedPath })
             val batched = xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest.parseFrom(requests[1].body!!.toByteArray())

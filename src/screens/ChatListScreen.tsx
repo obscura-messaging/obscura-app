@@ -5,7 +5,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { activityPreview, friendActivities, type PixBadge } from '../domain/chats';
 import {
-  useSession, useModelEntries, useAcceptedFriends, usePendingFriends,
+  useSession, useMessages, useAcceptedFriends, usePendingFriends,
   acceptFriend, removeFriend, type Friend,
 } from '../state/store';
 import { StoriesRow } from '../components/StoriesRow';
@@ -93,13 +93,12 @@ export function ChatListScreen() {
   const { myUserId, isPrimary } = useSession();
   const friends = useAcceptedFriends();
   const pending = usePendingFriends();
-  const messages = useModelEntries('directMessage');
-  const pix = useModelEntries('pix');
+  const items = useMessages();
   const [acceptingUserId, setAcceptingUserId] = useState<string | null>(null);
 
   const activities = useMemo(
-    () => friendActivities(friends, myUserId, messages, pix),
-    [friends, myUserId, messages, pix],
+    () => friendActivities(friends, myUserId, items),
+    [friends, myUserId, items],
   );
 
   const accept = async (friend: Friend) => {

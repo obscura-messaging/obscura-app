@@ -149,12 +149,12 @@ extension ObscuraClient {
             return
         }
         do {
-            if try await inbox.contains(envelopeId: envelopeId) {
+            if try await content.containsEnvelope(envelopeId) {
                 await ack(envelope.id, envelopeId, acknowledge)
                 return
             }
         } catch {
-            logger.databaseError(store: "inbox", operation: "contains", reason: "\(error)")
+            logger.databaseError(store: "content", operation: "containsEnvelope", reason: "\(error)")
             return
         }
         let content: PersistedContent
@@ -218,22 +218,126 @@ extension ObscuraClient {
         await ack(envelope.id, envelopeId, acknowledge)
     }
 
+    static func peerUserId(senderUserId: String, claimedPeerUserId: String, selfUserId: String?) -> String? {
+        let claimed = claimedPeerUserId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let selfUserId else { return senderUserId }
+        if senderUserId == selfUserId {
+            guard !claimed.isEmpty, claimed != selfUserId else { return nil }
+            return claimedPeerUserId
+        } else {
+            if !claimed.isEmpty, claimed != selfUserId, claimed != senderUserId {
+                return nil
+            }
+            return senderUserId
+        }
+    }
+
     /// The durable part of handling a decrypted message, in the decrypt's transaction. Friend requests
     /// and accepts change only the primary's list; a linked device takes the list only from its
     /// account's primary, and only a newer version.
     static func persist(_ message: Obscura_Client_V1_ClientMessage, envelopeId: String, senderUserId: String,
                         senderDeviceId: String, selfUserId: String?, in db: Database) throws -> PersistedContent {
+        if try ContentStore.containsEnvelope(envelopeId, in: db) {
+            return .handled
+        }
+        let sentAt = clampFuture(message.timestamp)
         switch message.payload {
-        case .appEntry(let entry)?:
-            guard !entry.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !entry.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return .ignored("app entry with blank model or id")
+        case .directMessage(let dm)?:
+            guard !dm.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let peer = peerUserId(senderUserId: senderUserId, claimedPeerUserId: dm.peerUserID, selfUserId: selfUserId) else {
+                return .ignored("direct message with blank id or invalid peer")
             }
-            let inserted = try InboxStore.put(InboxInsert(
-                envelopeId: envelopeId, senderUserId: senderUserId,
-                senderDeviceId: senderDeviceId, modelKey: entry.model, entryId: entry.id,
-                sentAt: clampFuture(entry.timestamp), payload: entry.data), in: db)
-            return .inboxed(modelKey: inserted ? entry.model : nil)
+            let item = ConversationItem(
+                id: dm.id,
+                peerUserId: peer,
+                kind: "message",
+                authorUserId: senderUserId,
+                sentAt: sentAt,
+                viewedAt: nil,
+                content: dm.content,
+                mediaRef: nil,
+                contentKey: nil,
+                nonce: nil,
+                mediaType: nil,
+                caption: nil,
+                captionMeta: nil,
+                displayDuration: 0
+            )
+            let inserted = try ContentStore.insertConversationItem(item, undelivered: false, in: db)
+            try ContentStore.recordEnvelope(envelopeId, in: db)
+            return .inboxed(modelKey: inserted ? "directMessage" : nil)
+        case .pix(let pix)?:
+            guard !pix.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let peer = peerUserId(senderUserId: senderUserId, claimedPeerUserId: pix.peerUserID, selfUserId: selfUserId),
+                  pix.hasAttachment,
+                  !pix.attachment.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !pix.attachment.contentKey.isEmpty,
+                  !pix.attachment.nonce.isEmpty else {
+                return .ignored("pix message with invalid id, peer, or attachment")
+            }
+            let item = ConversationItem(
+                id: pix.id,
+                peerUserId: peer,
+                kind: "pix",
+                authorUserId: senderUserId,
+                sentAt: sentAt,
+                viewedAt: nil,
+                content: "",
+                mediaRef: pix.attachment.id,
+                contentKey: pix.attachment.contentKey.base64EncodedString(),
+                nonce: pix.attachment.nonce.base64EncodedString(),
+                mediaType: pix.attachment.mediaType.isEmpty ? nil : pix.attachment.mediaType,
+                caption: pix.caption.isEmpty ? nil : pix.caption,
+                captionMeta: pix.captionMeta.isEmpty ? nil : pix.captionMeta,
+                displayDuration: Int(pix.displayDurationSecs)
+            )
+            let inserted = try ContentStore.insertConversationItem(item, undelivered: false, in: db)
+            try ContentStore.recordEnvelope(envelopeId, in: db)
+            return .inboxed(modelKey: inserted ? "pix" : nil)
+        case .seenReceipt(let sr)?:
+            guard !sr.entryID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let peer = peerUserId(senderUserId: senderUserId, claimedPeerUserId: sr.peerUserID, selfUserId: selfUserId) else {
+                return .ignored("seen receipt with blank entryId or invalid peer")
+            }
+            let updated = try ContentStore.applySeenReceipt(
+                entryId: sr.entryID,
+                peerUserId: peer,
+                senderUserId: senderUserId,
+                viewedAt: min(sr.viewedAt, sentAt),
+                in: db
+            )
+            try ContentStore.recordEnvelope(envelopeId, in: db)
+            return .inboxed(modelKey: updated ? "seen" : nil)
+        case .story(let st)?:
+            guard !st.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return .ignored("story with blank id")
+            }
+            let hasAtt = st.hasAttachment && !st.attachment.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let item = StoryItem(
+                id: st.id,
+                authorUserId: senderUserId,
+                sentAt: sentAt,
+                content: st.content,
+                mediaRef: hasAtt ? st.attachment.id : nil,
+                contentKey: hasAtt && !st.attachment.contentKey.isEmpty ? st.attachment.contentKey.base64EncodedString() : nil,
+                nonce: hasAtt && !st.attachment.nonce.isEmpty ? st.attachment.nonce.base64EncodedString() : nil,
+                mediaType: hasAtt && !st.attachment.mediaType.isEmpty ? st.attachment.mediaType : nil,
+                captionMeta: st.captionMeta.isEmpty ? nil : st.captionMeta
+            )
+            let inserted = try ContentStore.insertStoryItem(item, undelivered: false, in: db)
+            try ContentStore.recordEnvelope(envelopeId, in: db)
+            return .inboxed(modelKey: inserted ? "story" : nil)
+        case .profile(let pr)?:
+            let item = ProfileItem(
+                userId: senderUserId,
+                authorDeviceId: senderDeviceId,
+                updatedAt: sentAt,
+                displayName: pr.displayName,
+                bio: pr.bio
+            )
+            let updated = try ContentStore.upsertProfile(item, undelivered: false, in: db)
+            try ContentStore.recordEnvelope(envelopeId, in: db)
+            return .inboxed(modelKey: updated ? "profile" : nil)
         case nil:
             return .ignored("unknown client message arm")
         case .friendRequest(let request)?:
@@ -282,7 +386,7 @@ extension ObscuraClient {
             logger.log("ignoring unsolicited FRIEND_ACCEPT from \(senderUserId)")
         case .typingSignal(let signal)?:
             receivedTyping(signal, senderUserId: senderUserId, senderDeviceId: senderDeviceId)
-        case .appEntry?, .friendListSync?, nil:
+        case .directMessage?, .pix?, .seenReceipt?, .story?, .profile?, .friendListSync?, nil:
             throw ObscuraError.protocolViolation("\(WireCodec.messageKind(message.payload)) is not a control message")
         }
     }

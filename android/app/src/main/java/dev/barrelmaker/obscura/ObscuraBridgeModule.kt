@@ -7,16 +7,16 @@ import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.ConnectionState
+import dev.barrelmaker.obscura.kit.ConversationItemData
 import dev.barrelmaker.obscura.kit.DeviceInfo
 import dev.barrelmaker.obscura.kit.LinkRequest
+import dev.barrelmaker.obscura.kit.LoginScenario
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraError
-import dev.barrelmaker.obscura.kit.SendReport
-import dev.barrelmaker.obscura.kit.SubmissionResult
+import dev.barrelmaker.obscura.kit.ProfileItemData
+import dev.barrelmaker.obscura.kit.StoryItemData
 import dev.barrelmaker.obscura.kit.TypingState
-import dev.barrelmaker.obscura.kit.LoginScenario
 import dev.barrelmaker.obscura.kit.stores.FriendData
-import dev.barrelmaker.obscura.kit.stores.StoredEntry
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.sync.Mutex
@@ -613,15 +613,19 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    /** Delete this device's decrypted copy of an attachment. The server's ciphertext is untouched. */
-    @ReactMethod
-    fun purgeAttachment(id: String, promise: Promise) {
+    private fun purgeAttachmentFile(id: String) {
         val dir = attachmentDir()
         val stem = attachmentStem(id)
         for (ext in attachmentExtensions) {
             java.io.File(dir, "$stem.$ext").delete()
             java.io.File(dir, "$stem.$ext.tmp").delete()
         }
+    }
+
+    /** Delete this device's decrypted copy of an attachment. The server's ciphertext is untouched. */
+    @ReactMethod
+    fun purgeAttachment(id: String, promise: Promise) {
+        purgeAttachmentFile(id)
         promise.resolve(null)
     }
 
@@ -947,202 +951,207 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
 
     // ─────────────────────────────────────────────────────────────────────────────────────────
-    // Kit data surface.
-    //
-    // Drain the inbox, store application entries, and send application writes.
-    // Payload data crosses as an opaque JSON string and is never re-encoded.
+    // Typed content surface.
     // ─────────────────────────────────────────────────────────────────────────────────────────
 
     @ReactMethod
-    fun inboxPeek(limit: Double, promise: Promise) {
+    fun getMessages(promise: Promise) {
         scope.launch {
             try {
-                val rows = requireClient().inbox.peek(limit.toInt())
                 val arr = Arguments.createArray()
-                for (r in rows) arr.pushMap(inboxRowToMap(r))
+                for (m in requireClient().getMessages()) arr.pushMap(messageToMap(m))
                 promise.resolve(arr)
             } catch (e: Exception) {
-                promise.rejectKit("INBOX_PEEK_ERROR", e)
+                promise.rejectKit("GET_MESSAGES_ERROR", e)
             }
         }
     }
 
     @ReactMethod
-    fun inboxConsume(ids: ReadableArray, promise: Promise) {
+    fun sendMessage(peerUserId: String, content: String, promise: Promise) {
         scope.launch {
             try {
-                requireClient().inbox.consume(ids.toLongList())
-                promise.resolve(null)
+                promise.resolve(requireClient().sendMessage(peerUserId, content))
             } catch (e: Exception) {
-                promise.rejectKit("INBOX_CONSUME_ERROR", e)
-            }
-        }
-    }
-
-    /** Permanent data loss; the kit logs `reason` as a security event, so it is required. */
-    @ReactMethod
-    fun inboxDiscard(ids: ReadableArray, reason: String, promise: Promise) {
-        scope.launch {
-            try {
-                requireClient().inbox.discard(ids.toLongList(), reason)
-                promise.resolve(null)
-            } catch (e: Exception) {
-                promise.rejectKit("INBOX_DISCARD_ERROR", e)
+                promise.rejectKit("SEND_MESSAGE_ERROR", e)
             }
         }
     }
 
     @ReactMethod
-    fun inboxDepth(promise: Promise) {
-        scope.launch {
-            try {
-                promise.resolve(requireClient().inbox.depth().toDouble())
-            } catch (e: Exception) {
-                promise.rejectKit("INBOX_DEPTH_ERROR", e)
-            }
-        }
-    }
-
-    @ReactMethod
-    fun entryPut(
-        model: String,
-        id: String,
-        dataJson: String,
-        sentAt: Double,
-        authorUserId: String,
-        authorDeviceId: String,
-        localMetadataJson: String?,
+    fun sendPix(
+        peerUserId: String,
+        mediaRef: String,
+        contentKey: String,
+        nonce: String,
+        mediaType: String,
+        caption: String,
+        captionMeta: String?,
+        displayDuration: Double,
         promise: Promise,
     ) {
         scope.launch {
             try {
-                requireClient().entries.put(
-                    model,
-                    StoredEntry(
-                        id = id,
-                        data = dataJson,
-                        sentAt = sentAt.toLong(),
-                        authorUserId = authorUserId,
-                        authorDeviceId = authorDeviceId,
-                        localMetadata = localMetadataJson,
-                    )
+                val id = requireClient().sendPix(
+                    peerUserId = peerUserId,
+                    mediaRef = mediaRef,
+                    contentKey = contentKey,
+                    nonce = nonce,
+                    mediaType = mediaType,
+                    caption = caption,
+                    captionMeta = captionMeta,
+                    displayDuration = displayDuration.toInt(),
                 )
+                promise.resolve(id)
+            } catch (e: Exception) {
+                promise.rejectKit("SEND_PIX_ERROR", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun markSeen(entryId: String, promise: Promise) {
+        scope.launch {
+            try {
+                requireClient().markSeen(entryId)
                 promise.resolve(null)
             } catch (e: Exception) {
-                promise.rejectKit("ENTRY_PUT_ERROR", e)
+                promise.rejectKit("MARK_SEEN_ERROR", e)
             }
         }
     }
 
-    /** Securely remove local entries. The app decides when. */
     @ReactMethod
-    fun entryErase(model: String, ids: ReadableArray, promise: Promise) {
+    fun getStories(promise: Promise) {
         scope.launch {
             try {
-                requireClient().entries.erase(model, ids.toStringList())
-                promise.resolve(null)
+                val arr = Arguments.createArray()
+                for (s in requireClient().getStories()) arr.pushMap(storyToMap(s))
+                promise.resolve(arr)
             } catch (e: Exception) {
-                promise.rejectKit("ENTRY_ERASE_ERROR", e)
-            }
-        }
-    }
-
-    /** The named entries that exist. */
-    @ReactMethod
-    fun entryGet(model: String, ids: ReadableArray, promise: Promise) {
-        scope.launch {
-            try {
-                promise.resolve(entriesToArray(requireClient().entries.get(model, ids.toStringList())))
-            } catch (e: Exception) {
-                promise.rejectKit("ENTRY_GET_ERROR", e)
+                promise.rejectKit("GET_STORIES_ERROR", e)
             }
         }
     }
 
     @ReactMethod
-    fun entryAll(model: String, promise: Promise) {
-        scope.launch {
-            try {
-                promise.resolve(entriesToArray(requireClient().entries.all(model)))
-            } catch (e: Exception) {
-                promise.rejectKit("ENTRY_ALL_ERROR", e)
-            }
-        }
-    }
-
-    private fun entriesToArray(entries: List<StoredEntry>): WritableArray =
-        Arguments.createArray().apply {
-            for (e in entries) pushMap(Arguments.createMap().apply {
-                putString("id", e.id)
-                putString("data", e.data)
-                putDouble("sentAt", e.sentAt.toDouble())
-                putString("authorUserId", e.authorUserId)
-                putString("authorDeviceId", e.authorDeviceId)
-                putString("localMetadata", e.localMetadata)
-            })
-        }
-
-    /** Per-device results: `{userId, deviceId, status, error}`, status `accepted|rejected|unknown`. */
-    private fun sendReportToMap(report: SendReport): WritableMap {
-        fun results(list: List<SubmissionResult>) = Arguments.createArray().apply {
-            for (r in list) pushMap(Arguments.createMap().apply {
-                putString("userId", r.userId)
-                putString("deviceId", r.deviceId)
-                putString("status", r.status.name.lowercase())
-                putString("error", r.error)
-            })
-        }
-        return Arguments.createMap().apply {
-            putArray("recipients", results(report.recipients))
-            putArray("selfSync", results(report.selfSync))
-        }
-    }
-
-    /** The caller names recipients; the kit resolves no audience. */
-    @ReactMethod
-    fun sendEntry(
-        recipientUserIds: ReadableArray,
-        modelKey: String,
-        entryId: String,
-        sentAt: Double,
-        payloadJson: String,
+    fun postStory(
+        content: String,
+        mediaRef: String?,
+        contentKey: String?,
+        nonce: String?,
+        mediaType: String?,
+        captionMeta: String?,
         promise: Promise,
     ) {
         scope.launch {
             try {
-                val report = requireClient().send(
-                    recipientUserIds = recipientUserIds.toStringList(),
-                    modelKey = modelKey,
-                    entryId = entryId,
-                    sentAt = sentAt.toLong(),
-                    payload = payloadJson.toByteArray(),
+                val id = requireClient().postStory(
+                    content = content,
+                    mediaRef = mediaRef,
+                    contentKey = contentKey,
+                    nonce = nonce,
+                    mediaType = mediaType,
+                    captionMeta = captionMeta,
                 )
-                promise.resolve(sendReportToMap(report))
+                promise.resolve(id)
             } catch (e: Exception) {
-                promise.rejectKit("SEND_ERROR", e)
+                promise.rejectKit("POST_STORY_ERROR", e)
             }
         }
     }
 
-    /** `payload` crosses as a UTF-8 string. */
-    private fun inboxRowToMap(r: dev.barrelmaker.obscura.kit.stores.InboxRecord): WritableMap =
+    @ReactMethod
+    fun getProfiles(promise: Promise) {
+        scope.launch {
+            try {
+                val arr = Arguments.createArray()
+                for (p in requireClient().getProfiles()) arr.pushMap(profileToMap(p))
+                promise.resolve(arr)
+            } catch (e: Exception) {
+                promise.rejectKit("GET_PROFILES_ERROR", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun updateProfile(displayName: String, bio: String, promise: Promise) {
+        scope.launch {
+            try {
+                requireClient().updateProfile(displayName, bio)
+                promise.resolve(null)
+            } catch (e: Exception) {
+                promise.rejectKit("UPDATE_PROFILE_ERROR", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun flushOutbox(promise: Promise) {
+        scope.launch {
+            try {
+                promise.resolve(requireClient().flushOutbox())
+            } catch (e: Exception) {
+                promise.rejectKit("FLUSH_OUTBOX_ERROR", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun sweepExpired(promise: Promise) {
+        scope.launch {
+            try {
+                val outcome = requireClient().sweepExpired()
+                for (mediaRef in outcome.purgedMediaRefs) purgeAttachmentFile(mediaRef)
+                val arr = Arguments.createArray()
+                for (model in outcome.touchedModels) arr.pushString(model)
+                promise.resolve(arr)
+            } catch (e: Exception) {
+                promise.rejectKit("SWEEP_EXPIRED_ERROR", e)
+            }
+        }
+    }
+
+    private fun messageToMap(m: ConversationItemData): WritableMap =
         Arguments.createMap().apply {
-            putDouble("id", r.id.toDouble())
-            putString("senderUserId", r.senderUserId)
-            putString("senderDeviceId", r.senderDeviceId)
-            putString("modelKey", r.modelKey)
-            putString("entryId", r.entryId)
-            putDouble("sentAt", r.sentAt.toDouble())
-            putString("payload", String(r.payload))
+            putString("id", m.id)
+            putString("peerUserId", m.peerUserId)
+            putString("kind", m.kind)
+            putString("authorUserId", m.authorUserId)
+            putDouble("sentAt", m.sentAt.toDouble())
+            val viewedAt = m.viewedAt
+            if (viewedAt != null) putDouble("viewedAt", viewedAt.toDouble()) else putNull("viewedAt")
+            putString("content", m.content)
+            putString("mediaRef", m.mediaRef)
+            putString("contentKey", m.contentKey)
+            putString("nonce", m.nonce)
+            putString("mediaType", m.mediaType)
+            putString("caption", m.caption)
+            putString("captionMeta", m.captionMeta)
+            putInt("displayDuration", m.displayDuration)
         }
 
-    /**
-     * Inbox ids are `Long`, and the RN bridge has no integer type — everything numeric arrives as a
-     * double. That is exact up to 2^53, and these are per-install row counters, so the conversion is
-     * safe for any inbox that could physically exist.
-     */
-    private fun ReadableArray.toLongList(): List<Long> =
-        (0 until size()).map { getDouble(it).toLong() }
+    private fun storyToMap(s: StoryItemData): WritableMap =
+        Arguments.createMap().apply {
+            putString("id", s.id)
+            putString("authorUserId", s.authorUserId)
+            putDouble("sentAt", s.sentAt.toDouble())
+            putString("content", s.content)
+            putString("mediaRef", s.mediaRef)
+            putString("contentKey", s.contentKey)
+            putString("nonce", s.nonce)
+            putString("mediaType", s.mediaType)
+            putString("captionMeta", s.captionMeta)
+        }
+
+    private fun profileToMap(p: ProfileItemData): WritableMap =
+        Arguments.createMap().apply {
+            putString("userId", p.userId)
+            putString("authorDeviceId", p.authorDeviceId)
+            putDouble("updatedAt", p.updatedAt.toDouble())
+            putString("displayName", p.displayName)
+            putString("bio", p.bio)
+        }
 
     private fun ReadableArray.toStringList(): List<String> =
         (0 until size()).mapNotNull { getString(it) }

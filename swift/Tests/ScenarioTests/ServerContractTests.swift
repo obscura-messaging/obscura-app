@@ -51,8 +51,8 @@ final class ServerContractTests: XCTestCase {
         addTeardownBlock { try await alice.client.logout(); try await bob.client.logout() }
         try await bob.client.db.write { db in
             try db.execute(sql: """
-                CREATE TRIGGER contract_inbox_fault BEFORE INSERT ON inbox_rows
-                WHEN NEW.entry_id = CAST('recover-after-decrypt' AS BLOB)
+                CREATE TRIGGER contract_inbox_fault BEFORE INSERT ON conversation_entries
+                WHEN NEW.id = CAST('recover-after-decrypt' AS BLOB)
                 BEGIN SELECT RAISE(ABORT, 'contract inbox persistence fault'); END
                 """)
         }
@@ -62,26 +62,25 @@ final class ServerContractTests: XCTestCase {
         _ = try await eventually("real encrypted message reaches the injected post-decrypt inbox failure") {
             bob.client.getDebugLog().contains { $0.contains("contract inbox persistence fault") } ? true : nil
         }
-        let empty = try await bob.client.inbox.depth()
-        XCTAssertEqual(empty, 0)
+        let empty = try await bob.client.getMessages()
+        XCTAssertEqual(empty, [])
         await bob.client.disconnect()
         try await bob.client.db.write { try $0.execute(sql: "DROP TRIGGER contract_inbox_fault") }
 
         try await bob.client.connect()
         let recovered = try await bob.waitForEntry("recover-after-decrypt")
-        XCTAssertEqual(recovered.senderDeviceId, alice.deviceId)
-        let recoveredRows = try await bob.client.inbox.peek(limit: 100)
-        XCTAssertEqual(recoveredRows.filter { $0.entryId == "recover-after-decrypt" }.count, 1)
+        XCTAssertEqual(recovered.authorUserId, alice.userId)
+        let recoveredRows = try await bob.client.getMessages()
+        XCTAssertEqual(recoveredRows.filter { $0.id == "recover-after-decrypt" }.count, 1)
         // A later encrypted message is a barrier for the gateway's queued delivery and ACK path.
         _ = try await alice.send("after-recovery-barrier", to: [bob])
         _ = try await bob.waitForEntry("after-recovery-barrier")
-        try await bob.client.inbox.consume(recoveredRows.map(\.id))
         await bob.client.disconnect()
         try await bob.client.connect()
         _ = try await alice.send("after-ack-barrier", to: [bob])
         _ = try await bob.waitForEntry("after-ack-barrier")
-        let rowsAfterAck = try await bob.client.inbox.peek(limit: 100)
-        XCTAssertFalse(rowsAfterAck.contains { $0.entryId == "recover-after-decrypt" })
+        let rowsAfterAck = try await bob.client.getMessages()
+        XCTAssertEqual(rowsAfterAck.filter { $0.id == "recover-after-decrypt" }.count, 1)
         XCTAssertFalse(bob.client.getDebugLog().contains { $0.contains("decrypt failed") },
                        "the persisted message must ACK and disappear from the server, not recur as a duplicate Signal message")
     }
@@ -95,9 +94,9 @@ final class ServerContractTests: XCTestCase {
         XCTAssertEqual(original.signedPreKey.keyId, 1)
         try await alice.client.messenger.establishSessions(userId: bob.userId, [original])
         var delayed = Obscura_Client_V1_ClientMessage()
-        delayed.appEntry.model = "contract"
-        delayed.appEntry.id = "delayed-original-signed-key"
-        delayed.appEntry.data = Data("before rotation".utf8)
+        delayed.directMessage.id = "delayed-original-signed-key"
+        delayed.directMessage.peerUserID = bob.userId
+        delayed.directMessage.content = "before rotation"
         let pending = try await alice.client.messenger.prepareSubmission(
             deviceId: bob.deviceId, clientMessage: delayed.serializedData())
 
@@ -124,8 +123,8 @@ final class ServerContractTests: XCTestCase {
 
         let delayedResult = await alice.client.messenger.submit(userId: bob.userId, submissions: [pending]).submitted
         XCTAssertEqual(delayedResult.map(\.result.status), [.accepted])
-        let oldEntry = try await bob.waitForEntry(delayed.appEntry.id)
-        XCTAssertEqual(oldEntry.payload, delayed.appEntry.data, "private signed key 1 must survive both rotations")
+        let oldEntry = try await bob.waitForEntry(delayed.directMessage.id)
+        XCTAssertEqual(oldEntry.content, delayed.directMessage.content, "private signed key 1 must survive both rotations")
 
         let carol = try await TestUser.register()
         addTeardownBlock { try await carol.client.logout() }
@@ -134,7 +133,7 @@ final class ServerContractTests: XCTestCase {
         let report = try await carol.send("new-rotated-bootstrap", to: [bob])
         XCTAssertEqual(report.recipients.map(\.status), [.accepted])
         let entry = try await bob.waitForEntry("new-rotated-bootstrap")
-        XCTAssertEqual(entry.senderDeviceId, carol.deviceId)
+        XCTAssertEqual(entry.authorUserId, carol.userId)
         await bob.client.disconnect()
     }
 
@@ -145,9 +144,11 @@ final class ServerContractTests: XCTestCase {
         let missingUserId = UUID().uuidString.lowercased()
         try await alice.client.directory.add(userId: missingUserId, deviceIds: [UUID().uuidString.lowercased()])
 
-        let report = try await alice.client.send(
-            to: [missingUserId], modelKey: "contract", entryId: "after-final-device-deletion",
-            sentAt: 1, payload: Data("x".utf8))
+        var message = Obscura_Client_V1_ClientMessage()
+        message.directMessage.id = "after-final-device-deletion"
+        message.directMessage.peerUserID = missingUserId
+        message.directMessage.content = "x"
+        let report = try await alice.client.send(message, to: [missingUserId])
         XCTAssertEqual(report.recipients.count, 1, "removed targets must not turn a rejected user into an empty report")
         XCTAssertEqual(report.recipients.first?.userId, missingUserId)
         XCTAssertNil(report.recipients.first?.deviceId)
@@ -195,8 +196,9 @@ final class ServerContractTests: XCTestCase {
         addTeardownBlock { try await alice.client.logout(); try await bob.client.logout() }
         try await alice.client.messenger.establishSessions(userId: bob.userId, [bundle(for: bob, fetchedBy: alice)])
         var message = Obscura_Client_V1_ClientMessage()
-        message.appEntry.model = "contract"
-        message.appEntry.id = "oversized"
+        message.directMessage.id = "oversized"
+        message.directMessage.peerUserID = bob.userId
+        message.directMessage.content = "x"
         let plaintext = try message.serializedData()
         var submissions: [Obscura_V1_SendMessageRequest.Submission] = []
         for _ in 0..<101 {
@@ -210,8 +212,8 @@ final class ServerContractTests: XCTestCase {
         XCTAssertEqual(barrier.recipients.map(\.status), [.accepted])
         try await bob.client.connect()
         _ = try await bob.waitForEntry("valid-after-oversized")
-        let rows = try await bob.client.inbox.peek(limit: 200)
-        XCTAssertEqual(rows.map(\.entryId), ["valid-after-oversized"], "no oversized submission may have been queued")
+        let rows = try await bob.client.getMessages()
+        XCTAssertEqual(rows.map(\.id), ["valid-after-oversized"], "no oversized submission may have been queued")
         await bob.client.disconnect()
     }
 

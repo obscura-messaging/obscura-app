@@ -20,22 +20,24 @@ final class PeerTimestampTests: XCTestCase {
         XCTAssertEqual(ObscuraClient.clampFuture(slightlyAhead), slightlyAhead)
     }
 
-    func testEntryStoreSaturatesInsteadOfTrappingAtBothEnds() async throws {
+    func testContentStoreSaturatesInsteadOfTrappingAtBothEnds() async throws {
         let db = try ObscuraDatabase.inMemory()
-        let entries = EntryStore(db: db)
+        let content = ContentStore(db: db)
 
-        try await entries.put(model: "story", entry: StoredEntry(
-            id: "s1", data: #"{"x":1}"#, sentAt: Self.aboveInt64Max, authorUserId: "user-1", authorDeviceId: "dev-1", localMetadata: nil))
+        try await content.insertStoryItem(StoryItem(
+            id: "s1", authorUserId: "user-1", sentAt: Self.aboveInt64Max, content: "hi",
+            mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil
+        ))
 
-        let written = try await entries.all(model: "story")
+        let written = try await content.allStories()
         XCTAssertEqual(written.map(\.sentAt), [UInt64(Int64.max)], "the write saturates rather than trapping")
 
         // A peer kit, where proto3 uint64 is a signed Long, can store a negative.
         try await db.write { db in
-            try db.execute(sql: "UPDATE model_entries SET sent_at = ? WHERE id = ?", arguments: [Int64(-1), "s1".storedText])
+            try db.execute(sql: "UPDATE story_entries SET sent_at = ? WHERE id = ?", arguments: [Int64(-1), "s1".storedText])
         }
 
-        let read = try await entries.all(model: "story")
+        let read = try await content.allStories()
         XCTAssertEqual(read.map(\.sentAt), [0], "a negative timestamp must clamp to 0, never trap")
     }
 }

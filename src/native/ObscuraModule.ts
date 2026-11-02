@@ -1,10 +1,8 @@
 import { NativeEventEmitter, TurboModuleRegistry, type TurboModule } from 'react-native';
-import type { SendReport, SubmissionResult } from '../domain/audience';
 import type { DeviceInfo } from '../domain/devices';
-import type { InboxRow } from '../domain/drain';
 import type { Friend } from '../domain/friends';
 
-export type { DeviceInfo, Friend, InboxRow, SendReport, SubmissionResult };
+export type { DeviceInfo, Friend };
 
 export interface ResizedImage {
   path: string;
@@ -18,13 +16,41 @@ export interface AttachmentRef {
   nonce: string;
 }
 
-export interface StoredEntry {
+export interface ConversationItem {
   id: string;
-  data: string;
-  sentAt: number;
+  peerUserId: string;
+  kind: 'message' | 'pix';
   authorUserId: string;
+  sentAt: number;
+  viewedAt: number | null;
+  content: string;
+  mediaRef: string | null;
+  contentKey: string | null;
+  nonce: string | null;
+  mediaType: string | null;
+  caption: string | null;
+  captionMeta: string | null;
+  displayDuration: number;
+}
+
+export interface StoryItem {
+  id: string;
+  authorUserId: string;
+  sentAt: number;
+  content: string;
+  mediaRef: string | null;
+  contentKey: string | null;
+  nonce: string | null;
+  mediaType: string | null;
+  captionMeta: string | null;
+}
+
+export interface ProfileItem {
+  userId: string;
   authorDeviceId: string;
-  localMetadata: string | null;
+  updatedAt: number;
+  displayName: string;
+  bio: string;
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'reconnecting' | 'connected';
@@ -91,25 +117,22 @@ export interface ObscuraBridge extends TurboModule, EventModule {
   addFriendByCode(code: string): Promise<void>;
   getFriends(): Promise<Friend[]>;
 
-  /** Oldest first, without side effects. */
-  inboxPeek(limit: number): Promise<InboxRow[]>;
-  inboxConsume(ids: number[]): Promise<void>;
-  /** Permanent data loss; the kit logs `reason`. */
-  inboxDiscard(ids: number[], reason: string): Promise<void>;
-  inboxDepth(): Promise<number>;
-
-  /** A blind upsert. */
-  entryPut(
-    model: string, id: string, dataJson: string, sentAt: number,
-    authorUserId: string, authorDeviceId: string, localMetadataJson: string | null,
-  ): Promise<void>;
-  entryGet(model: string, ids: string[]): Promise<StoredEntry[]>;
-  entryAll(model: string): Promise<StoredEntry[]>;
-  entryErase(model: string, ids: string[]): Promise<void>;
-  sendEntry(
-    recipientUserIds: string[], modelKey: string, entryId: string,
-    sentAt: number, payloadJson: string,
-  ): Promise<SendReport>;
+  getMessages(): Promise<ConversationItem[]>;
+  sendMessage(peerUserId: string, content: string): Promise<string>;
+  sendPix(
+    peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
+    mediaType: string, caption: string, captionMeta: string | null, displayDuration: number,
+  ): Promise<string>;
+  markSeen(entryId: string): Promise<void>;
+  getStories(): Promise<StoryItem[]>;
+  postStory(
+    content: string, mediaRef: string | null, contentKey: string | null,
+    nonce: string | null, mediaType: string | null, captionMeta: string | null,
+  ): Promise<string>;
+  getProfiles(): Promise<ProfileItem[]>;
+  updateProfile(displayName: string, bio: string): Promise<void>;
+  flushOutbox(): Promise<number>;
+  sweepExpired(): Promise<string[]>;
 
   sendTyping(recipientUserIds: string[], conversationId: string): Promise<void>;
   stopTyping(recipientUserIds: string[], conversationId: string): Promise<void>;

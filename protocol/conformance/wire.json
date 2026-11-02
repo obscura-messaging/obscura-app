@@ -1,13 +1,17 @@
 {
   "version": 1,
   "kind": "wire",
-  "description": "Client wire mapping + round-trip conformance. Pins every ClientMessage payload arm, TypingState mappings, and value-preserving AppEntry round trips. Byte-canonicity is intentionally not required; see docs/KIT_API.md.",
+  "description": "Client wire mapping + round-trip conformance. Pins every ClientMessage payload arm and TypingState mappings; see docs/KIT_API.md.",
   "messageTypes": [
     { "wire": "friend_request", "app": "FRIEND_REQUEST" },
     { "wire": "friend_accept", "app": "FRIEND_ACCEPT" },
-    { "wire": "app_entry", "app": "APP_ENTRY" },
     { "wire": "typing_signal", "app": "TYPING_SIGNAL" },
-    { "wire": "friend_list_sync", "app": "FRIEND_LIST_SYNC" }
+    { "wire": "friend_list_sync", "app": "FRIEND_LIST_SYNC" },
+    { "wire": "direct_message", "app": "DIRECT_MESSAGE" },
+    { "wire": "pix", "app": "PIX" },
+    { "wire": "seen_receipt", "app": "SEEN_RECEIPT" },
+    { "wire": "story", "app": "STORY" },
+    { "wire": "profile", "app": "PROFILE" }
   ],
   "typingStates": [
     { "wire": "TYPING_STATE_STARTED", "app": "started" },
@@ -15,21 +19,27 @@
   ],
   "roundTrip": [
     {
-      "name": "AppEntry round-trips preserving model, id, timestamp, and data",
-      "appEntry": {
-        "model": "story",
-        "id": "story_1706389200_abc",
-        "timestamp": 1706389200000,
-        "data": { "content": "hi", "authorUsername": "me" }
+      "name": "DirectMessage round-trips id, peerUserId, content, and timestamp",
+      "directMessage": {
+        "id": "dm_1706389200_abc",
+        "peerUserId": "22222222-2222-4222-8222-222222222222",
+        "content": "hello",
+        "timestamp": 1706389200000
       }
     },
     {
-      "name": "AppEntry data round-trips by VALUE regardless of key order (not bytes)",
-      "appEntry": {
-        "model": "pix",
+      "name": "PixMessage round-trips attachment, caption, captionMeta, and displayDurationSecs",
+      "pix": {
         "id": "pix_1706389200_def",
-        "timestamp": 1706389200001,
-        "data": { "z_last": "1", "a_first": "2", "conversationId": "uA_uB" }
+        "peerUserId": "22222222-2222-4222-8222-222222222222",
+        "attachmentId": "att_1",
+        "contentKey": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "nonce": "000102030405060708090a0b",
+        "mediaType": "photo",
+        "caption": "look",
+        "captionMeta": "{\"style\":\"bar\",\"y\":0.5}",
+        "displayDurationSecs": 5,
+        "timestamp": 1706389200001
       }
     }
   ]

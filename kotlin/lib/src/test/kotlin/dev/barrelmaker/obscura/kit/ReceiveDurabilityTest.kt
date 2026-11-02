@@ -13,6 +13,7 @@ import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import dev.barrelmaker.obscura.kit.stores.FriendStore
 import kotlinx.coroutines.runBlocking
 import obscura.client.v1.Client.ClientMessage
+import obscura.client.v1.Client.DirectMessage
 import org.json.JSONArray
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -35,12 +36,12 @@ class ReceiveDurabilityTest {
         val sender = SignalStore(senderDb).also { it.generateIdentity() }
         val messenger = Messenger(sender, APIClient("http://127.0.0.1:1") { null })
         messenger.establishSession(parsePeerBundles(JSONArray().put(keys.bundle(SELF_DEVICE_ID))).single())
-        val message = incoming ?: ClientMessage.newBuilder().setAppEntry(obscura.client.v1.appEntry {
-            model = "opaque"
-            id = "entry"
-            timestamp = 1
-            data = ByteString.copyFromUtf8("""{"deviceId":"payload-is-not-discovery"}""")
-        }).build()
+        val message = incoming ?: ClientMessage.newBuilder().setTimestamp(1).setDirectMessage(
+            DirectMessage.newBuilder()
+                .setId("entry")
+                .setPeerUserId(SELF_USER_ID)
+                .setContent("""{"deviceId":"payload-is-not-discovery"}"""),
+        ).build()
         val encrypted = if (malformedPlaintext) {
             val ciphertext = org.signal.libsignal.protocol.SessionCipher(sender, Messenger.addressFor(SELF_DEVICE_ID))
                 .encrypt(byteArrayOf(-1, -1, -1))
@@ -85,12 +86,12 @@ class ReceiveDurabilityTest {
         c.devices.add(peerUser, listOf(old))
         var acks = 0
         c.receive(envelope) {
-            assertEquals(1L, c.inbox.depth())
+            assertEquals(1, c.getMessages().size)
             assertEquals(setOf(old, peerDevice), c.devices.devicesOf(peerUser).toSet())
             acks++
         }
         assertEquals(1, acks)
-        assertEquals(peerDevice, c.inbox.peek().single().senderDeviceId)
+        assertEquals(peerUser, c.getMessages().single().authorUserId)
         c.auth.end()
         driver.close()
     }
@@ -101,8 +102,8 @@ class ReceiveDurabilityTest {
         c.receive(envelope) { acks++ }
         c.receive(envelope) { acks++ }
         assertEquals(2, acks)
-        assertEquals(1L, c.inbox.depth())
-        assertEquals("opaque", c.messageReceived.tryReceive().getOrNull())
+        assertEquals(1, c.getMessages().size)
+        assertEquals("directMessage", c.messageReceived.tryReceive().getOrNull())
         assertNull(c.messageReceived.tryReceive().getOrNull())
         c.auth.end()
         driver.close()
@@ -115,25 +116,25 @@ class ReceiveDurabilityTest {
         c.receive(envelope.toBuilder().clearSenderDeviceId().build()) { acks++ }
         assertEquals(0, acks)
         assertTrue(c.devices.devicesOf(peerUser).isEmpty())
-        assertEquals(0L, c.inbox.depth())
+        assertTrue(c.getMessages().isEmpty())
         c.auth.end()
         driver.close()
     }
 
-    @Test fun `durable directory and inbox failures both withhold ack`() = runBlocking {
-        for (table in listOf("Device", "InboxRow")) {
+    @Test fun `durable directory and content failures both withhold ack`() = runBlocking {
+        for (table in listOf("Device", "ConversationEntry", "ProcessedEnvelope")) {
             val (c, driver, envelope) = fixture()
             driver.execute(null, "CREATE TRIGGER fail_write BEFORE INSERT ON $table BEGIN SELECT RAISE(FAIL, 'disk unavailable'); END", 0)
             var acks = 0
             c.receive(envelope) { acks++ }
             assertEquals(0, acks, table)
-            assertEquals(0L, c.inbox.depth())
+            assertTrue(c.getMessages().isEmpty())
             assertTrue(c.getDebugLog().any { it.contains("not stored") })
             assertTrue(c.devices.devicesOf(peerUser).isEmpty(), "failed receive must roll back directory evidence")
             driver.execute(null, "DROP TRIGGER fail_write", 0)
             c.receive(envelope) { acks++ }
             assertEquals(1, acks, "redelivery after a durable failure must remain decryptable")
-            assertEquals(1L, c.inbox.depth())
+            assertEquals(1, c.getMessages().size)
             assertEquals(listOf(peerDevice), c.devices.devicesOf(peerUser))
             c.auth.end()
             driver.close()
@@ -146,22 +147,22 @@ class ReceiveDurabilityTest {
         c.receive(envelope) { acks++ }
         assertEquals(listOf(peerDevice), c.devices.devicesOf(peerUser))
         assertEquals(1, acks)
-        assertEquals(0L, c.inbox.depth())
+        assertTrue(c.getMessages().isEmpty())
         assertTrue(c.getDebugLog().any { it.contains("invalid client message") })
         c.auth.end()
         driver.close()
     }
 
-    @Test fun `a redelivery of a message the app already consumed is acked without a decrypt failure`() = runBlocking {
+    @Test fun `a redelivery of a message already swept is acked without a decrypt failure`() = runBlocking {
         val (c, driver, envelope) = fixture()
         var acks = 0
         c.receive(envelope) { acks++ }
-        c.inbox.consume(c.inbox.peek().map { it.id })
+        c.sweepExpired(now = Long.MAX_VALUE / 2)
 
         c.receive(envelope) { acks++ }
 
         assertEquals(2, acks)
-        assertEquals(0L, c.inbox.depth())
+        assertTrue(c.getMessages().isEmpty())
         assertFalse(c.getDebugLog().any { it.contains("decrypt failed") })
         c.auth.end()
         driver.close()

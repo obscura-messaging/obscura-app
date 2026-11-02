@@ -2,7 +2,7 @@ package dev.barrelmaker.obscura.kit
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
-import dev.barrelmaker.obscura.kit.stores.StoredEntry
+import dev.barrelmaker.obscura.kit.stores.ConversationItemData
 import dev.barrelmaker.obscura.kit.stores.pragma
 import dev.barrelmaker.obscura.kit.stores.truncateWal
 import kotlinx.coroutines.runBlocking
@@ -13,7 +13,7 @@ import java.sql.DriverManager
 import java.util.UUID
 
 class SecureDeletionTest {
-    @Test fun `erase reports a busy checkpoint and removes recoverable content after reader release`() = runBlocking {
+    @Test fun `sweep reports a busy checkpoint and removes recoverable content after reader release`() = runBlocking {
         verifyBusyCheckpoint(wipe = false)
     }
 
@@ -34,7 +34,9 @@ class SecureDeletionTest {
         val client = ObscuraClient(ObscuraConfig("http://127.0.0.1:1", "test"), driver, MemoryStorage())
         val signalMarker = client.signalStore.generateIdentity().first.serialize()
         val entryMarker = "CHECKPOINT-SECRET-${UUID.randomUUID()}"
-        client.entries.put("m", StoredEntry("e", entryMarker, 1, SELF_USER_ID, SELF_DEVICE_ID))
+        client.content.putConversation(
+            ConversationItemData("e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, 10, entryMarker),
+        )
         driver.truncateWal()
         driver.pragma("PRAGMA secure_delete = OFF")
         fun contains(path: File, marker: ByteArray) = path.exists() &&
@@ -44,18 +46,20 @@ class SecureDeletionTest {
         try {
             reader.autoCommit = false
             reader.createStatement().use { statement ->
-                statement.executeQuery("SELECT data FROM ModelEntry").use { rows ->
+                statement.executeQuery("SELECT content FROM ConversationEntry").use { rows ->
                     assertTrue(rows.next())
-                    client.entries.put("m", StoredEntry("e", "$entryMarker-updated", 2, SELF_USER_ID, SELF_DEVICE_ID))
+                    client.content.putConversation(
+                        ConversationItemData("e", SELF_USER_ID, "message", SELF_USER_ID, 2, null, 10, "$entryMarker-updated"),
+                    )
                     assertTrue(contains(file, signalMarker), "control: Signal identity is present in main database")
                     assertTrue(contains(file, entryMarker.toByteArray()), "control: entry is present in main database")
                     assertTrue(contains(wal, entryMarker.toByteArray()), "control: entry is present in WAL")
                     val error = runCatching {
-                        if (wipe) client.wipeDevice() else client.entries.erase("m", listOf("e"))
+                        if (wipe) client.wipeDevice() else client.sweepExpired(now = 100)
                     }.exceptionOrNull()
                     assertTrue(error is ObscuraError.StorageFailed, "busy checkpoint must not report success: $error")
                     assertTrue(error!!.message!!.contains("busy"))
-                    assertTrue(client.entries.all("m").isEmpty(), "durable delete already committed")
+                    assertTrue(client.getMessages().isEmpty(), "durable delete already committed")
                     assertTrue(onDisk(entryMarker.toByteArray()), "reader prevents secure checkpoint completion")
                 }
             }
@@ -63,7 +67,7 @@ class SecureDeletionTest {
         } finally {
             reader.close()
         }
-        if (wipe) client.wipeDevice() else client.entries.erase("m", listOf("e"))
+        if (wipe) client.wipeDevice() else client.sweepExpired(now = 100)
         assertFalse(onDisk(entryMarker.toByteArray()))
         if (wipe) {
             assertFalse(onDisk(signalMarker))

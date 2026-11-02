@@ -1,7 +1,7 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { NavigatorScreenParams } from '@react-navigation/native';
-import type { ScreenEntry } from '../domain/expiry';
-import type { ModelData } from '../domain/schema';
+import type { ConversationItem } from '../domain/chats';
+import type { StoryItem } from '../domain/viewer';
 import type { Capture, MediaType } from '../state/sendMedia';
 
 export type MainTabParamList = {
@@ -10,7 +10,7 @@ export type MainTabParamList = {
 };
 
 /** The story viewer shows stories and pix alike. */
-export type ViewerEntry = ScreenEntry<Partial<ModelData<'story'> & ModelData<'pix'>>>;
+export type ViewerEntry = StoryItem & Partial<Pick<ConversationItem, 'caption' | 'displayDuration'>>;
 
 /** Normalized navigation target for `StoryViewer`: either live stories starting at a user, or specific view-once pix IDs. */
 export type StoryViewerParams =

@@ -22,8 +22,7 @@ final class DiscoveryTests: XCTestCase {
         let peer = try await server.register(user())
         let client = try await authenticatedClient(own)
 
-        let report = try await client.send(to: [peer.userId], modelKey: "m", entryId: "delivered", sentAt: 1,
-                                           payload: Data())
+        let report = try await client.send(clientMessage { $0.directMessage.id = "delivered" }, to: [peer.userId])
 
         XCTAssertEqual(report.recipients.map(\.status), [.accepted])
         XCTAssertEqual(report.selfSync, [])
@@ -74,13 +73,13 @@ final class DiscoveryTests: XCTestCase {
         let client = try await authenticatedClient(phone)
         let laptop = try await server.register(userId)
 
-        let report = try await client.send(to: [], modelKey: "m", entryId: "sync", sentAt: 1, payload: Data())
+        let report = try await client.send(clientMessage { $0.directMessage.id = "sync" }, to: [])
 
         XCTAssertEqual(report.selfSync.map(\.deviceId), [laptop.deviceId])
         XCTAssertEqual(report.selfSync.map(\.status), [.accepted])
         XCTAssertEqual(server.deviceListFetches(userId), 0)
         let received = try await laptop.receive()
-        XCTAssertEqual(received.map(\.message.appEntry.id), ["sync"])
+        XCTAssertEqual(received.map(\.message.directMessage.id), ["sync"])
         try await client.logout()
     }
 
@@ -92,20 +91,19 @@ final class DiscoveryTests: XCTestCase {
         let client = try await authenticatedClient(own)
         try await client.directory.add(userId: peerUserId, deviceIds: [oldPeer.deviceId])
         try await newPeer.directory.add(userId: own.userId, deviceIds: [own.deviceId])
-        try await send(clientMessage { $0.appEntry.model = "m" }, from: newPeer, to: own.userId)
+        try await send(clientMessage { $0.directMessage.id = "incoming" }, from: newPeer, to: own.userId)
 
         await deliver(own, to: client)
 
         let known = try await client.directory.deviceIds(of: peerUserId)
         XCTAssertEqual(Set(known), [oldPeer.deviceId, newPeer.deviceId])
-        let report = try await client.send(to: [peerUserId], modelKey: "m", entryId: "reply", sentAt: 1,
-                                           payload: Data())
+        let report = try await client.send(clientMessage { $0.directMessage.id = "reply" }, to: [peerUserId])
         XCTAssertEqual(report.recipients.map(\.status), [.accepted, .accepted])
         XCTAssertEqual(server.bundleFetches(peerUserId), 0)
         XCTAssertEqual(server.deviceBundleFetches(oldPeer.deviceId), 1, "a device that must be resent needs a session")
         XCTAssertEqual(server.deviceBundleFetches(newPeer.deviceId), 0)
         let reply = try await newPeer.receive()
-        XCTAssertEqual(reply.first?.message.appEntry.id, "reply")
+        XCTAssertEqual(reply.first?.message.directMessage.id, "reply")
         try await client.logout()
     }
 }

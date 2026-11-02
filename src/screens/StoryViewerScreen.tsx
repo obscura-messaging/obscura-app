@@ -13,7 +13,7 @@ import {
   type StoryGroup,
 } from '../domain/viewer';
 import { loadAttachmentUri } from '../state/sendMedia';
-import { useIdentity, useModelEntries, markSeen } from '../state/store';
+import { useIdentity, useMessages, useStories, markSeen } from '../state/store';
 import { timeAgo } from '../utils/format';
 import { logError } from '../utils/log';
 import type { RootStackScreenProps, ViewerEntry } from '../navigation/types';
@@ -64,9 +64,9 @@ function StoryFace({
   const { width: W, height: H } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const story = group.stories[storyIdx];
-  const isVideo = story.data.mediaType === 'video';
-  const text = story.data.content || story.data.caption || '';
-  const meta = parseCaptionMeta(story.data.captionMeta);
+  const isVideo = story.mediaType === 'video';
+  const text = story.content || story.caption || '';
+  const meta = parseCaptionMeta(story.captionMeta);
 
   return (
     <Animated.View style={[styles.face, style]}>
@@ -130,15 +130,14 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const params = route.params;
   const markViewed = params.mode === 'pix';
   const identity = useIdentity();
-  const allStories = useModelEntries('story');
-  const allPix = useModelEntries('pix');
-  const [openedAt] = useState(() => Date.now());
+  const allStories = useStories();
+  const allMessages = useMessages();
 
   const { groups, initialGroupIdx } = useMemo((): { groups: StoryGroup<ViewerEntry>[]; initialGroupIdx: number } => {
     if (params.mode === 'pix') {
       const wanted = new Set(params.entryIds);
-      const stories = allPix
-        .filter((p) => wanted.has(p.id))
+      const stories = allMessages
+        .filter((p) => p.kind === 'pix' && wanted.has(p.id))
         .sort((a, b) => a.sentAt - b.sentAt);
       const username = identity.friends.find((f) => f.userId === params.userId)?.username ?? params.username;
       return {
@@ -146,11 +145,11 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
         initialGroupIdx: 0,
       };
     }
-    const { mine, others } = storyGroups(allStories, identity, openedAt);
+    const { mine, others } = storyGroups(allStories, identity);
     const populated = [mine, ...others].filter((g) => g.stories.length > 0);
     const idx = populated.findIndex((g) => g.userId === params.initialUserId);
     return { groups: populated, initialGroupIdx: Math.max(0, idx) };
-  }, [params, allStories, allPix, identity, openedAt]);
+  }, [params, allStories, allMessages, identity]);
 
   const [groupIdx, setGroupIdx] = useState(initialGroupIdx);
   const [storyIdx, setStoryIdx] = useState(0);
@@ -173,7 +172,7 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const markCurrentViewed = useCallback(() => {
     if (!story || !markViewed || viewedIds.current.has(story.id)) return;
     viewedIds.current.add(story.id);
-    markSeen('pix', story).catch((e) => logError('seen.pix:' + story.id, e));
+    markSeen(story.id).catch((e) => logError('seen.pix:' + story.id, e));
   }, [markViewed, story]);
 
   useEffect(() => navigation.addListener('beforeRemove', markCurrentViewed), [navigation, markCurrentViewed]);
@@ -214,11 +213,11 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const advance = useCallback(() => applyStep('advance'), [applyStep]);
   const rewind = useCallback(() => applyStep('rewind'), [applyStep]);
 
-  const mediaRef = story?.data.mediaRef;
-  const contentKey = story?.data.contentKey;
-  const nonce = story?.data.nonce;
+  const mediaRef = story?.mediaRef ?? null;
+  const contentKey = story?.contentKey ?? null;
+  const nonce = story?.nonce ?? null;
   const attachment = useMemo(
-    () => attachmentOf({ data: { mediaRef, contentKey, nonce } }),
+    () => attachmentOf({ mediaRef, contentKey, nonce }),
     [mediaRef, contentKey, nonce],
   );
 
@@ -258,8 +257,8 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   }, [group, storyIdx, groups, groupIdx, mediaUris]);
 
   const hasMedia = attachment !== null;
-  const isVideo = story?.data.mediaType === 'video';
-  const durationMs = displayMs(story?.data.displayDuration);
+  const isVideo = story?.mediaType === 'video';
+  const durationMs = displayMs(story?.displayDuration);
   const readyToPlay = (!hasMedia || (!!mediaUri && !mediaLoading)) && !transition;
 
   useEffect(() => {

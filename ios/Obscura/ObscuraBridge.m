@@ -90,29 +90,23 @@ RCT_EXTERN_METHOD(registerPushToken:(NSString *)token
 //
 // These MUST mirror the @objc selectors in ObscuraBridge.swift. A Swift @objc method with no
 // RCT_EXTERN_METHOD here compiles but is invisible to React Native.
-RCT_EXTERN_METHOD(inboxPeek:(nonnull NSNumber *)limit
+RCT_EXTERN_METHOD(getMessages:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(sendMessage:(NSString *)peerUserId content:(NSString *)content
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(inboxConsume:(NSArray *)ids
+RCT_EXTERN_METHOD(sendPix:(NSString *)peerUserId mediaRef:(NSString *)mediaRef contentKey:(NSString *)contentKey
+                  nonce:(NSString *)nonce mediaType:(NSString *)mediaType caption:(NSString *)caption
+                  captionMeta:(NSString *)captionMeta displayDuration:(nonnull NSNumber *)displayDuration
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(inboxDiscard:(NSArray *)ids reason:(NSString *)reason
+RCT_EXTERN_METHOD(markSeen:(NSString *)entryId
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(inboxDepth:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-
-RCT_EXTERN_METHOD(entryPut:(NSString *)model id:(NSString *)id dataJson:(NSString *)dataJson
-                  sentAt:(nonnull NSNumber *)sentAt authorUserId:(NSString *)authorUserId
-                  authorDeviceId:(NSString *)authorDeviceId
-                  localMetadataJson:(NSString * _Nullable)localMetadataJson
+RCT_EXTERN_METHOD(getStories:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(postStory:(NSString *)content mediaRef:(NSString *)mediaRef contentKey:(NSString *)contentKey
+                  nonce:(NSString *)nonce mediaType:(NSString *)mediaType captionMeta:(NSString *)captionMeta
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(entryAll:(NSString *)model
+RCT_EXTERN_METHOD(getProfiles:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(updateProfile:(NSString *)displayName bio:(NSString *)bio
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(entryGet:(NSString *)model ids:(NSArray *)ids
-                  resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(entryErase:(NSString *)model ids:(NSArray *)ids
-                  resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-
-RCT_EXTERN_METHOD(sendEntry:(NSArray *)recipientUserIds modelKey:(NSString *)modelKey
-                  entryId:(NSString *)entryId sentAt:(nonnull NSNumber *)sentAt
-                  payloadJson:(NSString *)payloadJson
-                  resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(flushOutbox:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(sweepExpired:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 
 @end

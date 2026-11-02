@@ -54,8 +54,11 @@ final class LinkingTests: XCTestCase {
         let client = try makeClient(apiURL: FakeObscuraServer.baseURL, database: phone.db, storage: storage)
         _ = try await client.login("alice", "password")
         let oldIdentity = try client.signalStore.identityKeyPair(context: NullContext()).serialize()
-        try await client.entries.put(model: "m", entry: StoredEntry(id: "e", data: "x", sentAt: 1, authorUserId: "u", authorDeviceId: "d",
-                                                                     localMetadata: nil))
+        try await client.content.insertConversationItem(ConversationItem(
+            id: "e", peerUserId: "u", kind: "message", authorUserId: "u", sentAt: 1,
+            viewedAt: nil, content: "x", mediaRef: nil, contentKey: nil, nonce: nil,
+            mediaType: nil, caption: nil, captionMeta: nil, displayDuration: 0
+        ))
 
         try await client.resetAccount("alice", "password")
 
@@ -65,8 +68,8 @@ final class LinkingTests: XCTestCase {
         XCTAssertTrue(isPrimary)
         let newIdentity = try client.signalStore.identityKeyPair(context: NullContext()).serialize()
         XCTAssertNotEqual(newIdentity, oldIdentity)
-        let entries = try await client.entries.all(model: "m")
-        XCTAssertEqual(entries, [])
+        let messages = try await client.getMessages()
+        XCTAssertEqual(messages, [])
         try await client.logout()
     }
 
@@ -75,10 +78,18 @@ final class LinkingTests: XCTestCase {
     func testApprovalSealsTheAccountIdentityFriendListAndHistoryForTheCode() async throws {
         try await phoneClient.friends.add("bob-id", username: "bob", status: .accepted)
         try await phoneClient.friends.add("carol-id", username: "carol", status: .pendingSent)
-        try await phoneClient.entries.put(model: "story", entry: StoredEntry(
-            id: "s1", data: #"{"t":"hi"}"#, sentAt: 7, authorUserId: "alice-id", authorDeviceId: "phone", localMetadata: "private"))
-        try await phoneClient.entries.put(model: "pix", entry: StoredEntry(
-            id: "p1", data: "ü", sentAt: 9, authorUserId: "bob-id", authorDeviceId: "laptop", localMetadata: nil))
+        try await phoneClient.content.insertStoryItem(StoryItem(
+            id: "s1", authorUserId: "alice-id", sentAt: 7, content: "hi",
+            mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil
+        ))
+        try await phoneClient.content.insertConversationItem(ConversationItem(
+            id: "p1", peerUserId: "bob-id", kind: "message", authorUserId: "bob-id", sentAt: 9,
+            viewedAt: nil, content: "ü", mediaRef: nil, contentKey: nil, nonce: nil,
+            mediaType: nil, caption: nil, captionMeta: nil, displayDuration: 0
+        ))
+        try await phoneClient.content.upsertProfile(ProfileItem(
+            userId: "alice-id", authorDeviceId: "phone", updatedAt: 11, displayName: "Alice", bio: "bio"
+        ))
         let newDevice = PrivateKey.generate()
         let sessionId = try await openLinkSession()
 
@@ -94,13 +105,12 @@ final class LinkingTests: XCTestCase {
         let history = try XCTUnwrap(contents.history)
         let snapshot = try Obscura_Client_V1_EntrySnapshot(serializedBytes: AttachmentCrypto.open(
             XCTUnwrap(server.attachment(history.attachmentID)), key: history.contentKey, nonce: history.nonce))
-        XCTAssertEqual(snapshot.entries.map(\.model), ["pix", "story"])
-        XCTAssertEqual(snapshot.entries.map(\.id), ["p1", "s1"])
-        XCTAssertEqual(snapshot.entries.map { String(decoding: $0.data, as: UTF8.self) }, ["ü", #"{"t":"hi"}"#])
-        XCTAssertEqual(snapshot.entries.map(\.sentAt), [9, 7])
-        XCTAssertEqual(snapshot.entries.map(\.authorUserID), ["bob-id", "alice-id"])
-        XCTAssertEqual(snapshot.entries.map(\.authorDeviceID), ["laptop", "phone"])
-        XCTAssertFalse(try snapshot.serializedData().contains(Data("private".utf8)), "localMetadata never leaves the device")
+        XCTAssertEqual(snapshot.messages.map(\.id), ["p1"])
+        XCTAssertEqual(snapshot.messages.map(\.content), ["ü"])
+        XCTAssertEqual(snapshot.stories.map(\.id), ["s1"])
+        XCTAssertEqual(snapshot.stories.map(\.content), ["hi"])
+        XCTAssertEqual(snapshot.profiles.map(\.userID), ["alice-id"])
+        XCTAssertEqual(snapshot.profiles.map(\.displayName), ["Alice"])
     }
 
     func testAnEmptyEntryStoreSendsNoHistory() async throws {

@@ -9,9 +9,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import obscura.client.v1.Client.ClientMessage
+import obscura.client.v1.Client.DirectMessage
 import obscura.client.v1.Client.EncryptedMessage.Type.TYPE_ENCRYPTED_MESSAGE
 import obscura.client.v1.Client.EncryptedMessage.Type.TYPE_PREKEY_MESSAGE
-import obscura.client.v1.appEntry
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -35,7 +35,7 @@ class MessageSenderTest {
     private fun user() = UUID.randomUUID().toString()
 
     private fun entry(id: String): ClientMessage = ClientMessage.newBuilder()
-        .setAppEntry(appEntry { model = "m"; this.id = id }).build()
+        .setDirectMessage(DirectMessage.newBuilder().setId(id).setContent(id)).build()
 
     private suspend fun FakeDevice.send(to: FakeDevice, id: String) =
         sender.send(to.userId, entry(id))
@@ -52,7 +52,7 @@ class MessageSenderTest {
         repeat(3) { assertEquals(listOf(accepted(bob)), alice.send(bob, "e$it")) }
 
         val received = bob.receive()
-        assertEquals(listOf("e0", "e1", "e2"), received.map { it.message.appEntry.id })
+        assertEquals(listOf("e0", "e1", "e2"), received.map { it.message.directMessage.id })
         // Unacknowledged sessions keep sending prekey messages, all from the one session.
         assertEquals(1, received.map { it.baseKey }.distinct().size)
         assertEquals(1, server.prekeysConsumed(bob.userId))
@@ -101,7 +101,7 @@ class MessageSenderTest {
 
         assertEquals(setOf(accepted(bob), accepted(bobLaptop)), alice.send(bob, "second").toSet())
         assertEquals(setOf(bob.deviceId, bobLaptop.deviceId), alice.directory.devicesOf(bob.userId).toSet())
-        assertEquals("second", bobLaptop.receive().single().message.appEntry.id)
+        assertEquals("second", bobLaptop.receive().single().message.directMessage.id)
     }
 
     @Test
@@ -111,7 +111,7 @@ class MessageSenderTest {
         val bobNew = server.register(bob.userId)
 
         assertEquals(listOf(accepted(bobNew)), alice.send(bob, "found"))
-        assertEquals("found", bobNew.receive().single().message.appEntry.id)
+        assertEquals("found", bobNew.receive().single().message.directMessage.id)
         assertEquals(listOf(bobNew.deviceId), alice.directory.devicesOf(bob.userId))
     }
 
@@ -154,7 +154,7 @@ class MessageSenderTest {
         val alicePhone = server.register(alice.userId)
 
         assertEquals(listOf(accepted(alicePhone)), alice.send(alice, "note"))
-        assertEquals("note", alicePhone.receive().single().message.appEntry.id)
+        assertEquals("note", alicePhone.receive().single().message.directMessage.id)
         assertEquals(setOf(alice.deviceId, alicePhone.deviceId), alice.directory.devicesOf(alice.userId).toSet())
     }
 
@@ -163,7 +163,7 @@ class MessageSenderTest {
         val alicePhone = server.register(alice.userId)
 
         assertEquals(listOf(accepted(alicePhone)), alice.send(alice, "note"))
-        assertEquals("note", alicePhone.receive().single().message.appEntry.id)
+        assertEquals("note", alicePhone.receive().single().message.directMessage.id)
         assertEquals(emptyList<Received>(), alice.receive())
         assertEquals(listOf(alicePhone.deviceId), alice.directory.devicesOf(alice.userId))
     }
@@ -239,7 +239,7 @@ class MessageSenderTest {
 
         assertEquals(listOf(accepted(bobNew)), alice.send(bob, "after"))
 
-        assertEquals("after", bobNew.receive().single().message.appEntry.id)
+        assertEquals("after", bobNew.receive().single().message.directMessage.id)
         assertEquals(listOf(bob.userId), changes)
     }
 
@@ -255,13 +255,13 @@ class MessageSenderTest {
         val bobNew = server.register(bob.userId)
 
         bobNew.send(alice, "from-new-identity")
-        assertEquals("from-new-identity", alice.receive().single().message.appEntry.id)
+        assertEquals("from-new-identity", alice.receive().single().message.directMessage.id)
         assertEquals(listOf(bob.userId), changes)
         assertFalse(alice.messenger.hasSession(bob.deviceId))
         assertEquals(listOf(bobNew.deviceId), alice.directory.devicesOf(bob.userId))
 
         assertEquals(listOf(accepted(bobNew)), alice.send(bob, "to-new-identity"))
-        assertEquals("to-new-identity", bobNew.receive().single().message.appEntry.id)
+        assertEquals("to-new-identity", bobNew.receive().single().message.directMessage.id)
         assertEquals(listOf(bobNew.deviceId), alice.directory.devicesOf(bob.userId))
         assertEquals(1, server.prekeysConsumed(bob.userId))
     }
@@ -277,7 +277,7 @@ class MessageSenderTest {
         alice.send(bob, "second")
 
         assertEquals(emptyList<String>(), changes)
-        assertEquals(listOf("first", "second"), bob.receive().map { it.message.appEntry.id })
+        assertEquals(listOf("first", "second"), bob.receive().map { it.message.directMessage.id })
     }
 
     @Test
@@ -295,8 +295,8 @@ class MessageSenderTest {
         assertEquals(2, server.requests.size - before, "round 1 settles bob and discovers carolTablet; round 2 retries carol only")
         assertEquals(setOf(bob.deviceId, carol.deviceId), targetsOf(before))
         assertEquals(setOf(carol.deviceId, carolTablet.deviceId), targetsOf(before + 1))
-        assertEquals(listOf("batched"), bob.receive().map { it.message.appEntry.id })
-        assertEquals(listOf("batched"), carol.receive().map { it.message.appEntry.id })
-        assertEquals(listOf("batched"), carolTablet.receive().map { it.message.appEntry.id })
+        assertEquals(listOf("batched"), bob.receive().map { it.message.directMessage.id })
+        assertEquals(listOf("batched"), carol.receive().map { it.message.directMessage.id })
+        assertEquals(listOf("batched"), carolTablet.receive().map { it.message.directMessage.id })
     }
 }

@@ -91,11 +91,7 @@ final class ConnectionTests: XCTestCase {
         try await bob.client.connect()
         try await TestUser.befriend(alice, bob)
         try await alice.send("before-restart", to: [bob])
-        let row = try await bob.waitForEntry("before-restart")
-        try await bob.client.entries.put(model: "testModel", entry: StoredEntry(
-            id: "before-restart", data: "hello", sentAt: row.sentAt, authorUserId: row.senderUserId,
-            authorDeviceId: row.senderDeviceId, localMetadata: nil))
-        try await bob.client.inbox.consume([row.id])
+        _ = try await bob.waitForEntry("before-restart")
         await bob.client.disconnect()
 
         try await alice.send("while-dead", to: [bob])
@@ -104,11 +100,11 @@ final class ConnectionTests: XCTestCase {
 
         XCTAssertTrue(restored)
         let friend = try await restarted.friends.friend(alice.userId)
-        let entries = try await restarted.entries.all(model: "testModel")
+        let messages = try await restarted.getMessages()
         XCTAssertEqual(friend?.status, .accepted)
-        XCTAssertEqual(entries.map(\.id), ["before-restart"])
+        XCTAssertTrue(messages.contains { $0.id == "before-restart" })
         _ = try await eventually("queued entry after restart") {
-            try await restarted.inbox.peek(limit: 50).first { $0.entryId == "while-dead" }
+            try await restarted.getMessages().first { $0.id == "while-dead" }
         }
         await restarted.disconnect()
     }

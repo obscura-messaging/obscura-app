@@ -47,7 +47,6 @@ class FriendListAuthorityTest {
         c.route(friendAccept(), peer, peerDevice, "env-2")
 
         assertEquals(listOf(FriendData(peer, "alice", FriendStatus.PENDING_SENT)), c.getFriends())
-        assertEquals(0L, c.inbox.depth())
         assertEquals(0L, c.version())
     }
 
@@ -61,7 +60,6 @@ class FriendListAuthorityTest {
 
         assertEquals(listOf(alice, bob), c.getFriends())
         assertEquals(3L, c.version())
-        assertEquals(0L, c.inbox.depth())
     }
 
     @Test fun `a sync that is not newer, not from the primary, or malformed is ignored`() = runBlocking {

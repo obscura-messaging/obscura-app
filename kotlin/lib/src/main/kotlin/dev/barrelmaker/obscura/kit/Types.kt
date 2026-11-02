@@ -45,3 +45,9 @@ data class SendReport(val recipients: List<SubmissionResult>, val selfSync: List
 
 /** An uploaded attachment: its server id and the key material that decrypts it. */
 class AttachmentUpload(val id: String, val contentKey: ByteArray, val nonce: ByteArray)
+
+typealias ConversationItemData = dev.barrelmaker.obscura.kit.stores.ConversationItemData
+typealias StoryItemData = dev.barrelmaker.obscura.kit.stores.StoryItemData
+typealias ProfileItemData = dev.barrelmaker.obscura.kit.stores.ProfileItemData
+typealias SweepOutcome = dev.barrelmaker.obscura.kit.stores.SweepOutcome
+

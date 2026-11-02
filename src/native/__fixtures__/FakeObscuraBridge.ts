@@ -1,14 +1,32 @@
 /**
  * An in-memory `ObscuraBridge` for Jest. It models the bridge contract, not the kit: no crypto,
- * network or authentication. What the app relies on is faithful: `inboxPeek` has no side effects,
- * inbox ids are never reused, `entryPut` is a blind upsert, `sendEntry` stores no local row, friend
- * and device changes are primary only, and `completeLink` waits until the test approves, expires or
- * cancels the pending link.
+ * network or authentication. What the app relies on is faithful: messages/pix, stories, and
+ * profiles are persisted with outbox `undelivered` flags, tombstones block replayed erased entries,
+ * seen receipts expire messages/pix after 15m (capped by 30d max age), stories expire after 24h,
+ * profiles merge by `(updatedAt, authorDeviceId)`, friend and device changes are primary only, and
+ * `completeLink` waits until the test approves, expires or cancels the pending link.
  */
 
-import type { AuthState, ConnectionState, DeviceInfo, Friend, ObscuraBridge, InboxRow, LoginScenario, SendReport, StoredEntry, SubmissionResult } from '../ObscuraModule';
+import type {
+  AuthState, ConnectionState, ConversationItem, DeviceInfo, Friend,
+  LoginScenario, ObscuraBridge, ProfileItem, StoryItem,
+} from '../ObscuraModule';
 
-type FakeInboxRow = InboxRow & { envelopeId: string };
+export const EXPIRE_AFTER_MS = 15 * 60 * 1000;
+export const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+export const STORY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+type StoredConversationItem = ConversationItem & { undelivered: boolean };
+type StoredStoryItem = StoryItem & { undelivered: boolean };
+type StoredProfileItem = ProfileItem & { undelivered: boolean };
+
+export interface SentRecord {
+  recipientUserIds: string[];
+  modelKey: 'directMessage' | 'pix' | 'seen' | 'story' | 'profile';
+  entryId: string;
+  sentAt: number;
+  payload: Record<string, unknown>;
+}
 
 export interface FakeBridgeOptions {
   userId?: string;
@@ -57,102 +75,20 @@ export class FakeObscuraBridge implements ObscuraBridge {
     this.__calls.push(method);
   }
 
-  // ─── The thin kit surface ──────────────────────────────────────────────
+  // ─── Typed domain stores ───────────────────────────────────────────────
 
-  private inbox: FakeInboxRow[] = [];
-  /** Never reused, exactly like the kits' `AUTOINCREMENT`: a drained inbox must not reissue ids. */
-  private nextInboxId = 1;
-  private storedEntries = new Map<string, Map<string, StoredEntry>>();
+  private messages = new Map<string, StoredConversationItem>();
+  private stories = new Map<string, StoredStoryItem>();
+  private profiles = new Map<string, StoredProfileItem>();
+  /** Erased entry IDs mapped to their `erasedAt` timestamp. */
+  private tombstones = new Map<string, number>();
+  /** Out-of-order seen receipts that arrived before their target message/pix. */
+  private pendingReceipts = new Map<string, { senderUserId: string; viewedAt: number; sentAt: number }>();
+  /** Local `markSeen` calls whose outgoing receipt could not be delivered yet. */
+  private undeliveredReceipts = new Map<string, { peerUserId: string; receiptId: string; viewedAt: number }>();
 
-  /** What `sendEntry` put on the wire, in order. */
-  readonly __sent: Array<{
-    recipientUserIds: string[]; modelKey: string; entryId: string;
-    sentAt: number; payloadJson: string;
-  }> = [];
-
-  /** Rows the app discarded, with the reason. */
-  readonly __discarded: Array<{ ids: number[]; reason: string }> = [];
-
-  private entryTable(model: string): Map<string, StoredEntry> {
-    let t = this.storedEntries.get(model);
-    if (!t) {
-      t = new Map();
-      this.storedEntries.set(model, t);
-    }
-    return t;
-  }
-
-  async inboxPeek(limit: number): Promise<InboxRow[]> {
-    this.record('inboxPeek');
-    this.checkFailure('inboxPeek');
-    // Copies, so a test mutating a row cannot corrupt the inbox.
-    return this.inbox.slice(0, limit).map(({ envelopeId: _envelopeId, ...row }) => ({ ...row }));
-  }
-
-  async inboxConsume(ids: number[]): Promise<void> {
-    this.record('inboxConsume');
-    this.checkFailure('inboxConsume');
-    const drop = new Set(ids);
-    this.inbox = this.inbox.filter((r) => !drop.has(r.id));
-  }
-
-  async inboxDiscard(ids: number[], reason: string): Promise<void> {
-    this.record('inboxDiscard');
-    this.checkFailure('inboxDiscard');
-    if (ids.length === 0) return; // an empty discard is not a data-loss event
-    this.__discarded.push({ ids, reason });
-    // Not via `inboxConsume`, which would record a consume in `__calls`.
-    const drop = new Set(ids);
-    this.inbox = this.inbox.filter((r) => !drop.has(r.id));
-  }
-
-  async inboxDepth(): Promise<number> {
-    this.record('inboxDepth');
-    this.checkFailure('inboxDepth');
-    return this.inbox.length;
-  }
-
-  async entryPut(
-    model: string,
-    id: string,
-    dataJson: string,
-    sentAt: number,
-    authorUserId: string,
-    authorDeviceId: string,
-    localMetadata: string | null,
-  ): Promise<void> {
-    this.record('entryPut');
-    this.checkFailure('entryPut');
-    if (typeof dataJson !== 'string') {
-      throw new Error('entryPut expects a JSON string across the bridge, got ' + typeof dataJson);
-    }
-    this.entryTable(model).set(id, {
-      id, data: dataJson, sentAt, authorUserId, authorDeviceId, localMetadata,
-    });
-  }
-
-  async entryAll(model: string): Promise<StoredEntry[]> {
-    this.record('entryAll');
-    this.checkFailure('entryAll');
-    return [...this.entryTable(model).values()].map((e) => ({ ...e }));
-  }
-
-  async entryGet(model: string, ids: string[]): Promise<StoredEntry[]> {
-    this.record('entryGet');
-    this.checkFailure('entryGet');
-    const table = this.entryTable(model);
-    return ids.flatMap((id) => {
-      const e = table.get(id);
-      return e === undefined ? [] : [{ ...e }];
-    });
-  }
-
-  async entryErase(model: string, ids: string[]): Promise<void> {
-    this.record('entryErase');
-    this.checkFailure('entryErase');
-    // Missing ids are a no-op, like the kits.
-    for (const id of ids) this.entryTable(model).delete(id);
-  }
+  /** What outgoing domain operations put on the wire, in order. */
+  readonly __sent: SentRecord[] = [];
 
   /** Users whose sends the kit reports rejected, as it does for a user with no devices. */
   private unreachable = new Set<string>();
@@ -160,19 +96,359 @@ export class FakeObscuraBridge implements ObscuraBridge {
     this.unreachable = new Set(userIds);
   }
 
-  async sendEntry(
-    recipientUserIds: string[], modelKey: string, entryId: string,
-    sentAt: number, payloadJson: string,
-  ): Promise<SendReport> {
-    this.record('sendEntry');
-    this.checkFailure('sendEntry');
-    this.__sent.push({ recipientUserIds, modelKey, entryId, sentAt, payloadJson });
-    return {
-      recipients: recipientUserIds.map((userId): SubmissionResult => this.unreachable.has(userId)
-        ? { userId, deviceId: null, status: 'rejected', error: 'No devices found' }
-        : { userId, deviceId: `${userId}-device`, status: 'accepted', error: null }),
-      selfSync: [],
+  private acceptedFriendIds(): string[] {
+    return this.friends
+      .filter((f) => f.status === 'accepted' && f.userId !== this.userId)
+      .map((f) => f.userId);
+  }
+
+  private canDeliverTo(recipients: readonly string[]): boolean {
+    return recipients.length === 0 || recipients.some((userId) => !this.unreachable.has(userId));
+  }
+
+  private deliverOutgoing(
+    method: string,
+    recipientUserIds: string[],
+    modelKey: SentRecord['modelKey'],
+    entryId: string,
+    sentAt: number,
+    payload: Record<string, unknown>,
+    markUndelivered: () => void,
+  ): void {
+    const f = this.failures.get(method);
+    if (f) {
+      this.failures.delete(method);
+      markUndelivered();
+      throw rejection(f.code, f.message);
+    }
+    if (!this.canDeliverTo(recipientUserIds)) {
+      markUndelivered();
+      throw rejection('SEND_FAILED', `${modelKey} reached none of its recipients: No devices found`);
+    }
+    this.__sent.push({ recipientUserIds, modelKey, entryId, sentAt, payload });
+  }
+
+  async getMessages(): Promise<ConversationItem[]> {
+    this.record('getMessages');
+    this.checkFailure('getMessages');
+    return [...this.messages.values()]
+      .sort((a, b) => a.sentAt - b.sentAt)
+      .map(({ undelivered: _undelivered, ...item }) => ({ ...item }));
+  }
+
+  async sendMessage(peerUserId: string, content: string): Promise<string> {
+    this.record('sendMessage');
+    this.checkPreStoreFailure('sendMessage');
+    if (peerUserId.trim() === '') {
+      throw rejection('INVALID_ARGUMENT', 'peerUserId is required');
+    }
+    const sentAt = this.nextTimestamp();
+    const id = `dm_${sentAt}`;
+    const item: StoredConversationItem = {
+      id,
+      peerUserId,
+      kind: 'message',
+      authorUserId: this.userId,
+      sentAt,
+      viewedAt: null,
+      content,
+      mediaRef: null,
+      contentKey: null,
+      nonce: null,
+      mediaType: null,
+      caption: null,
+      captionMeta: null,
+      displayDuration: 0,
+      undelivered: false,
     };
+    this.messages.set(id, item);
+    this.deliverOutgoing(
+      'sendMessage',
+      [peerUserId],
+      'directMessage',
+      id,
+      sentAt,
+      { peerUserId, content },
+      () => { item.undelivered = true; },
+    );
+    return id;
+  }
+
+  async sendPix(
+    peerUserId: string,
+    mediaRef: string,
+    contentKey: string,
+    nonce: string,
+    mediaType: string,
+    caption: string,
+    captionMeta: string | null,
+    displayDuration: number,
+  ): Promise<string> {
+    this.record('sendPix');
+    this.checkPreStoreFailure('sendPix');
+    if (peerUserId.trim() === '') {
+      throw rejection('INVALID_ARGUMENT', 'peerUserId is required');
+    }
+    const sentAt = this.nextTimestamp();
+    const id = `pix_${sentAt}`;
+    const item: StoredConversationItem = {
+      id,
+      peerUserId,
+      kind: 'pix',
+      authorUserId: this.userId,
+      sentAt,
+      viewedAt: null,
+      content: '',
+      mediaRef,
+      contentKey,
+      nonce,
+      mediaType,
+      caption,
+      captionMeta,
+      displayDuration,
+      undelivered: false,
+    };
+    this.messages.set(id, item);
+    this.deliverOutgoing(
+      'sendPix',
+      [peerUserId],
+      'pix',
+      id,
+      sentAt,
+      { peerUserId, mediaRef, contentKey, nonce, mediaType, caption, captionMeta, displayDuration },
+      () => { item.undelivered = true; },
+    );
+    return id;
+  }
+
+  async markSeen(entryId: string): Promise<void> {
+    this.record('markSeen');
+    this.checkPreStoreFailure('markSeen');
+    const item = this.messages.get(entryId);
+    if (!item || item.authorUserId === this.userId) {
+      this.checkFailure('markSeen');
+      return;
+    }
+    if (item.viewedAt === null) {
+      const viewedAt = this.nextTimestamp();
+      item.viewedAt = viewedAt;
+      const receiptId = `seen_${item.kind === 'pix' ? 'pix' : 'directMessage'}_${entryId}`;
+      this.deliverOutgoing(
+        'markSeen',
+        [item.peerUserId],
+        'seen',
+        receiptId,
+        viewedAt,
+        { entryId, viewedAt },
+        () => { this.undeliveredReceipts.set(entryId, { peerUserId: item.peerUserId, receiptId, viewedAt }); },
+      );
+    } else {
+      this.checkFailure('markSeen');
+    }
+  }
+
+  async getStories(): Promise<StoryItem[]> {
+    this.record('getStories');
+    this.checkFailure('getStories');
+    return [...this.stories.values()]
+      .filter((s) => s.sentAt + STORY_MAX_AGE_MS > this.clock)
+      .sort((a, b) => a.sentAt - b.sentAt)
+      .map(({ undelivered: _undelivered, ...story }) => ({ ...story }));
+  }
+
+  async postStory(
+    content: string,
+    mediaRef: string | null,
+    contentKey: string | null,
+    nonce: string | null,
+    mediaType: string | null,
+    captionMeta: string | null,
+  ): Promise<string> {
+    this.record('postStory');
+    this.checkPreStoreFailure('postStory');
+    const sentAt = this.nextTimestamp();
+    const id = `story_${sentAt}`;
+    const story: StoredStoryItem = {
+      id,
+      authorUserId: this.userId,
+      sentAt,
+      content,
+      mediaRef,
+      contentKey,
+      nonce,
+      mediaType,
+      captionMeta,
+      undelivered: false,
+    };
+    this.stories.set(id, story);
+    const recipients = this.acceptedFriendIds();
+    this.deliverOutgoing(
+      'postStory',
+      recipients,
+      'story',
+      id,
+      sentAt,
+      { content, mediaRef, contentKey, nonce, mediaType, captionMeta },
+      () => { story.undelivered = true; },
+    );
+    return id;
+  }
+
+  async getProfiles(): Promise<ProfileItem[]> {
+    this.record('getProfiles');
+    this.checkFailure('getProfiles');
+    return [...this.profiles.values()].map(({ undelivered: _undelivered, ...profile }) => ({ ...profile }));
+  }
+
+  async updateProfile(displayName: string, bio: string): Promise<void> {
+    this.record('updateProfile');
+    this.checkPreStoreFailure('updateProfile');
+    const existing = this.profiles.get(this.userId);
+    const now = this.nextTimestamp();
+    const updatedAt = existing ? Math.max(now, existing.updatedAt + 1) : now;
+    const profile: StoredProfileItem = {
+      userId: this.userId,
+      authorDeviceId: this.deviceId,
+      updatedAt,
+      displayName,
+      bio,
+      undelivered: false,
+    };
+    this.profiles.set(this.userId, profile);
+    const recipients = this.acceptedFriendIds();
+    this.deliverOutgoing(
+      'updateProfile',
+      recipients,
+      'profile',
+      `profile_${this.userId}`,
+      updatedAt,
+      { displayName, bio },
+      () => { profile.undelivered = true; },
+    );
+  }
+
+  async flushOutbox(): Promise<number> {
+    this.record('flushOutbox');
+    this.checkFailure('flushOutbox');
+    let delivered = 0;
+
+    for (const item of this.messages.values()) {
+      if (!item.undelivered) continue;
+      if (!this.canDeliverTo([item.peerUserId])) continue;
+      item.undelivered = false;
+      this.__sent.push({
+        recipientUserIds: [item.peerUserId],
+        modelKey: item.kind === 'pix' ? 'pix' : 'directMessage',
+        entryId: item.id,
+        sentAt: item.sentAt,
+        payload: item.kind === 'pix'
+          ? {
+              peerUserId: item.peerUserId,
+              mediaRef: item.mediaRef,
+              contentKey: item.contentKey,
+              nonce: item.nonce,
+              mediaType: item.mediaType,
+              caption: item.caption,
+              captionMeta: item.captionMeta,
+              displayDuration: item.displayDuration,
+            }
+          : { peerUserId: item.peerUserId, content: item.content },
+      });
+      delivered += 1;
+    }
+
+    for (const [entryId, rec] of this.undeliveredReceipts) {
+      if (!this.canDeliverTo([rec.peerUserId])) continue;
+      this.undeliveredReceipts.delete(entryId);
+      this.__sent.push({
+        recipientUserIds: [rec.peerUserId],
+        modelKey: 'seen',
+        entryId: rec.receiptId,
+        sentAt: rec.viewedAt,
+        payload: { entryId, viewedAt: rec.viewedAt },
+      });
+      delivered += 1;
+    }
+
+    for (const story of this.stories.values()) {
+      if (!story.undelivered) continue;
+      const recipients = this.acceptedFriendIds();
+      if (!this.canDeliverTo(recipients)) continue;
+      story.undelivered = false;
+      this.__sent.push({
+        recipientUserIds: recipients,
+        modelKey: 'story',
+        entryId: story.id,
+        sentAt: story.sentAt,
+        payload: {
+          content: story.content,
+          mediaRef: story.mediaRef,
+          contentKey: story.contentKey,
+          nonce: story.nonce,
+          mediaType: story.mediaType,
+          captionMeta: story.captionMeta,
+        },
+      });
+      delivered += 1;
+    }
+
+    for (const profile of this.profiles.values()) {
+      if (!profile.undelivered) continue;
+      const recipients = this.acceptedFriendIds();
+      if (!this.canDeliverTo(recipients)) continue;
+      profile.undelivered = false;
+      this.__sent.push({
+        recipientUserIds: recipients,
+        modelKey: 'profile',
+        entryId: `profile_${profile.userId}`,
+        sentAt: profile.updatedAt,
+        payload: { displayName: profile.displayName, bio: profile.bio },
+      });
+      delivered += 1;
+    }
+
+    return delivered;
+  }
+
+  async sweepExpired(): Promise<string[]> {
+    this.record('sweepExpired');
+    this.checkFailure('sweepExpired');
+    const touched = new Set<string>();
+
+    for (const item of this.messages.values()) {
+      const ceiling = item.sentAt + MAX_AGE_MS;
+      const deadline = item.viewedAt === null ? ceiling : Math.min(ceiling, item.viewedAt + EXPIRE_AFTER_MS);
+      if (deadline <= this.clock) {
+        if (item.mediaRef !== null) this.__purged.push(item.mediaRef);
+        this.tombstones.set(item.id, this.clock);
+        this.messages.delete(item.id);
+        this.undeliveredReceipts.delete(item.id);
+        touched.add(item.kind === 'pix' ? 'pix' : 'directMessage');
+      }
+    }
+
+    for (const story of this.stories.values()) {
+      if (story.sentAt + STORY_MAX_AGE_MS <= this.clock) {
+        if (story.mediaRef !== null) this.__purged.push(story.mediaRef);
+        this.tombstones.set(story.id, this.clock);
+        this.stories.delete(story.id);
+        touched.add('story');
+      }
+    }
+
+    for (const [entryId, rec] of this.pendingReceipts) {
+      if (rec.sentAt + MAX_AGE_MS <= this.clock) {
+        this.pendingReceipts.delete(entryId);
+      }
+    }
+
+    for (const [id, erasedAt] of this.tombstones) {
+      if (erasedAt + MAX_AGE_MS <= this.clock) {
+        this.tombstones.delete(id);
+      }
+    }
+
+    return [...touched];
   }
 
   // ─── Test controls (not part of the native surface) ───
@@ -182,30 +458,217 @@ export class FakeObscuraBridge implements ObscuraBridge {
     for (const l of [...this.listeners]) l(event);
   }
 
-  /** Persist an inbox row and notify, as the kit does. Deduped on `envelopeId`. */
-  __deliverInbox(
-    row: Partial<InboxRow> & { payload: string; envelopeId?: string },
-  ): FakeInboxRow {
-    const id = this.nextInboxId;
-    const full: FakeInboxRow = {
-      id,
-      envelopeId: `env_${id}`,
-      senderUserId: 'user_peer',
-      senderDeviceId: 'device_peer',
-      modelKey: 'directMessage',
-      entryId: `entry_${id}`,
-      sentAt: this.nextTimestamp(),
-      ...row,
-    };
-    const existing = this.inbox.find((r) => r.envelopeId === full.envelopeId);
-    if (existing) return { ...existing };
-    this.nextInboxId += 1;
-    this.inbox.push(full);
-    this.__emit({ type: 'messageReceived', model: full.modelKey });
-    return full;
+  /** Advance the fake clock by `ms` milliseconds. */
+  __advanceTime(ms: number): number {
+    this.clock += ms;
+    return this.clock;
   }
 
-  /** An authenticated session; without one, `getUserId()` is null and the drain stores nothing. */
+  /** Current fake clock value. */
+  __now(): number {
+    return this.clock;
+  }
+
+  /** Deliver an incoming direct message and emit `messageReceived`. */
+  __deliverMessage(input: {
+    id?: string;
+    peerUserId?: string;
+    authorUserId?: string;
+    sentAt?: number;
+    viewedAt?: number | null;
+    content?: string;
+  } = {}): ConversationItem {
+    const sentAt = input.sentAt ?? this.nextTimestamp();
+    const id = input.id ?? `dm_${sentAt}`;
+    const authorUserId = input.authorUserId ?? input.peerUserId ?? 'user_peer';
+    const peerUserId = input.peerUserId ?? (authorUserId === this.userId ? 'user_peer' : authorUserId);
+    const pending = this.pendingReceipts.get(id);
+    const viewedAt = input.viewedAt !== undefined
+      ? input.viewedAt
+      : pending && pending.senderUserId !== authorUserId
+      ? pending.viewedAt
+      : null;
+
+    const item: StoredConversationItem = {
+      id,
+      peerUserId,
+      kind: 'message',
+      authorUserId,
+      sentAt,
+      viewedAt,
+      content: input.content ?? 'hello',
+      mediaRef: null,
+      contentKey: null,
+      nonce: null,
+      mediaType: null,
+      caption: null,
+      captionMeta: null,
+      displayDuration: 0,
+      undelivered: false,
+    };
+
+    if (!this.tombstones.has(id) && !this.messages.has(id)) {
+      this.messages.set(id, item);
+      if (viewedAt !== null) this.pendingReceipts.delete(id);
+    }
+
+    const stored = this.messages.get(id) ?? item;
+    this.__emit({ type: 'messageReceived', model: 'directMessage' });
+    return stripUndelivered(stored);
+  }
+
+  /** Deliver an incoming pix and emit `messageReceived`. */
+  __deliverPix(input: {
+    id?: string;
+    peerUserId?: string;
+    authorUserId?: string;
+    sentAt?: number;
+    viewedAt?: number | null;
+    mediaRef?: string;
+    contentKey?: string;
+    nonce?: string;
+    mediaType?: string | null;
+    caption?: string | null;
+    captionMeta?: string | null;
+    displayDuration?: number;
+  } = {}): ConversationItem {
+    const sentAt = input.sentAt ?? this.nextTimestamp();
+    const id = input.id ?? `pix_${sentAt}`;
+    const authorUserId = input.authorUserId ?? input.peerUserId ?? 'user_peer';
+    const peerUserId = input.peerUserId ?? (authorUserId === this.userId ? 'user_peer' : authorUserId);
+    const pending = this.pendingReceipts.get(id);
+    const viewedAt = input.viewedAt !== undefined
+      ? input.viewedAt
+      : pending && pending.senderUserId !== authorUserId
+      ? pending.viewedAt
+      : null;
+
+    const item: StoredConversationItem = {
+      id,
+      peerUserId,
+      kind: 'pix',
+      authorUserId,
+      sentAt,
+      viewedAt,
+      content: '',
+      mediaRef: input.mediaRef ?? 'att_1',
+      contentKey: input.contentKey ?? 'key',
+      nonce: input.nonce ?? 'nonce',
+      mediaType: input.mediaType ?? 'photo',
+      caption: input.caption ?? null,
+      captionMeta: input.captionMeta ?? null,
+      displayDuration: input.displayDuration ?? 5,
+      undelivered: false,
+    };
+
+    if (!this.tombstones.has(id) && !this.messages.has(id)) {
+      this.messages.set(id, item);
+      if (viewedAt !== null) this.pendingReceipts.delete(id);
+    }
+
+    const stored = this.messages.get(id) ?? item;
+    this.__emit({ type: 'messageReceived', model: 'pix' });
+    return stripUndelivered(stored);
+  }
+
+  /** Deliver an incoming seen receipt and emit `messageReceived`. */
+  __deliverSeen(
+    input: string | {
+      entryId: string;
+      senderUserId?: string;
+      viewedAt?: number;
+      sentAt?: number;
+    },
+    viewedAtArg?: number,
+  ): void {
+    const opts = typeof input === 'string' ? { entryId: input, viewedAt: viewedAtArg } : input;
+    const item = this.messages.get(opts.entryId);
+    const sentAt = opts.sentAt ?? opts.viewedAt ?? this.nextTimestamp();
+    const rawViewedAt = opts.viewedAt ?? sentAt;
+    const effectiveViewedAt = Math.min(rawViewedAt, sentAt);
+    const senderUserId = opts.senderUserId ?? (item ? item.peerUserId : 'user_peer');
+
+    if (item) {
+      if (senderUserId !== item.authorUserId && item.viewedAt === null) {
+        item.viewedAt = effectiveViewedAt;
+      }
+    } else if (!this.tombstones.has(opts.entryId) && !this.pendingReceipts.has(opts.entryId)) {
+      this.pendingReceipts.set(opts.entryId, { senderUserId, viewedAt: effectiveViewedAt, sentAt });
+    }
+    this.__emit({ type: 'messageReceived', model: 'seen' });
+  }
+
+  /** Deliver an incoming story and emit `messageReceived`. */
+  __deliverStory(input: {
+    id?: string;
+    authorUserId?: string;
+    sentAt?: number;
+    content?: string;
+    mediaRef?: string | null;
+    contentKey?: string | null;
+    nonce?: string | null;
+    mediaType?: string | null;
+    captionMeta?: string | null;
+  } = {}): StoryItem {
+    const sentAt = input.sentAt ?? this.nextTimestamp();
+    const id = input.id ?? `story_${sentAt}`;
+    const story: StoredStoryItem = {
+      id,
+      authorUserId: input.authorUserId ?? 'user_peer',
+      sentAt,
+      content: input.content ?? '',
+      mediaRef: input.mediaRef ?? null,
+      contentKey: input.contentKey ?? null,
+      nonce: input.nonce ?? null,
+      mediaType: input.mediaType ?? null,
+      captionMeta: input.captionMeta ?? null,
+      undelivered: false,
+    };
+
+    if (!this.tombstones.has(id) && !this.stories.has(id)) {
+      this.stories.set(id, story);
+    }
+
+    const stored = this.stories.get(id) ?? story;
+    this.__emit({ type: 'messageReceived', model: 'story' });
+    return stripUndelivered(stored);
+  }
+
+  /** Deliver an incoming profile update (`REPLACE` by `(updatedAt, authorDeviceId)`) and emit `messageReceived`. */
+  __deliverProfile(input: {
+    userId: string;
+    authorDeviceId?: string;
+    updatedAt?: number;
+    displayName: string;
+    bio?: string;
+  }): ProfileItem {
+    const updatedAt = input.updatedAt ?? this.nextTimestamp();
+    const authorDeviceId = input.authorDeviceId ?? 'device_peer';
+    const incoming: StoredProfileItem = {
+      userId: input.userId,
+      authorDeviceId,
+      updatedAt,
+      displayName: input.displayName,
+      bio: input.bio ?? '',
+      undelivered: false,
+    };
+
+    const existing = this.profiles.get(input.userId);
+    const wins = !existing || (
+      incoming.updatedAt !== existing.updatedAt
+        ? incoming.updatedAt > existing.updatedAt
+        : incoming.authorDeviceId > existing.authorDeviceId
+    );
+    if (wins) {
+      this.profiles.set(input.userId, incoming);
+    }
+
+    const stored = this.profiles.get(input.userId)!;
+    this.__emit({ type: 'messageReceived', model: 'profile' });
+    return stripUndelivered(stored);
+  }
+
+  /** An authenticated session; without one, `getUserId()` is null. */
   __authenticate(opts: FakeBridgeOptions = {}): void {
     if (opts.userId !== undefined) this.userId = opts.userId;
     if (opts.username !== undefined) this.username = opts.username;
@@ -258,11 +721,13 @@ export class FakeObscuraBridge implements ObscuraBridge {
 
   /** Clear all state in place: `ObscuraModule` holds this instance from import time. */
   __reset(): void {
-    this.inbox.length = 0;
-    this.nextInboxId = 1;
-    this.storedEntries.clear();
+    this.messages.clear();
+    this.stories.clear();
+    this.profiles.clear();
+    this.tombstones.clear();
+    this.pendingReceipts.clear();
+    this.undeliveredReceipts.clear();
     this.__sent.length = 0;
-    this.__discarded.length = 0;
     this.__purged.length = 0;
     this.friends = [];
     this.listeners.clear();
@@ -299,6 +764,14 @@ export class FakeObscuraBridge implements ObscuraBridge {
   private checkFailure(method: string): void {
     const f = this.failures.get(method);
     if (!f) return;
+    this.failures.delete(method);
+    throw rejection(f.code, f.message);
+  }
+
+  /** Throw before storing unless the injected failure is `SEND_FAILED` (which happens after storing). */
+  private checkPreStoreFailure(method: string): void {
+    const f = this.failures.get(method);
+    if (!f || f.code === 'SEND_FAILED') return;
     this.failures.delete(method);
     throw rejection(f.code, f.message);
   }
@@ -401,11 +874,13 @@ export class FakeObscuraBridge implements ObscuraBridge {
   }
 
   private clearLocalState(): void {
-    this.inbox.length = 0;
-    this.nextInboxId = 1;
-    this.storedEntries.clear();
+    this.messages.clear();
+    this.stories.clear();
+    this.profiles.clear();
+    this.tombstones.clear();
+    this.pendingReceipts.clear();
+    this.undeliveredReceipts.clear();
     this.__sent.length = 0;
-    this.__discarded.length = 0;
     this.friends = [];
     this.__setConnectionState('disconnected');
     this.__setAuthState('loggedOut');
@@ -602,6 +1077,13 @@ export class FakeObscuraBridge implements ObscuraBridge {
 }
 
 export const FAKE_LINK_DEVICE_NAME = 'Test phone';
+
+function stripUndelivered<T extends { undelivered: boolean }>({
+  undelivered: _undelivered,
+  ...rest
+}: T): Omit<T, 'undelivered'> {
+  return rest;
+}
 
 /** A rejection as the native side delivers it: an `Error` with a `code`. */
 function rejection(code: string, message: string): Error & { code: string } {

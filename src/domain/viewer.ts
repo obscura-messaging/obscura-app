@@ -3,9 +3,19 @@
  * view-once pix viewer.
  */
 
-import { storyExpiresAt } from './expiry';
 import { displayNameFor, type Identity } from './friends';
-import type { Entry } from './merge';
+
+export interface StoryItem {
+  id: string;
+  authorUserId: string;
+  sentAt: number;
+  content: string;
+  mediaRef: string | null;
+  contentKey: string | null;
+  nonce: string | null;
+  mediaType: string | null;
+  captionMeta: string | null;
+}
 
 /** Seconds a photo shows when the sender chose no limit (0) or nothing. */
 export const DEFAULT_DISPLAY_SECONDS = 5;
@@ -20,15 +30,17 @@ export interface Attachment {
   readonly nonce: string;
 }
 
-export function attachmentOf(entry: { data: Record<string, unknown> } | undefined): Attachment | null {
-  const mediaRef = entry?.data.mediaRef;
-  const contentKey = entry?.data.contentKey;
-  const nonce = entry?.data.nonce;
+export function attachmentOf(
+  item: { mediaRef: string | null; contentKey: string | null; nonce: string | null } | undefined,
+): Attachment | null {
+  if (!item) return null;
+  const { mediaRef, contentKey, nonce } = item;
   if (typeof mediaRef !== 'string' || typeof contentKey !== 'string' || typeof nonce !== 'string') return null;
+  if (mediaRef === '' || contentKey === '' || nonce === '') return null;
   return { mediaRef, contentKey, nonce };
 }
 
-export interface StoryGroup<E> {
+export interface StoryGroup<E = StoryItem> {
   userId: string;
   /** From the friend graph, never a payload. */
   username: string;
@@ -40,18 +52,15 @@ export interface StoryGroup<E> {
  * Live stories grouped by authenticated author: mine, and those of accepted friends with the most
  * recently posting first. Stories from anyone else are hidden.
  */
-export function storyGroups<E extends Entry>(
+export function storyGroups<E extends StoryItem = StoryItem>(
   stories: readonly E[],
   identity: Identity,
-  now: number,
 ): { mine: StoryGroup<E>; others: StoryGroup<E>[] } {
-  const live = stories
-    .filter((s) => storyExpiresAt(s.sentAt) > now)
-    .sort((a, b) => a.sentAt - b.sentAt);
+  const ordered = [...stories].sort((a, b) => a.sentAt - b.sentAt);
   const groupOf = (userId: string, username: string): StoryGroup<E> =>
-    ({ userId, username, stories: live.filter((s) => s.authorUserId === userId) });
+    ({ userId, username, stories: ordered.filter((s) => s.authorUserId === userId) });
 
-  const authors = [...new Set(live.map((s) => s.authorUserId))].filter((id) => id !== identity.myUserId);
+  const authors = [...new Set(ordered.map((s) => s.authorUserId))].filter((id) => id !== identity.myUserId);
   const others = authors.flatMap((userId) => {
     const username = displayNameFor(userId, identity);
     return username === null ? [] : [groupOf(userId, username)];

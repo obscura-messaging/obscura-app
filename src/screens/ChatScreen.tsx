@@ -7,11 +7,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { conversationId } from '../domain/audience';
-import { chatTimeline, conversationEntries, pixStatus, type ChatTimelineItem } from '../domain/chats';
-import type { ScreenEntry } from '../domain/expiry';
-import type { ModelData } from '../domain/schema';
-import { useSession, useModelEntries, useAcceptedFriends, markSeen } from '../state/store';
+import {
+  conversationId, chatTimeline, conversationItems, pixStatus, type ChatTimelineItem,
+} from '../domain/chats';
+import { useSession, useMessages, useAcceptedFriends, markSeen } from '../state/store';
 import { usePeerTyping, notifyTyping, sendChatMessage } from '../state/chat';
 import { useAppActive } from '../hooks/useAppActive';
 import { isBackSwipeGesture, shouldCompleteBackSwipe } from '../utils/gesture';
@@ -44,7 +43,7 @@ function TypingBubble() {
   );
 }
 
-type TimelineItem = ChatTimelineItem<ScreenEntry<ModelData<'directMessage'>>>;
+type TimelineItem = ChatTimelineItem;
 
 const VIEWABILITY = { itemVisiblePercentThreshold: 50 };
 
@@ -55,22 +54,22 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const friend = friends.find((f) => f.userId === route.params.userId)
     ?? { userId: route.params.userId, username: route.params.username, status: 'accepted' as const };
   const headerHeight = useHeaderHeight();
-  const allMessages = useModelEntries('directMessage');
-  const allPix = useModelEntries('pix');
+  const allItems = useMessages();
   const [text, setText] = useState('');
   const listRef = useRef<FlatList<TimelineItem>>(null);
   const prevCountRef = useRef(0);
   const convId = conversationId(myUserId, friend.userId);
   const peerTyping = usePeerTyping(convId, friend.userId);
 
-  const messages = useMemo(() => conversationEntries(allMessages, convId), [allMessages, convId]);
+  const peerItems = useMemo(() => conversationItems(allItems, friend.userId), [allItems, friend.userId]);
+  const messages = useMemo(() => peerItems.filter((item) => item.kind === 'message'), [peerItems]);
   const unopenedPix = useMemo(
-    () => conversationEntries(allPix, convId).filter((p) => pixStatus(p, myUserId) === 'received_new'),
-    [allPix, convId, myUserId],
+    () => peerItems.filter((p) => p.kind === 'pix' && pixStatus(p, myUserId) === 'received_new'),
+    [peerItems, myUserId],
   );
   const timeline = useMemo(
-    () => chatTimeline(allMessages, allPix, convId, myUserId),
-    [allMessages, allPix, convId, myUserId],
+    () => chatTimeline(allItems, friend.userId, myUserId),
+    [allItems, friend.userId, myUserId],
   );
   // Inverted FlatList renders index 0 at the visual bottom (above the composer), so newest is first.
   const invertedTimeline = useMemo(() => [...timeline].reverse(), [timeline]);
@@ -108,7 +107,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
       if (!visibleIds.has(m.id) || m.viewedAt !== null || m.authorUserId === myUserId) continue;
       if (marked.current.has(m.id)) continue;
       marked.current.add(m.id);
-      markSeen('directMessage', m).catch((e) => {
+      markSeen(m.id).catch((e) => {
         marked.current.delete(m.id);
         logError('seen.message:' + m.id, e);
       });
@@ -120,7 +119,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
     const content = text;
     setText('');
     try {
-      await sendChatMessage(convId, friend.userId, content);
+      await sendChatMessage(friend.userId, content);
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -137,7 +136,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
       return (
         <View style={[cs.msgRow, mine ? cs.msgRowRight : cs.msgRowLeft]}>
           <View style={[cs.msgBubble, mine ? cs.myBubble : cs.theirBubble]}>
-            <Text style={mine ? cs.myBubbleText : cs.theirBubbleText}>{item.data.content}</Text>
+            <Text style={mine ? cs.myBubbleText : cs.theirBubbleText}>{item.content}</Text>
           </View>
         </View>
       );

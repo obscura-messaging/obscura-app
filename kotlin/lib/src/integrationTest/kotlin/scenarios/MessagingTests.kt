@@ -1,10 +1,12 @@
 package scenarios
 
-import dev.barrelmaker.obscura.kit.SubmissionStatus
+import dev.barrelmaker.obscura.kit.crypto.fromBase64
+import dev.barrelmaker.obscura.kit.crypto.toBase64
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import org.json.JSONObject
+import obscura.client.v1.Client.ClientMessage
+import obscura.client.v1.Client.DirectMessage
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -13,45 +15,24 @@ import org.junit.jupiter.api.Test
 class MessagingTests {
 
     @Test
-    fun `entries arrive byte-identical with authenticated identity, in both directions, and announce their model`() = runBlocking {
+    fun `messages arrive with authenticated identity, in both directions, and announce their model`() = runBlocking {
         requireServer()
         val alice = registerAndConnect("msg_a")
         val bob = registerAndConnect("msg_b")
         becomeFriends(alice, bob)
 
-        val payload = """{"content":"opaque to the kit","expiresAt":123}""".toByteArray()
-        val report = alice.send(listOf(bob.userId!!), "directMessage", "dm_1", 1_700_000_000_000, payload)
-        assertEquals(listOf(SubmissionStatus.ACCEPTED), report.recipients.map { it.status })
-        assertEquals(emptyList<Any>(), report.selfSync, "a single-device sender has no other devices")
+        val id = alice.sendMessage(bob.userId!!, "hello bob")
 
-        val row = bob.awaitRow { it.entryId == "dm_1" }
-        assertEquals("directMessage", row.modelKey)
-        assertEquals(1_700_000_000_000, row.sentAt)
-        assertEquals(alice.userId, row.senderUserId)
-        assertEquals(alice.deviceId, row.senderDeviceId)
-        assertArrayEquals(payload, row.payload)
+        val row = bob.awaitRow { it.id == id }
+        assertEquals("message", row.kind)
+        assertEquals(alice.userId, row.authorUserId)
+        assertEquals(alice.userId, row.peerUserId)
+        assertEquals("hello bob", row.content)
         assertEquals("directMessage", withTimeout(5_000) { bob.messageReceived.receive() })
 
         sendAndVerify(bob, alice, "reply")
-        assertEquals(1L, bob.inbox.depth(), "the sender gets no copy of its own entry")
-        assertEquals(emptyList<Any>(), alice.entries.all("directMessage"), "send stores nothing locally")
-        alice.disconnect(); bob.disconnect()
-    }
-
-    @Test
-    fun `an unreachable recipient is rejected without stopping the others`() = runBlocking {
-        requireServer()
-        val alice = registerAndConnect("partial_a")
-        val bob = registerAndConnect("partial_b")
-        becomeFriends(alice, bob)
-        val ghost = java.util.UUID.randomUUID().toString()
-
-        val report = alice.send(listOf(ghost, bob.userId!!), "story", "s1", System.currentTimeMillis(),
-            """{"content":"reaches bob anyway"}""".toByteArray())
-
-        assertEquals(SubmissionStatus.REJECTED, report.recipients.single { it.userId == ghost }.status)
-        assertEquals(SubmissionStatus.ACCEPTED, report.recipients.single { it.userId == bob.userId }.status)
-        bob.awaitContent("reaches bob anyway")
+        assertEquals(2, bob.getMessages().size)
+        assertEquals(2, alice.getMessages().size)
         alice.disconnect(); bob.disconnect()
     }
 
@@ -63,15 +44,24 @@ class MessagingTests {
         becomeFriends(alice, bob)
         val before = System.currentTimeMillis()
 
-        sendText(alice, bob, "from the far future", sentAt = Long.MAX_VALUE)
+        val futureMsg = ClientMessage.newBuilder()
+            .setTimestamp(Long.MAX_VALUE)
+            .setDirectMessage(
+                DirectMessage.newBuilder()
+                    .setId("future_1")
+                    .setPeerUserId(bob.userId!!)
+                    .setContent("from the far future"),
+            )
+            .build()
+        alice.sender.send(listOf(bob.userId!!), futureMsg)
 
         val row = bob.awaitContent("from the far future")
-        assertTrue(row.sentAt!! in 1..before + 120_000, "sentAt was ${row.sentAt}")
+        assertTrue(row.sentAt in 1..before + 120_000, "sentAt was ${row.sentAt}")
         alice.disconnect(); bob.disconnect()
     }
 
     @Test
-    fun `messages sent while offline arrive on reconnect in order and drain with peek then consume`() = runBlocking {
+    fun `messages sent while offline arrive on reconnect in order`() = runBlocking {
         requireServer()
         val alice = registerAndConnect("offline_a")
         val bob = registerAndConnect("offline_b")
@@ -82,14 +72,8 @@ class MessagingTests {
         sendText(alice, bob, "two")
         bob.connect()
 
-        eventually { bob.inbox.depth() == 2L }
-        val batch = bob.inbox.peek()
-        assertEquals(listOf("one", "two"), batch.map { it.content() })
-        assertEquals(batch, bob.inbox.peek(), "peek does not remove")
-        bob.inbox.consume(listOf(batch[0].id))
-        assertEquals(1L, bob.inbox.depth())
-        bob.inbox.consume(batch.map { it.id })
-        assertEquals(0L, bob.inbox.depth())
+        eventually { bob.getMessages().size == 2 }
+        assertEquals(listOf("one", "two"), bob.getMessages().map { it.content })
         alice.disconnect(); bob.disconnect()
     }
 
@@ -102,13 +86,15 @@ class MessagingTests {
         val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte()) + ByteArray(250)
 
         val attachment = alice.uploadAttachment(jpeg)
-        alice.send(listOf(bob.userId!!), "story", "story_1", System.currentTimeMillis(),
-            JSONObject(mapOf("content" to "vacation", "mediaRef" to attachment.id)).toString().toByteArray())
+        alice.postStory("vacation", attachment.id, attachment.contentKey.toBase64(), attachment.nonce.toBase64(), "photo", null)
 
-        val row = bob.awaitContent("vacation")
-        assertEquals("story", row.modelKey)
-        val mediaRef = JSONObject(String(row.payload)).getString("mediaRef")
-        assertArrayEquals(jpeg, bob.downloadDecryptedAttachment(mediaRef, attachment.contentKey, attachment.nonce))
+        eventually { bob.getStories().isNotEmpty() }
+        val story = bob.getStories().single()
+        assertEquals("vacation", story.content)
+        assertArrayEquals(
+            jpeg,
+            bob.downloadDecryptedAttachment(story.mediaRef!!, story.contentKey!!.fromBase64(), story.nonce!!.fromBase64()),
+        )
         alice.disconnect(); bob.disconnect()
     }
 

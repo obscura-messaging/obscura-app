@@ -88,7 +88,7 @@ class AuthTests {
         assertEquals(ConnectionState.CONNECTED, bob2.connectionState.value)
         assertEquals(bob1.deviceId, bob2.deviceId)
         bob2.awaitContent("while you were gone")
-        assertNotNull(bob2.inbox.peek(500).find { it.content() == "before restart" })
+        assertNotNull(bob2.getMessages().find { it.content == "before restart" })
         sendAndVerify(bob2, alice, "I'm back")
         alice.disconnect(); bob2.disconnect()
     }

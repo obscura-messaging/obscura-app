@@ -3,9 +3,12 @@ package scenarios
 import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.LoginScenario
 import dev.barrelmaker.obscura.kit.ObscuraError
-import dev.barrelmaker.obscura.kit.SubmissionStatus
+import dev.barrelmaker.obscura.kit.stores.ConversationItemData
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
-import dev.barrelmaker.obscura.kit.stores.StoredEntry
+import dev.barrelmaker.obscura.kit.stores.ProfileItemData
+import dev.barrelmaker.obscura.kit.stores.STORY_MAX_AGE_MS
+import dev.barrelmaker.obscura.kit.stores.StoryItemData
+import dev.barrelmaker.obscura.kit.stores.expiresAt
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -30,19 +33,15 @@ class MultiDeviceTests {
             assertArrayEquals(alice1.signalStore.identityKeyPair.serialize(), linked.signalStore.identityKeyPair.serialize())
         }
 
-        val toAlice = sendText(bob, alice1, "hello all three")
-        assertEquals(setOf(alice1.deviceId, alice2.deviceId, alice3.deviceId), toAlice.recipients.map { it.deviceId }.toSet())
-        assertTrue(toAlice.recipients.all { it.status == SubmissionStatus.ACCEPTED }, toAlice.toString())
+        sendText(bob, alice1, "hello all three")
         for (alice in listOf(alice1, alice2, alice3)) {
-            assertEquals(bob.deviceId, alice.awaitContent("hello all three").senderDeviceId)
+            assertEquals(bob.userId, alice.awaitContent("hello all three").authorUserId)
         }
 
-        val fromTablet = sendText(alice2, bob, "from the tablet")
+        sendText(alice2, bob, "from the tablet")
         bob.awaitContent("from the tablet")
-        assertEquals(setOf(alice1.deviceId, alice3.deviceId), fromTablet.selfSync.map { it.deviceId }.toSet())
-        assertTrue(fromTablet.selfSync.all { it.status == SubmissionStatus.ACCEPTED }, fromTablet.toString())
-        assertEquals(alice2.deviceId, alice1.awaitContent("from the tablet").senderDeviceId)
-        assertEquals(alice2.deviceId, alice3.awaitContent("from the tablet").senderDeviceId)
+        assertEquals(alice1.userId, alice1.awaitContent("from the tablet").authorUserId)
+        assertEquals(alice1.userId, alice3.awaitContent("from the tablet").authorUserId)
         alice1.disconnect(); alice2.disconnect(); alice3.disconnect(); bob.disconnect()
     }
 
@@ -77,11 +76,9 @@ class MultiDeviceTests {
         assertEquals(listOf(alice.deviceId), alice.devices.devicesOf(alice.userId!!))
 
         val tablet = linkDevice(alice, "Alice Tablet")
-        val report = sendText(alice, bob, "after linking")
+        sendText(alice, bob, "after linking")
 
-        assertEquals(listOf(tablet.deviceId), report.selfSync.map { it.deviceId })
-        assertEquals(SubmissionStatus.ACCEPTED, report.selfSync.single().status)
-        assertEquals(alice.deviceId, tablet.awaitContent("after linking").senderDeviceId)
+        assertEquals(alice.userId, tablet.awaitContent("after linking").authorUserId)
         bob.awaitContent("after linking")
         alice.disconnect(); bob.disconnect(); tablet.disconnect()
     }
@@ -119,10 +116,8 @@ class MultiDeviceTests {
         assertEquals(listOf(alice.deviceId), bob.devices.devicesOf(alice.userId!!))
 
         val tablet = linkDevice(alice, "Alice Tablet")
-        val report = sendText(bob, alice, "after linking")
+        sendText(bob, alice, "after linking")
 
-        assertEquals(setOf(alice.deviceId, tablet.deviceId), report.recipients.map { it.deviceId }.toSet())
-        assertTrue(report.recipients.all { it.status == SubmissionStatus.ACCEPTED }, report.toString())
         alice.awaitContent("after linking")
         tablet.awaitContent("after linking")
         assertEquals(setOf(alice.deviceId, tablet.deviceId), bob.devices.devicesOf(alice.userId!!).toSet())
@@ -166,10 +161,8 @@ class MultiDeviceTests {
         alice.connect()
 
         // The old device is invalid and the mismatch names the new primary, all in this one send.
-        val report = sendText(bob, alice, "after reset")
-        assertEquals(listOf(alice.deviceId), report.recipients.map { it.deviceId })
+        sendText(bob, alice, "after reset")
         assertEquals(listOf(alice.deviceId), bob.devices.devicesOf(alice.userId!!))
-        assertEquals(SubmissionStatus.ACCEPTED, report.recipients.single().status)
         alice.awaitContent("after reset")
         assertEquals(listOf(alice.userId), changes.users)
         alice.disconnect(); bob.disconnect()
@@ -179,14 +172,30 @@ class MultiDeviceTests {
     fun `a newly linked device has the primary's history`() = runBlocking {
         requireServer()
         val alice = registerAndConnect("history_alice")
-        val entries = (1..3).map { StoredEntry("e$it", """{"n":$it}""", 1_000L + it, alice.userId!!, alice.deviceId!!, localMetadata = "local $it") }
-        entries.forEach { alice.entries.put("directMessage", it) }
-        alice.entries.put("note", StoredEntry("n1", "{}", 5, alice.userId!!, alice.deviceId!!))
+        val messages = (1..3).map {
+            ConversationItemData(
+                id = "e$it",
+                peerUserId = "019f025a-0000-7de6-84b6-000000000002",
+                kind = "message",
+                authorUserId = alice.userId!!,
+                sentAt = 1_000L + it,
+                viewedAt = null,
+                expiresAt = expiresAt(1_000L + it, null),
+                content = "msg $it",
+                undelivered = true,
+            )
+        }
+        messages.forEach { alice.content.putConversation(it) }
+        val story = StoryItemData("s1", alice.userId!!, 5_000L, 5_000L + STORY_MAX_AGE_MS, "story 1")
+        alice.content.putStory(story)
+        val profile = ProfileItemData(alice.userId!!, alice.deviceId!!, 6_000L, "Alice", "Bio")
+        alice.content.putProfile(profile)
 
         val tablet = linkDevice(alice, "Alice Tablet")
 
-        assertEquals(entries.map { it.copy(localMetadata = null) }, tablet.entries.all("directMessage").sortedBy { it.id })
-        assertEquals(listOf(StoredEntry("n1", "{}", 5, alice.userId!!, alice.deviceId!!)), tablet.entries.all("note"))
+        assertEquals(messages.map { it.copy(undelivered = false) }, tablet.getMessages())
+        assertEquals(listOf(story), tablet.getStories(now = 0))
+        assertEquals(listOf(profile), tablet.getProfiles())
         alice.disconnect(); tablet.disconnect()
     }
 }

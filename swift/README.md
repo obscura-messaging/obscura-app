@@ -80,21 +80,23 @@ let userId = await client.userId
 let deviceId = await client.deviceId
 let username = await client.username
 
-let report = try await client.send(
-    to: recipientUserIds, modelKey: modelKey, entryId: entryId,
-    sentAt: timestamp, payload: bytes
+let messages = try await client.getMessages()
+let dmId = try await client.sendMessage(peerUserId: friendUserId, content: "hello")
+let pixId = try await client.sendPix(
+    peerUserId: friendUserId, mediaRef: attachment.id,
+    contentKey: attachment.contentKey.base64EncodedString(),
+    nonce: attachment.nonce.base64EncodedString(),
+    mediaType: "photo", caption: "look", captionMeta: nil, displayDuration: 5
 )
-let rows = try await client.inbox.peek(limit: 50)
-try await client.inbox.consume(rowIds)
-try await client.inbox.discard(rowIds, reason: reason)
-let depth = try await client.inbox.depth()
-try await client.entries.put(model: modelKey, entry: StoredEntry(
-    id: entryId, data: opaqueString, sentAt: timestamp,
-    authorUserId: authorUserId, authorDeviceId: authorDeviceId, localMetadata: metadata
-))
-let entries = try await client.entries.get(model: modelKey, ids: entryIds)
-let all = try await client.entries.all(model: modelKey)
-try await client.entries.erase(model: modelKey, ids: entryIds)
+try await client.markSeen(entryId: pixId)
+let stories = try await client.getStories()
+let storyId = try await client.postStory(
+    content: "story", mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil
+)
+let profiles = try await client.getProfiles()
+try await client.updateProfile(displayName: "Alice", bio: "hi")
+let delivered = try await client.flushOutbox()
+let sweep = try await client.sweepExpired()
 
 try await client.addFriendByCode(code)
 try await client.acceptFriend(friendUserId)
@@ -155,7 +157,7 @@ use ordered `AsyncStream` publication. The kit does not depend on Combine.
 | `ObscuraClient*.swift` | Actor facade, lifecycle, receive and send |
 | `Network/` | REST and gateway WebSocket |
 | `Messaging/` | Signal sessions and per-device submission |
-| `Stores/` | Inbox, entries, friends and device directory |
+| `Stores/` | Content (messages, stories, profiles), friends and device directory |
 | `Storage/` | Pre-release database schema and wipe |
 | `Crypto/` | Signal records, attachments and database key |
 | `Wire/` | Encoding, UUID conversion and typing state |

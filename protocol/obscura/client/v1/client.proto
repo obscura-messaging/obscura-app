@@ -21,15 +21,19 @@ message EncryptedMessage {
 message ClientMessage {
   uint64 timestamp = 1;
 
-  reserved 4, 5;
-  reserved "device_link_approval", "device_announce";
+  reserved 4, 5, 6;
+  reserved "device_link_approval", "device_announce", "app_entry";
 
   oneof payload {
     FriendRequest friend_request = 2;
     FriendAccept friend_accept = 3;
-    AppEntry app_entry = 6;
     TypingSignal typing_signal = 7;
     FriendListSync friend_list_sync = 8;
+    DirectMessage direct_message = 9;
+    PixMessage pix = 10;
+    SeenReceipt seen_receipt = 11;
+    StoryPost story = 12;
+    ProfileUpdate profile = 13;
   }
 }
 
@@ -38,13 +42,6 @@ message FriendRequest {
 }
 
 message FriendAccept {}
-
-message AppEntry {
-  string model = 1;
-  string id = 2;
-  uint64 timestamp = 3;
-  bytes data = 4;
-}
 
 enum TypingState {
   TYPING_STATE_UNSPECIFIED = 0;
@@ -76,6 +73,48 @@ message FriendListSync {
   repeated FriendRecord friends = 2;
 }
 
+message AttachmentPointer {
+  string id = 1;
+  bytes content_key = 2;
+  bytes nonce = 3;
+  string media_type = 4;
+}
+
+message DirectMessage {
+  string id = 1;
+  // Used on self-sync so the sender's other devices know which conversation this belongs to.
+  // Ignored when sender_user_id != self_user_id (the conversation peer is sender_user_id).
+  string peer_user_id = 2;
+  string content = 3;
+}
+
+message PixMessage {
+  string id = 1;
+  string peer_user_id = 2;
+  AttachmentPointer attachment = 3;
+  string caption = 4;
+  string caption_meta = 5;
+  uint32 display_duration_secs = 6;
+}
+
+message SeenReceipt {
+  string entry_id = 1;
+  string peer_user_id = 2;
+  uint64 viewed_at = 3;
+}
+
+message StoryPost {
+  string id = 1;
+  string content = 2;
+  AttachmentPointer attachment = 3;
+  string caption_meta = 4;
+}
+
+message ProfileUpdate {
+  string display_name = 1;
+  string bio = 2;
+}
+
 // Shown by the new device as a QR code: base64url (no padding) of the serialized message.
 message LinkCode {
   // The server's link session id, verbatim.
@@ -103,7 +142,7 @@ message LinkBundle {
   string username = 4;
   uint64 friend_list_version = 5;
   repeated FriendRecord friends = 6;
-  // Absent when the primary's entry store is empty.
+  // Absent when the primary's stores are empty.
   HistorySnapshot history = 7;
 }
 
@@ -117,14 +156,38 @@ message HistorySnapshot {
 }
 
 message EntrySnapshot {
-  repeated SnapshotEntry entries = 1;
+  repeated StoredMessageRecord messages = 1;
+  repeated StoredStoryRecord stories = 2;
+  repeated StoredProfileRecord profiles = 3;
 }
 
-message SnapshotEntry {
-  string model = 1;
-  string id = 2;
-  bytes data = 3;
-  uint64 sent_at = 4;
-  string author_user_id = 5;
-  string author_device_id = 6;
+message StoredMessageRecord {
+  string id = 1;
+  string peer_user_id = 2;
+  string kind = 3;
+  string author_user_id = 4;
+  uint64 sent_at = 5;
+  uint64 viewed_at = 6;
+  string content = 7;
+  AttachmentPointer attachment = 8;
+  string caption = 9;
+  string caption_meta = 10;
+  uint32 display_duration_secs = 11;
+}
+
+message StoredStoryRecord {
+  string id = 1;
+  string author_user_id = 2;
+  uint64 sent_at = 3;
+  string content = 4;
+  AttachmentPointer attachment = 5;
+  string caption_meta = 6;
+}
+
+message StoredProfileRecord {
+  string user_id = 1;
+  string author_device_id = 2;
+  uint64 updated_at = 3;
+  string display_name = 4;
+  string bio = 5;
 }

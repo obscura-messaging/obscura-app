@@ -189,14 +189,6 @@ nonisolated struct Obscura_Client_V1_ClientMessage: Sendable {
     set {payload = .friendAccept(newValue)}
   }
 
-  var appEntry: Obscura_Client_V1_AppEntry {
-    get {
-      if case .appEntry(let v)? = payload {return v}
-      return Obscura_Client_V1_AppEntry()
-    }
-    set {payload = .appEntry(newValue)}
-  }
-
   var typingSignal: Obscura_Client_V1_TypingSignal {
     get {
       if case .typingSignal(let v)? = payload {return v}
@@ -213,14 +205,58 @@ nonisolated struct Obscura_Client_V1_ClientMessage: Sendable {
     set {payload = .friendListSync(newValue)}
   }
 
+  var directMessage: Obscura_Client_V1_DirectMessage {
+    get {
+      if case .directMessage(let v)? = payload {return v}
+      return Obscura_Client_V1_DirectMessage()
+    }
+    set {payload = .directMessage(newValue)}
+  }
+
+  var pix: Obscura_Client_V1_PixMessage {
+    get {
+      if case .pix(let v)? = payload {return v}
+      return Obscura_Client_V1_PixMessage()
+    }
+    set {payload = .pix(newValue)}
+  }
+
+  var seenReceipt: Obscura_Client_V1_SeenReceipt {
+    get {
+      if case .seenReceipt(let v)? = payload {return v}
+      return Obscura_Client_V1_SeenReceipt()
+    }
+    set {payload = .seenReceipt(newValue)}
+  }
+
+  var story: Obscura_Client_V1_StoryPost {
+    get {
+      if case .story(let v)? = payload {return v}
+      return Obscura_Client_V1_StoryPost()
+    }
+    set {payload = .story(newValue)}
+  }
+
+  var profile: Obscura_Client_V1_ProfileUpdate {
+    get {
+      if case .profile(let v)? = payload {return v}
+      return Obscura_Client_V1_ProfileUpdate()
+    }
+    set {payload = .profile(newValue)}
+  }
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   nonisolated enum OneOf_Payload: Equatable, Sendable {
     case friendRequest(Obscura_Client_V1_FriendRequest)
     case friendAccept(Obscura_Client_V1_FriendAccept)
-    case appEntry(Obscura_Client_V1_AppEntry)
     case typingSignal(Obscura_Client_V1_TypingSignal)
     case friendListSync(Obscura_Client_V1_FriendListSync)
+    case directMessage(Obscura_Client_V1_DirectMessage)
+    case pix(Obscura_Client_V1_PixMessage)
+    case seenReceipt(Obscura_Client_V1_SeenReceipt)
+    case story(Obscura_Client_V1_StoryPost)
+    case profile(Obscura_Client_V1_ProfileUpdate)
 
   }
 
@@ -243,24 +279,6 @@ nonisolated struct Obscura_Client_V1_FriendAccept: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
-
-  var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  init() {}
-}
-
-nonisolated struct Obscura_Client_V1_AppEntry: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  var model: String = String()
-
-  var id: String = String()
-
-  var timestamp: UInt64 = 0
-
-  var data: Data = Data()
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -306,6 +324,130 @@ nonisolated struct Obscura_Client_V1_FriendListSync: Sendable {
   var version: UInt64 = 0
 
   var friends: [Obscura_Client_V1_FriendRecord] = []
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Obscura_Client_V1_AttachmentPointer: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var id: String = String()
+
+  var contentKey: Data = Data()
+
+  var nonce: Data = Data()
+
+  var mediaType: String = String()
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Obscura_Client_V1_DirectMessage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var id: String = String()
+
+  /// Used on self-sync so the sender's other devices know which conversation this belongs to.
+  /// Ignored when sender_user_id != self_user_id (the conversation peer is sender_user_id).
+  var peerUserID: String = String()
+
+  var content: String = String()
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Obscura_Client_V1_PixMessage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var id: String = String()
+
+  var peerUserID: String = String()
+
+  var attachment: Obscura_Client_V1_AttachmentPointer {
+    get {_attachment ?? Obscura_Client_V1_AttachmentPointer()}
+    set {_attachment = newValue}
+  }
+  /// Returns true if `attachment` has been explicitly set.
+  var hasAttachment: Bool {self._attachment != nil}
+  /// Clears the value of `attachment`. Subsequent reads from it will return its default value.
+  mutating func clearAttachment() {self._attachment = nil}
+
+  var caption: String = String()
+
+  var captionMeta: String = String()
+
+  var displayDurationSecs: UInt32 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+
+  fileprivate var _attachment: Obscura_Client_V1_AttachmentPointer? = nil
+}
+
+nonisolated struct Obscura_Client_V1_SeenReceipt: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var entryID: String = String()
+
+  var peerUserID: String = String()
+
+  var viewedAt: UInt64 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Obscura_Client_V1_StoryPost: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var id: String = String()
+
+  var content: String = String()
+
+  var attachment: Obscura_Client_V1_AttachmentPointer {
+    get {_attachment ?? Obscura_Client_V1_AttachmentPointer()}
+    set {_attachment = newValue}
+  }
+  /// Returns true if `attachment` has been explicitly set.
+  var hasAttachment: Bool {self._attachment != nil}
+  /// Clears the value of `attachment`. Subsequent reads from it will return its default value.
+  mutating func clearAttachment() {self._attachment = nil}
+
+  var captionMeta: String = String()
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+
+  fileprivate var _attachment: Obscura_Client_V1_AttachmentPointer? = nil
+}
+
+nonisolated struct Obscura_Client_V1_ProfileUpdate: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var displayName: String = String()
+
+  var bio: String = String()
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -369,7 +511,7 @@ nonisolated struct Obscura_Client_V1_LinkBundle: Sendable {
 
   var friends: [Obscura_Client_V1_FriendRecord] = []
 
-  /// Absent when the primary's entry store is empty.
+  /// Absent when the primary's stores are empty.
   var history: Obscura_Client_V1_HistorySnapshot {
     get {_history ?? Obscura_Client_V1_HistorySnapshot()}
     set {_history = newValue}
@@ -410,29 +552,103 @@ nonisolated struct Obscura_Client_V1_EntrySnapshot: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  var entries: [Obscura_Client_V1_SnapshotEntry] = []
+  var messages: [Obscura_Client_V1_StoredMessageRecord] = []
+
+  var stories: [Obscura_Client_V1_StoredStoryRecord] = []
+
+  var profiles: [Obscura_Client_V1_StoredProfileRecord] = []
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   init() {}
 }
 
-nonisolated struct Obscura_Client_V1_SnapshotEntry: Sendable {
+nonisolated struct Obscura_Client_V1_StoredMessageRecord: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  var model: String = String()
-
   var id: String = String()
 
-  var data: Data = Data()
+  var peerUserID: String = String()
 
-  var sentAt: UInt64 = 0
+  var kind: String = String()
 
   var authorUserID: String = String()
 
+  var sentAt: UInt64 = 0
+
+  var viewedAt: UInt64 = 0
+
+  var content: String = String()
+
+  var attachment: Obscura_Client_V1_AttachmentPointer {
+    get {_attachment ?? Obscura_Client_V1_AttachmentPointer()}
+    set {_attachment = newValue}
+  }
+  /// Returns true if `attachment` has been explicitly set.
+  var hasAttachment: Bool {self._attachment != nil}
+  /// Clears the value of `attachment`. Subsequent reads from it will return its default value.
+  mutating func clearAttachment() {self._attachment = nil}
+
+  var caption: String = String()
+
+  var captionMeta: String = String()
+
+  var displayDurationSecs: UInt32 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+
+  fileprivate var _attachment: Obscura_Client_V1_AttachmentPointer? = nil
+}
+
+nonisolated struct Obscura_Client_V1_StoredStoryRecord: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var id: String = String()
+
+  var authorUserID: String = String()
+
+  var sentAt: UInt64 = 0
+
+  var content: String = String()
+
+  var attachment: Obscura_Client_V1_AttachmentPointer {
+    get {_attachment ?? Obscura_Client_V1_AttachmentPointer()}
+    set {_attachment = newValue}
+  }
+  /// Returns true if `attachment` has been explicitly set.
+  var hasAttachment: Bool {self._attachment != nil}
+  /// Clears the value of `attachment`. Subsequent reads from it will return its default value.
+  mutating func clearAttachment() {self._attachment = nil}
+
+  var captionMeta: String = String()
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+
+  fileprivate var _attachment: Obscura_Client_V1_AttachmentPointer? = nil
+}
+
+nonisolated struct Obscura_Client_V1_StoredProfileRecord: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var userID: String = String()
+
   var authorDeviceID: String = String()
+
+  var updatedAt: UInt64 = 0
+
+  var displayName: String = String()
+
+  var bio: String = String()
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -492,7 +708,7 @@ nonisolated extension Obscura_Client_V1_EncryptedMessage.TypeEnum: SwiftProtobuf
 
 nonisolated extension Obscura_Client_V1_ClientMessage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ClientMessage"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}timestamp\0\u{3}friend_request\0\u{3}friend_accept\0\u{4}\u{3}app_entry\0\u{3}typing_signal\0\u{3}friend_list_sync\0\u{b}device_link_approval\0\u{b}device_announce\0\u{c}\u{4}\u{1}\u{c}\u{5}\u{1}")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}timestamp\0\u{3}friend_request\0\u{3}friend_accept\0\u{4}\u{4}typing_signal\0\u{3}friend_list_sync\0\u{3}direct_message\0\u{1}pix\0\u{3}seen_receipt\0\u{1}story\0\u{1}profile\0\u{b}device_link_approval\0\u{b}device_announce\0\u{b}app_entry\0\u{c}\u{4}\u{1}\u{c}\u{5}\u{1}\u{c}\u{6}\u{1}")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -527,19 +743,6 @@ nonisolated extension Obscura_Client_V1_ClientMessage: SwiftProtobuf.Message, Sw
           self.payload = .friendAccept(v)
         }
       }()
-      case 6: try {
-        var v: Obscura_Client_V1_AppEntry?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .appEntry(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .appEntry(v)
-        }
-      }()
       case 7: try {
         var v: Obscura_Client_V1_TypingSignal?
         var hadOneofValue = false
@@ -566,6 +769,71 @@ nonisolated extension Obscura_Client_V1_ClientMessage: SwiftProtobuf.Message, Sw
           self.payload = .friendListSync(v)
         }
       }()
+      case 9: try {
+        var v: Obscura_Client_V1_DirectMessage?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .directMessage(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .directMessage(v)
+        }
+      }()
+      case 10: try {
+        var v: Obscura_Client_V1_PixMessage?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .pix(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .pix(v)
+        }
+      }()
+      case 11: try {
+        var v: Obscura_Client_V1_SeenReceipt?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .seenReceipt(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .seenReceipt(v)
+        }
+      }()
+      case 12: try {
+        var v: Obscura_Client_V1_StoryPost?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .story(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .story(v)
+        }
+      }()
+      case 13: try {
+        var v: Obscura_Client_V1_ProfileUpdate?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .profile(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .profile(v)
+        }
+      }()
       default: break
       }
     }
@@ -588,10 +856,6 @@ nonisolated extension Obscura_Client_V1_ClientMessage: SwiftProtobuf.Message, Sw
       guard case .friendAccept(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
     }()
-    case .appEntry?: try {
-      guard case .appEntry(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
-    }()
     case .typingSignal?: try {
       guard case .typingSignal(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
@@ -599,6 +863,26 @@ nonisolated extension Obscura_Client_V1_ClientMessage: SwiftProtobuf.Message, Sw
     case .friendListSync?: try {
       guard case .friendListSync(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+    }()
+    case .directMessage?: try {
+      guard case .directMessage(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+    }()
+    case .pix?: try {
+      guard case .pix(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
+    }()
+    case .seenReceipt?: try {
+      guard case .seenReceipt(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+    }()
+    case .story?: try {
+      guard case .story(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
+    }()
+    case .profile?: try {
+      guard case .profile(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
     }()
     case nil: break
     }
@@ -657,51 +941,6 @@ nonisolated extension Obscura_Client_V1_FriendAccept: SwiftProtobuf.Message, Swi
   }
 
   static func ==(lhs: Obscura_Client_V1_FriendAccept, rhs: Obscura_Client_V1_FriendAccept) -> Bool {
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Obscura_Client_V1_AppEntry: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  static let protoMessageName: String = _protobuf_package + ".AppEntry"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0\u{1}id\0\u{1}timestamp\0\u{1}data\0")
-
-  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.model) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.id) }()
-      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.timestamp) }()
-      case 4: try { try decoder.decodeSingularBytesField(value: &self.data) }()
-      default: break
-      }
-    }
-  }
-
-  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.model.isEmpty {
-      try visitor.visitSingularStringField(value: self.model, fieldNumber: 1)
-    }
-    if !self.id.isEmpty {
-      try visitor.visitSingularStringField(value: self.id, fieldNumber: 2)
-    }
-    if self.timestamp != 0 {
-      try visitor.visitSingularUInt64Field(value: self.timestamp, fieldNumber: 3)
-    }
-    if !self.data.isEmpty {
-      try visitor.visitSingularBytesField(value: self.data, fieldNumber: 4)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  static func ==(lhs: Obscura_Client_V1_AppEntry, rhs: Obscura_Client_V1_AppEntry) -> Bool {
-    if lhs.model != rhs.model {return false}
-    if lhs.id != rhs.id {return false}
-    if lhs.timestamp != rhs.timestamp {return false}
-    if lhs.data != rhs.data {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -812,6 +1051,248 @@ nonisolated extension Obscura_Client_V1_FriendListSync: SwiftProtobuf.Message, S
   static func ==(lhs: Obscura_Client_V1_FriendListSync, rhs: Obscura_Client_V1_FriendListSync) -> Bool {
     if lhs.version != rhs.version {return false}
     if lhs.friends != rhs.friends {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Obscura_Client_V1_AttachmentPointer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".AttachmentPointer"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}content_key\0\u{1}nonce\0\u{3}media_type\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularBytesField(value: &self.contentKey) }()
+      case 3: try { try decoder.decodeSingularBytesField(value: &self.nonce) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.mediaType) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if !self.contentKey.isEmpty {
+      try visitor.visitSingularBytesField(value: self.contentKey, fieldNumber: 2)
+    }
+    if !self.nonce.isEmpty {
+      try visitor.visitSingularBytesField(value: self.nonce, fieldNumber: 3)
+    }
+    if !self.mediaType.isEmpty {
+      try visitor.visitSingularStringField(value: self.mediaType, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Obscura_Client_V1_AttachmentPointer, rhs: Obscura_Client_V1_AttachmentPointer) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.contentKey != rhs.contentKey {return false}
+    if lhs.nonce != rhs.nonce {return false}
+    if lhs.mediaType != rhs.mediaType {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Obscura_Client_V1_DirectMessage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".DirectMessage"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}peer_user_id\0\u{1}content\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.peerUserID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.content) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if !self.peerUserID.isEmpty {
+      try visitor.visitSingularStringField(value: self.peerUserID, fieldNumber: 2)
+    }
+    if !self.content.isEmpty {
+      try visitor.visitSingularStringField(value: self.content, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Obscura_Client_V1_DirectMessage, rhs: Obscura_Client_V1_DirectMessage) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.peerUserID != rhs.peerUserID {return false}
+    if lhs.content != rhs.content {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Obscura_Client_V1_PixMessage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".PixMessage"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}peer_user_id\0\u{1}attachment\0\u{1}caption\0\u{3}caption_meta\0\u{3}display_duration_secs\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.peerUserID) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._attachment) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.caption) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.captionMeta) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.displayDurationSecs) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if !self.peerUserID.isEmpty {
+      try visitor.visitSingularStringField(value: self.peerUserID, fieldNumber: 2)
+    }
+    try { if let v = self._attachment {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    if !self.caption.isEmpty {
+      try visitor.visitSingularStringField(value: self.caption, fieldNumber: 4)
+    }
+    if !self.captionMeta.isEmpty {
+      try visitor.visitSingularStringField(value: self.captionMeta, fieldNumber: 5)
+    }
+    if self.displayDurationSecs != 0 {
+      try visitor.visitSingularUInt32Field(value: self.displayDurationSecs, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Obscura_Client_V1_PixMessage, rhs: Obscura_Client_V1_PixMessage) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.peerUserID != rhs.peerUserID {return false}
+    if lhs._attachment != rhs._attachment {return false}
+    if lhs.caption != rhs.caption {return false}
+    if lhs.captionMeta != rhs.captionMeta {return false}
+    if lhs.displayDurationSecs != rhs.displayDurationSecs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Obscura_Client_V1_SeenReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".SeenReceipt"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}entry_id\0\u{3}peer_user_id\0\u{3}viewed_at\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.entryID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.peerUserID) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.viewedAt) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.entryID.isEmpty {
+      try visitor.visitSingularStringField(value: self.entryID, fieldNumber: 1)
+    }
+    if !self.peerUserID.isEmpty {
+      try visitor.visitSingularStringField(value: self.peerUserID, fieldNumber: 2)
+    }
+    if self.viewedAt != 0 {
+      try visitor.visitSingularUInt64Field(value: self.viewedAt, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Obscura_Client_V1_SeenReceipt, rhs: Obscura_Client_V1_SeenReceipt) -> Bool {
+    if lhs.entryID != rhs.entryID {return false}
+    if lhs.peerUserID != rhs.peerUserID {return false}
+    if lhs.viewedAt != rhs.viewedAt {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Obscura_Client_V1_StoryPost: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".StoryPost"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}content\0\u{1}attachment\0\u{3}caption_meta\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.content) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._attachment) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.captionMeta) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if !self.content.isEmpty {
+      try visitor.visitSingularStringField(value: self.content, fieldNumber: 2)
+    }
+    try { if let v = self._attachment {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    if !self.captionMeta.isEmpty {
+      try visitor.visitSingularStringField(value: self.captionMeta, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Obscura_Client_V1_StoryPost, rhs: Obscura_Client_V1_StoryPost) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.content != rhs.content {return false}
+    if lhs._attachment != rhs._attachment {return false}
+    if lhs.captionMeta != rhs.captionMeta {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Obscura_Client_V1_ProfileUpdate: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".ProfileUpdate"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}display_name\0\u{1}bio\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.displayName) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.bio) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.displayName.isEmpty {
+      try visitor.visitSingularStringField(value: self.displayName, fieldNumber: 1)
+    }
+    if !self.bio.isEmpty {
+      try visitor.visitSingularStringField(value: self.bio, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Obscura_Client_V1_ProfileUpdate, rhs: Obscura_Client_V1_ProfileUpdate) -> Bool {
+    if lhs.displayName != rhs.displayName {return false}
+    if lhs.bio != rhs.bio {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1003,84 +1484,212 @@ nonisolated extension Obscura_Client_V1_HistorySnapshot: SwiftProtobuf.Message, 
 
 nonisolated extension Obscura_Client_V1_EntrySnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".EntrySnapshot"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}entries\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}messages\0\u{1}stories\0\u{1}profiles\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.entries) }()
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.messages) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.stories) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.profiles) }()
       default: break
       }
     }
   }
 
   func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.entries.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.entries, fieldNumber: 1)
+    if !self.messages.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.messages, fieldNumber: 1)
+    }
+    if !self.stories.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.stories, fieldNumber: 2)
+    }
+    if !self.profiles.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.profiles, fieldNumber: 3)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   static func ==(lhs: Obscura_Client_V1_EntrySnapshot, rhs: Obscura_Client_V1_EntrySnapshot) -> Bool {
-    if lhs.entries != rhs.entries {return false}
+    if lhs.messages != rhs.messages {return false}
+    if lhs.stories != rhs.stories {return false}
+    if lhs.profiles != rhs.profiles {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
 }
 
-nonisolated extension Obscura_Client_V1_SnapshotEntry: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  static let protoMessageName: String = _protobuf_package + ".SnapshotEntry"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0\u{1}id\0\u{1}data\0\u{3}sent_at\0\u{3}author_user_id\0\u{3}author_device_id\0")
+nonisolated extension Obscura_Client_V1_StoredMessageRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".StoredMessageRecord"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}peer_user_id\0\u{1}kind\0\u{3}author_user_id\0\u{3}sent_at\0\u{3}viewed_at\0\u{1}content\0\u{1}attachment\0\u{1}caption\0\u{3}caption_meta\0\u{3}display_duration_secs\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.model) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.id) }()
-      case 3: try { try decoder.decodeSingularBytesField(value: &self.data) }()
-      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.sentAt) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.authorUserID) }()
-      case 6: try { try decoder.decodeSingularStringField(value: &self.authorDeviceID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.peerUserID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.kind) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.authorUserID) }()
+      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.sentAt) }()
+      case 6: try { try decoder.decodeSingularUInt64Field(value: &self.viewedAt) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.content) }()
+      case 8: try { try decoder.decodeSingularMessageField(value: &self._attachment) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.caption) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.captionMeta) }()
+      case 11: try { try decoder.decodeSingularUInt32Field(value: &self.displayDurationSecs) }()
       default: break
       }
     }
   }
 
   func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.model.isEmpty {
-      try visitor.visitSingularStringField(value: self.model, fieldNumber: 1)
-    }
     if !self.id.isEmpty {
-      try visitor.visitSingularStringField(value: self.id, fieldNumber: 2)
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
     }
-    if !self.data.isEmpty {
-      try visitor.visitSingularBytesField(value: self.data, fieldNumber: 3)
+    if !self.peerUserID.isEmpty {
+      try visitor.visitSingularStringField(value: self.peerUserID, fieldNumber: 2)
     }
-    if self.sentAt != 0 {
-      try visitor.visitSingularUInt64Field(value: self.sentAt, fieldNumber: 4)
+    if !self.kind.isEmpty {
+      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 3)
     }
     if !self.authorUserID.isEmpty {
-      try visitor.visitSingularStringField(value: self.authorUserID, fieldNumber: 5)
+      try visitor.visitSingularStringField(value: self.authorUserID, fieldNumber: 4)
     }
-    if !self.authorDeviceID.isEmpty {
-      try visitor.visitSingularStringField(value: self.authorDeviceID, fieldNumber: 6)
+    if self.sentAt != 0 {
+      try visitor.visitSingularUInt64Field(value: self.sentAt, fieldNumber: 5)
+    }
+    if self.viewedAt != 0 {
+      try visitor.visitSingularUInt64Field(value: self.viewedAt, fieldNumber: 6)
+    }
+    if !self.content.isEmpty {
+      try visitor.visitSingularStringField(value: self.content, fieldNumber: 7)
+    }
+    try { if let v = self._attachment {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+    } }()
+    if !self.caption.isEmpty {
+      try visitor.visitSingularStringField(value: self.caption, fieldNumber: 9)
+    }
+    if !self.captionMeta.isEmpty {
+      try visitor.visitSingularStringField(value: self.captionMeta, fieldNumber: 10)
+    }
+    if self.displayDurationSecs != 0 {
+      try visitor.visitSingularUInt32Field(value: self.displayDurationSecs, fieldNumber: 11)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  static func ==(lhs: Obscura_Client_V1_SnapshotEntry, rhs: Obscura_Client_V1_SnapshotEntry) -> Bool {
-    if lhs.model != rhs.model {return false}
+  static func ==(lhs: Obscura_Client_V1_StoredMessageRecord, rhs: Obscura_Client_V1_StoredMessageRecord) -> Bool {
     if lhs.id != rhs.id {return false}
-    if lhs.data != rhs.data {return false}
-    if lhs.sentAt != rhs.sentAt {return false}
+    if lhs.peerUserID != rhs.peerUserID {return false}
+    if lhs.kind != rhs.kind {return false}
     if lhs.authorUserID != rhs.authorUserID {return false}
+    if lhs.sentAt != rhs.sentAt {return false}
+    if lhs.viewedAt != rhs.viewedAt {return false}
+    if lhs.content != rhs.content {return false}
+    if lhs._attachment != rhs._attachment {return false}
+    if lhs.caption != rhs.caption {return false}
+    if lhs.captionMeta != rhs.captionMeta {return false}
+    if lhs.displayDurationSecs != rhs.displayDurationSecs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Obscura_Client_V1_StoredStoryRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".StoredStoryRecord"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}author_user_id\0\u{3}sent_at\0\u{1}content\0\u{1}attachment\0\u{3}caption_meta\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.authorUserID) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.sentAt) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.content) }()
+      case 5: try { try decoder.decodeSingularMessageField(value: &self._attachment) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.captionMeta) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if !self.authorUserID.isEmpty {
+      try visitor.visitSingularStringField(value: self.authorUserID, fieldNumber: 2)
+    }
+    if self.sentAt != 0 {
+      try visitor.visitSingularUInt64Field(value: self.sentAt, fieldNumber: 3)
+    }
+    if !self.content.isEmpty {
+      try visitor.visitSingularStringField(value: self.content, fieldNumber: 4)
+    }
+    try { if let v = self._attachment {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    } }()
+    if !self.captionMeta.isEmpty {
+      try visitor.visitSingularStringField(value: self.captionMeta, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Obscura_Client_V1_StoredStoryRecord, rhs: Obscura_Client_V1_StoredStoryRecord) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.authorUserID != rhs.authorUserID {return false}
+    if lhs.sentAt != rhs.sentAt {return false}
+    if lhs.content != rhs.content {return false}
+    if lhs._attachment != rhs._attachment {return false}
+    if lhs.captionMeta != rhs.captionMeta {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Obscura_Client_V1_StoredProfileRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".StoredProfileRecord"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}user_id\0\u{3}author_device_id\0\u{3}updated_at\0\u{3}display_name\0\u{1}bio\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.userID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.authorDeviceID) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.updatedAt) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.displayName) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.bio) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.userID.isEmpty {
+      try visitor.visitSingularStringField(value: self.userID, fieldNumber: 1)
+    }
+    if !self.authorDeviceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.authorDeviceID, fieldNumber: 2)
+    }
+    if self.updatedAt != 0 {
+      try visitor.visitSingularUInt64Field(value: self.updatedAt, fieldNumber: 3)
+    }
+    if !self.displayName.isEmpty {
+      try visitor.visitSingularStringField(value: self.displayName, fieldNumber: 4)
+    }
+    if !self.bio.isEmpty {
+      try visitor.visitSingularStringField(value: self.bio, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Obscura_Client_V1_StoredProfileRecord, rhs: Obscura_Client_V1_StoredProfileRecord) -> Bool {
+    if lhs.userID != rhs.userID {return false}
     if lhs.authorDeviceID != rhs.authorDeviceID {return false}
+    if lhs.updatedAt != rhs.updatedAt {return false}
+    if lhs.displayName != rhs.displayName {return false}
+    if lhs.bio != rhs.bio {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -1,8 +1,26 @@
-import { conversationId } from './audience';
-import type { ScreenEntry } from './expiry';
 import type { Friend } from './friends';
 
-type ConversationEntry = ScreenEntry<{ conversationId: string }>;
+export interface ConversationItem {
+  id: string;
+  peerUserId: string;
+  kind: 'message' | 'pix';
+  authorUserId: string;
+  sentAt: number;
+  viewedAt: number | null;
+  content: string;
+  mediaRef: string | null;
+  contentKey: string | null;
+  nonce: string | null;
+  mediaType: string | null;
+  caption: string | null;
+  captionMeta: string | null;
+  displayDuration: number;
+}
+
+/** Canonical two-party conversation id: both user ids, sorted, joined by `_`. */
+export function conversationId(userIdA: string, userIdB: string): string {
+  return [userIdA, userIdB].sort().join('_');
+}
 
 /** How a pix looks from this user's side of the conversation. */
 export type PixStatus = 'received_new' | 'received_viewed' | 'sent_pending' | 'sent_opened';
@@ -21,8 +39,14 @@ export type PixBadge =
   | { readonly kind: 'opened' }
   | null;
 
-export type ChatTimelineItem<M extends ConversationEntry> =
-  | (M & { readonly kind: 'message' })
+export type ChatTimelineItem =
+  | {
+      readonly kind: 'message';
+      readonly id: string;
+      readonly sentAt: number;
+      readonly authorUserId: string;
+      readonly content: string;
+    }
   | {
       readonly kind: 'pix';
       readonly id: string;
@@ -31,9 +55,12 @@ export type ChatTimelineItem<M extends ConversationEntry> =
       readonly status: ActivePixStatus;
     };
 
-/** Entries of one conversation, oldest first. */
-export function conversationEntries<E extends ConversationEntry>(entries: readonly E[], convId: string): E[] {
-  return entries.filter((e) => e.data.conversationId === convId).sort((a, b) => a.sentAt - b.sentAt);
+/** Items of one peer conversation, oldest first. */
+export function conversationItems<T extends { peerUserId: string; sentAt: number }>(
+  items: readonly T[],
+  friendUserId: string,
+): T[] {
+  return items.filter((item) => item.peerUserId === friendUserId).sort((a, b) => a.sentAt - b.sentAt);
 }
 
 /**
@@ -43,35 +70,38 @@ export function conversationEntries<E extends ConversationEntry>(entries: readon
  * - Pix timeline items carry only metadata (`id`, `sentAt`, `authorUserId`, `status`), never the
  *   viewer payload (`caption`, `mediaRef`, etc.), making caption leaks in chat impossible.
  */
-export function chatTimeline<M extends ConversationEntry, P extends ConversationEntry>(
-  messages: readonly M[],
-  pix: readonly P[],
-  convId: string,
+export function chatTimeline(
+  items: readonly ConversationItem[],
+  friendUserId: string,
   myUserId: string,
-): ChatTimelineItem<M>[] {
-  const msgItems: ChatTimelineItem<M>[] = conversationEntries(messages, convId).map((m) => ({
-    ...m,
-    kind: 'message' as const,
-  }));
-  const pixItems: ChatTimelineItem<M>[] = conversationEntries(pix, convId).flatMap((p) => {
-    const status = pixStatus(p, myUserId);
+): ChatTimelineItem[] {
+  return conversationItems(items, friendUserId).flatMap((item): ChatTimelineItem[] => {
+    if (item.kind === 'message') {
+      return [{
+        kind: 'message',
+        id: item.id,
+        sentAt: item.sentAt,
+        authorUserId: item.authorUserId,
+        content: item.content,
+      }];
+    }
+    const status = pixStatus(item, myUserId);
     if (status === 'received_viewed') return [];
     return [{
-      kind: 'pix' as const,
-      id: p.id,
-      sentAt: p.sentAt,
-      authorUserId: p.authorUserId,
+      kind: 'pix',
+      id: item.id,
+      sentAt: item.sentAt,
+      authorUserId: item.authorUserId,
       status,
     }];
   });
-  return [...msgItems, ...pixItems].sort((a, b) => a.sentAt - b.sentAt);
 }
 
-export interface FriendActivity<M, P> {
+export interface FriendActivity {
   friend: Friend;
-  lastMessage: M | undefined;
+  lastMessage: ConversationItem | undefined;
   /** Received pix not yet seen, oldest first. */
-  unopenedPix: P[];
+  unopenedPix: ConversationItem[];
   /** The status of the newest pix either way, if any. */
   latestPix: PixStatus | undefined;
   /** When anything last happened in the conversation, or 0. */
@@ -88,18 +118,18 @@ export function pixBadgeFor(unopenedCount: number, latestPix: PixStatus | undefi
 }
 
 /** Each friend's conversation summary, most recently active first. */
-export function friendActivities<M extends ConversationEntry, P extends ConversationEntry>(
+export function friendActivities(
   friends: readonly Friend[],
   myUserId: string,
-  messages: readonly M[],
-  pix: readonly P[],
-): FriendActivity<M, P>[] {
+  items: readonly ConversationItem[],
+): FriendActivity[] {
   return friends.map((friend) => {
-    const convId = conversationId(myUserId, friend.userId);
-    const lastMessage = conversationEntries(messages, convId).at(-1);
-    const conversationPix = conversationEntries(pix, convId);
-    const latest = conversationPix.at(-1);
-    const unopenedPix = conversationPix.filter((p) => pixStatus(p, myUserId) === 'received_new');
+    const peerItems = conversationItems(items, friend.userId);
+    const messages = peerItems.filter((item) => item.kind === 'message');
+    const pix = peerItems.filter((item) => item.kind === 'pix');
+    const lastMessage = messages.at(-1);
+    const latest = pix.at(-1);
+    const unopenedPix = pix.filter((p) => pixStatus(p, myUserId) === 'received_new');
     const latestPix = latest && pixStatus(latest, myUserId);
     return {
       friend,
@@ -114,7 +144,7 @@ export function friendActivities<M extends ConversationEntry, P extends Conversa
 
 /** Subtitle and emphasis for a conversation row in the chat list. */
 export function activityPreview(
-  activity: FriendActivity<{ authorUserId: string; sentAt: number; data: Record<string, unknown> }, unknown>,
+  activity: FriendActivity,
   myUserId: string,
 ): { text: string; highlight: boolean } {
   const unopened = activity.unopenedPix.length;
@@ -125,7 +155,7 @@ export function activityPreview(
     };
   }
   const msg = activity.lastMessage;
-  const content = typeof msg?.data.content === 'string' ? msg.data.content : '';
+  const content = msg?.content ?? '';
   if (msg && msg.sentAt >= activity.latestAt && content !== '') {
     return {
       text: `${msg.authorUserId === myUserId ? 'You: ' : ''}${content}`,
@@ -140,9 +170,9 @@ export function activityPreview(
     case 'received_viewed':
       return { text: 'Pix viewed', highlight: false };
     default:
-      if (content !== '') {
+      if (msg && content !== '') {
         return {
-          text: `${msg!.authorUserId === myUserId ? 'You: ' : ''}${content}`,
+          text: `${msg.authorUserId === myUserId ? 'You: ' : ''}${content}`,
           highlight: false,
         };
       }

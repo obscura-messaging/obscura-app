@@ -35,31 +35,65 @@ class WireConformanceTest {
         }
 
         forEach(v.getJSONArray("roundTrip")) { c ->
-            tests.add(dyn(c.getString("name")) { roundTrip(c.getJSONObject("appEntry")) })
+            tests.add(dyn(c.getString("name")) { roundTrip(c) })
         }
 
         return tests
     }
 
-    private fun roundTrip(ms: JSONObject) {
-        val model = ms.getString("model")
-        val id = ms.getString("id")
-        val ts = ms.getLong("timestamp")
-        val dataMap = ms.getJSONObject("data").toMap()
-
-        val proto = Client.AppEntry.newBuilder()
-            .setModel(model)
-            .setId(id)
-            .setTimestamp(ts)
-            .setData(ByteString.copyFrom(JSONObject(dataMap).toString().toByteArray()))
-            .build()
-
-        val decoded = Client.AppEntry.parseFrom(proto.toByteArray())
-
-        assertEquals(model, decoded.model, "model")
-        assertEquals(id, decoded.id, "id")
-        assertEquals(ts, decoded.timestamp, "timestamp")
-        assertEquals(dataMap, JSONObject(String(decoded.data.toByteArray())).toMap(), "data value")
+    private fun roundTrip(case: JSONObject) {
+        when {
+            case.has("directMessage") -> {
+                val dm = case.getJSONObject("directMessage")
+                val proto = Client.ClientMessage.newBuilder()
+                    .setTimestamp(dm.getLong("timestamp"))
+                    .setDirectMessage(
+                        Client.DirectMessage.newBuilder()
+                            .setId(dm.getString("id"))
+                            .setPeerUserId(dm.getString("peerUserId"))
+                            .setContent(dm.getString("content")),
+                    )
+                    .build()
+                val decoded = Client.ClientMessage.parseFrom(proto.toByteArray())
+                assertEquals(dm.getLong("timestamp"), decoded.timestamp, "timestamp")
+                assertEquals(dm.getString("id"), decoded.directMessage.id, "id")
+                assertEquals(dm.getString("peerUserId"), decoded.directMessage.peerUserId, "peerUserId")
+                assertEquals(dm.getString("content"), decoded.directMessage.content, "content")
+            }
+            case.has("pix") -> {
+                val px = case.getJSONObject("pix")
+                val proto = Client.ClientMessage.newBuilder()
+                    .setTimestamp(px.getLong("timestamp"))
+                    .setPix(
+                        Client.PixMessage.newBuilder()
+                            .setId(px.getString("id"))
+                            .setPeerUserId(px.getString("peerUserId"))
+                            .setAttachment(
+                                Client.AttachmentPointer.newBuilder()
+                                    .setId(px.getString("attachmentId"))
+                                    .setContentKey(ByteString.copyFrom(px.getString("contentKey").hex()))
+                                    .setNonce(ByteString.copyFrom(px.getString("nonce").hex()))
+                                    .setMediaType(px.getString("mediaType")),
+                            )
+                            .setCaption(px.getString("caption"))
+                            .setCaptionMeta(px.getString("captionMeta"))
+                            .setDisplayDurationSecs(px.getInt("displayDurationSecs")),
+                    )
+                    .build()
+                val decoded = Client.ClientMessage.parseFrom(proto.toByteArray())
+                assertEquals(px.getLong("timestamp"), decoded.timestamp, "timestamp")
+                assertEquals(px.getString("id"), decoded.pix.id, "id")
+                assertEquals(px.getString("peerUserId"), decoded.pix.peerUserId, "peerUserId")
+                assertEquals(px.getString("attachmentId"), decoded.pix.attachment.id, "attachmentId")
+                assertEquals(px.getString("contentKey"), decoded.pix.attachment.contentKey.toByteArray().hex(), "contentKey")
+                assertEquals(px.getString("nonce"), decoded.pix.attachment.nonce.toByteArray().hex(), "nonce")
+                assertEquals(px.getString("mediaType"), decoded.pix.attachment.mediaType, "mediaType")
+                assertEquals(px.getString("caption"), decoded.pix.caption, "caption")
+                assertEquals(px.getString("captionMeta"), decoded.pix.captionMeta, "captionMeta")
+                assertEquals(px.getInt("displayDurationSecs"), decoded.pix.displayDurationSecs, "displayDurationSecs")
+            }
+            else -> error("unexpected roundTrip case: $case")
+        }
     }
 
     private fun dyn(name: String, exec: () -> Unit) = DynamicTest.dynamicTest(name, exec)

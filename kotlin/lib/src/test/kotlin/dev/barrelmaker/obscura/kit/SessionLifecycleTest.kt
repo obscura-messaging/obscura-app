@@ -166,11 +166,15 @@ class SessionLifecycleTest {
         assertNull(c.userId)
         assertEquals(ConnectionState.DISCONNECTED, c.connectionState.value)
         assertEquals(emptyList<String>(), c.observeTyping("ctx").first())
-        c.entries.put("m", dev.barrelmaker.obscura.kit.stores.StoredEntry("e", "kept", 1, SELF_USER_ID, SELF_DEVICE_ID))
+        c.content.putConversation(
+            dev.barrelmaker.obscura.kit.stores.ConversationItemData(
+                "e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), "kept",
+            ),
+        )
         val wipeError = runCatching { c.wipeDevice() }.exceptionOrNull()
         assertTrue(wipeError is ObscuraError.StorageFailed)
         assertSame(storage.cause, wipeError!!.cause)
-        assertEquals("kept", c.entries.all("m").single().data)
+        assertEquals("kept", c.getMessages().single().content)
     }
 
     @Test fun `late refresh success cannot resurrect logout or overwrite durable storage`() = runBlocking {
@@ -229,7 +233,7 @@ class SessionLifecycleTest {
         Unit
     }
 
-    @Test fun `a device wipe erases opaque content from the database and truncates the WAL`() = runBlocking {
+    @Test fun `a device wipe erases content from the database and truncates the WAL`() = runBlocking {
         val dir = java.io.File("build/test-databases/wipe-${java.util.UUID.randomUUID()}").also { it.mkdirs() }
         val file = java.io.File(dir, "wipe.db")
         val driver = app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver("jdbc:sqlite:${file.absolutePath}")
@@ -237,13 +241,17 @@ class SessionLifecycleTest {
         driver.pragma("PRAGMA journal_mode = WAL")
         val c = ObscuraClient(ObscuraConfig(url, "test"), driver, MemoryStorage())
         val secret = "DEVICE-WIPE-SECRET-83a10"
-        c.entries.put("m", dev.barrelmaker.obscura.kit.stores.StoredEntry("e", secret, 1, SELF_USER_ID, SELF_DEVICE_ID))
+        c.content.putConversation(
+            dev.barrelmaker.obscura.kit.stores.ConversationItemData(
+                "e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), secret,
+            ),
+        )
         fun onDisk() = listOf(file, java.io.File("${file.absolutePath}-wal")).filter { it.exists() }
             .any { String(it.readBytes(), Charsets.ISO_8859_1).contains(secret) }
         assertTrue(onDisk())
         c.wipeDevice()
         assertFalse(onDisk())
-        assertTrue(c.entries.all("m").isEmpty())
+        assertTrue(c.getMessages().isEmpty())
         driver.close()
         dir.deleteRecursively()
         Unit

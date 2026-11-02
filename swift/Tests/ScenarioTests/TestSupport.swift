@@ -123,9 +123,15 @@ final class TestUser: @unchecked Sendable {
         }
     }
 
-    func waitForEntry(_ entryId: String) async throws -> InboxRecord {
-        try await eventually("\(username) inboxes \(entryId)") {
-            try await client.inbox.peek(limit: 500).first { $0.entryId == entryId }
+    func waitForEntry(_ entryId: String) async throws -> ConversationItem {
+        try await eventually("\(username) receives \(entryId)") {
+            try await client.getMessages().first { $0.id == entryId }
+        }
+    }
+
+    func waitForStory(_ storyId: String) async throws -> StoryItem {
+        try await eventually("\(username) receives story \(storyId)") {
+            try await client.getStories().first { $0.id == storyId }
         }
     }
 
@@ -134,10 +140,13 @@ final class TestUser: @unchecked Sendable {
     }
 
     @discardableResult
-    func send(_ entryId: String, to recipients: [TestUser], model: String = "testModel",
-              payload: Data = Data("hello".utf8)) async throws -> SendReport {
-        try await client.send(to: recipients.map(\.userId), modelKey: model, entryId: entryId,
-                              sentAt: UInt64(Date().timeIntervalSince1970 * 1000), payload: payload)
+    func send(_ entryId: String, to recipients: [TestUser], content: String = "hello") async throws -> SendReport {
+        var message = Obscura_Client_V1_ClientMessage()
+        message.timestamp = UInt64(Date().timeIntervalSince1970 * 1000)
+        message.directMessage.id = entryId
+        message.directMessage.peerUserID = recipients.first?.userId ?? "peer-user"
+        message.directMessage.content = content
+        return try await client.send(message, to: recipients.map(\.userId))
     }
 
     func sendRaw(_ message: Obscura_Client_V1_ClientMessage, to user: TestUser) async throws {

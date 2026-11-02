@@ -7,6 +7,8 @@ import dev.barrelmaker.obscura.kit.crypto.AttachmentCrypto
 import dev.barrelmaker.obscura.kit.crypto.LinkCrypto
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
 import dev.barrelmaker.obscura.kit.crypto.UuidCodec
+import dev.barrelmaker.obscura.kit.crypto.fromBase64
+import dev.barrelmaker.obscura.kit.crypto.toBase64
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import dev.barrelmaker.obscura.kit.managers.AuthManager
 import dev.barrelmaker.obscura.kit.managers.Credentials
@@ -16,18 +18,22 @@ import dev.barrelmaker.obscura.kit.managers.TokenStatus
 import dev.barrelmaker.obscura.kit.messaging.Messenger
 import dev.barrelmaker.obscura.kit.network.APIClient
 import dev.barrelmaker.obscura.kit.network.GatewayConnection
-import dev.barrelmaker.obscura.kit.network.OwnDevice
 import dev.barrelmaker.obscura.kit.persistence.SessionStorage
+import dev.barrelmaker.obscura.kit.stores.ContentStore
+import dev.barrelmaker.obscura.kit.stores.ConversationItemData
 import dev.barrelmaker.obscura.kit.stores.DeviceStore
-import dev.barrelmaker.obscura.kit.stores.EntryStore
+import dev.barrelmaker.obscura.kit.stores.EXPIRE_AFTER_VIEW_MS
 import dev.barrelmaker.obscura.kit.stores.FriendData
 import dev.barrelmaker.obscura.kit.stores.FriendList
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import dev.barrelmaker.obscura.kit.stores.FriendStore
-import dev.barrelmaker.obscura.kit.stores.InboxInsert
-import dev.barrelmaker.obscura.kit.stores.InboxStore
 import dev.barrelmaker.obscura.kit.stores.LocalDevice
-import dev.barrelmaker.obscura.kit.stores.StoredEntry
+import dev.barrelmaker.obscura.kit.stores.MAX_EPHEMERAL_AGE_MS
+import dev.barrelmaker.obscura.kit.stores.ProfileItemData
+import dev.barrelmaker.obscura.kit.stores.STORY_MAX_AGE_MS
+import dev.barrelmaker.obscura.kit.stores.StoryItemData
+import dev.barrelmaker.obscura.kit.stores.SweepOutcome
+import dev.barrelmaker.obscura.kit.stores.expiresAt
 import dev.barrelmaker.obscura.kit.stores.pragma
 import dev.barrelmaker.obscura.kit.stores.truncateWal
 import dev.barrelmaker.obscura.kit.wire.PayloadDisposition
@@ -54,14 +60,21 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import com.google.protobuf.InvalidProtocolBufferException
+import obscura.client.v1.Client.AttachmentPointer
 import obscura.client.v1.Client.ClientMessage
+import obscura.client.v1.Client.DirectMessage
 import obscura.client.v1.Client.EntrySnapshot
 import obscura.client.v1.Client.FriendListSync
 import obscura.client.v1.Client.HistorySnapshot
 import obscura.client.v1.Client.LinkBundle
 import obscura.client.v1.Client.LinkCode
-import obscura.client.v1.Client.SnapshotEntry
-import obscura.client.v1.appEntry
+import obscura.client.v1.Client.PixMessage
+import obscura.client.v1.Client.ProfileUpdate
+import obscura.client.v1.Client.SeenReceipt
+import obscura.client.v1.Client.StoredMessageRecord
+import obscura.client.v1.Client.StoredProfileRecord
+import obscura.client.v1.Client.StoredStoryRecord
+import obscura.client.v1.Client.StoryPost
 import obscura.client.v1.friendAccept
 import obscura.client.v1.friendRequest
 import obscura.client.v1.typingSignal
@@ -69,6 +82,7 @@ import org.signal.libsignal.protocol.DuplicateMessageException
 import org.signal.libsignal.protocol.IdentityKeyPair
 import org.signal.libsignal.protocol.ecc.Curve
 import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
+import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -107,9 +121,7 @@ class ObscuraClient(
     }
     private val friends = FriendStore(db)
     internal val devices = DeviceStore(db)
-
-    val inbox = InboxStore(db) { ids, reason -> log("INBOX discarded ${ids.size} row(s) ($reason): $ids") }
-    val entries = EntryStore(db, sqlDriver)
+    internal val content = ContentStore(db, sqlDriver)
 
     internal val auth: AuthManager
     internal val api: APIClient
@@ -236,9 +248,58 @@ class ObscuraClient(
         } catch (e: InvalidProtocolBufferException) {
             throw ObscuraError.ProtocolViolation("Invalid history snapshot", e)
         }
-        entries.import(snapshot.entriesList.map {
-            it.model to StoredEntry(it.id, it.data.toStringUtf8(), it.sentAt, it.authorUserId, it.authorDeviceId)
-        })
+        val messages = snapshot.messagesList.mapNotNull { m ->
+            if (m.id.isBlank()) return@mapNotNull null
+            val viewedAt = m.viewedAt.takeIf { it > 0L }
+            val hasAtt = m.hasAttachment() && m.attachment.id.isNotBlank()
+            ConversationItemData(
+                id = m.id,
+                peerUserId = m.peerUserId,
+                kind = m.kind,
+                authorUserId = m.authorUserId,
+                sentAt = m.sentAt,
+                viewedAt = viewedAt,
+                expiresAt = expiresAt(m.sentAt, viewedAt),
+                content = m.content,
+                mediaRef = if (hasAtt) m.attachment.id else null,
+                contentKey = if (hasAtt && !m.attachment.contentKey.isEmpty) m.attachment.contentKey.toByteArray().toBase64() else null,
+                nonce = if (hasAtt && !m.attachment.nonce.isEmpty) m.attachment.nonce.toByteArray().toBase64() else null,
+                mediaType = if (hasAtt) m.attachment.mediaType.ifEmpty { null } else null,
+                caption = m.caption.ifEmpty { null },
+                captionMeta = m.captionMeta.ifEmpty { null },
+                displayDuration = m.displayDurationSecs,
+                undelivered = false,
+            )
+        }
+        val stories = snapshot.storiesList.mapNotNull { s ->
+            if (s.id.isBlank()) return@mapNotNull null
+            val hasAtt = s.hasAttachment() && s.attachment.id.isNotBlank()
+            StoryItemData(
+                id = s.id,
+                authorUserId = s.authorUserId,
+                sentAt = s.sentAt,
+                expiresAt = s.sentAt + STORY_MAX_AGE_MS,
+                content = s.content,
+                mediaRef = if (hasAtt) s.attachment.id else null,
+                contentKey = if (hasAtt && !s.attachment.contentKey.isEmpty) s.attachment.contentKey.toByteArray().toBase64() else null,
+                nonce = if (hasAtt && !s.attachment.nonce.isEmpty) s.attachment.nonce.toByteArray().toBase64() else null,
+                mediaType = if (hasAtt) s.attachment.mediaType.ifEmpty { null } else null,
+                captionMeta = s.captionMeta.ifEmpty { null },
+                undelivered = false,
+            )
+        }
+        val profiles = snapshot.profilesList.mapNotNull { p ->
+            if (p.userId.isBlank()) return@mapNotNull null
+            ProfileItemData(
+                userId = p.userId,
+                authorDeviceId = p.authorDeviceId,
+                updatedAt = p.updatedAt,
+                displayName = p.displayName,
+                bio = p.bio,
+                undelivered = false,
+            )
+        }
+        content.importSnapshot(messages, stories, profiles)
     }
 
     /** Primary only: approve the device showing [code] by sending it the account identity, friends and history. */
@@ -263,19 +324,70 @@ class ObscuraClient(
         }
     }
 
-    /** The whole entry store as an encrypted attachment; null when it is empty. */
+    /** The whole content store as an encrypted attachment; null when it is empty. */
     private suspend fun exportHistory(): HistorySnapshot? {
-        val all = entries.export().ifEmpty { return null }
-        val snapshot = EntrySnapshot.newBuilder().addAllEntries(all.map { (model, entry) ->
-            SnapshotEntry.newBuilder()
-                .setModel(model)
-                .setId(entry.id)
-                .setData(ByteString.copyFromUtf8(entry.data))
-                .setSentAt(entry.sentAt)
-                .setAuthorUserId(entry.authorUserId)
-                .setAuthorDeviceId(entry.authorDeviceId)
-                .build()
-        }).build()
+        val messages = content.getMessages()
+        val stories = content.getAllStories()
+        val profiles = content.getProfiles()
+        if (messages.isEmpty() && stories.isEmpty() && profiles.isEmpty()) return null
+        val snapshot = EntrySnapshot.newBuilder()
+            .addAllMessages(messages.map { m ->
+                StoredMessageRecord.newBuilder()
+                    .setId(m.id)
+                    .setPeerUserId(m.peerUserId)
+                    .setKind(m.kind)
+                    .setAuthorUserId(m.authorUserId)
+                    .setSentAt(m.sentAt)
+                    .setViewedAt(m.viewedAt ?: 0L)
+                    .setContent(m.content)
+                    .setCaption(m.caption ?: "")
+                    .setCaptionMeta(m.captionMeta ?: "")
+                    .setDisplayDurationSecs(m.displayDuration)
+                    .apply {
+                        if (!m.mediaRef.isNullOrBlank()) {
+                            setAttachment(
+                                AttachmentPointer.newBuilder()
+                                    .setId(m.mediaRef)
+                                    .setContentKey(ByteString.copyFrom(m.contentKey?.fromBase64() ?: ByteArray(0)))
+                                    .setNonce(ByteString.copyFrom(m.nonce?.fromBase64() ?: ByteArray(0)))
+                                    .setMediaType(m.mediaType ?: "")
+                                    .build(),
+                            )
+                        }
+                    }
+                    .build()
+            })
+            .addAllStories(stories.map { s ->
+                StoredStoryRecord.newBuilder()
+                    .setId(s.id)
+                    .setAuthorUserId(s.authorUserId)
+                    .setSentAt(s.sentAt)
+                    .setContent(s.content)
+                    .setCaptionMeta(s.captionMeta ?: "")
+                    .apply {
+                        if (!s.mediaRef.isNullOrBlank()) {
+                            setAttachment(
+                                AttachmentPointer.newBuilder()
+                                    .setId(s.mediaRef)
+                                    .setContentKey(ByteString.copyFrom(s.contentKey?.fromBase64() ?: ByteArray(0)))
+                                    .setNonce(ByteString.copyFrom(s.nonce?.fromBase64() ?: ByteArray(0)))
+                                    .setMediaType(s.mediaType ?: "")
+                                    .build(),
+                            )
+                        }
+                    }
+                    .build()
+            })
+            .addAllProfiles(profiles.map { p ->
+                StoredProfileRecord.newBuilder()
+                    .setUserId(p.userId)
+                    .setAuthorDeviceId(p.authorDeviceId)
+                    .setUpdatedAt(p.updatedAt)
+                    .setDisplayName(p.displayName)
+                    .setBio(p.bio)
+                    .build()
+            })
+            .build()
         val upload = uploadAttachment(snapshot.toByteArray())
         return HistorySnapshot.newBuilder()
             .setAttachmentId(upload.id)
@@ -352,8 +464,7 @@ class ObscuraClient(
                 db.friendQueries.deleteVersion()
                 db.deviceQueries.deleteAll()
                 db.deviceQueries.deleteIdentity()
-                db.modelEntryQueries.deleteAllEntries()
-                db.inboxQueries.deleteAll()
+                content.deleteAllInTransaction()
                 signalStore.clear()
             }
             sqlDriver.truncateWal()
@@ -428,7 +539,7 @@ class ObscuraClient(
             return
         }
         try {
-            if (inbox.contains(envelopeId)) {
+            if (content.containsEnvelope(envelopeId)) {
                 acknowledge(envelope.id, envelopeId, ack)
                 return
             }
@@ -436,7 +547,7 @@ class ObscuraClient(
             throw e
         } catch (e: Exception) {
             log("RECV duplicate lookup failed for $envelopeId: ${e.message}")
-            logger.databaseError("inbox", "contains", e.message ?: e.javaClass.simpleName)
+            logger.databaseError("content", "containsEnvelope", e.message ?: e.javaClass.simpleName)
             return
         }
         var stage = "directory"
@@ -505,7 +616,11 @@ class ObscuraClient(
     }
 
     /** A decrypted message after its durable writes, and the network work that follows them. */
-    private class Stored(val message: ClientMessage, val inserted: Boolean = false, val friendFollowUp: FriendFollowUp = FriendFollowUp.NONE)
+    private class Stored(
+        val message: ClientMessage,
+        val wokeModel: String? = null,
+        val friendFollowUp: FriendFollowUp = FriendFollowUp.NONE,
+    )
 
     private enum class FriendFollowUp { NONE, SYNC, ACCEPT, REPLY_ACCEPT }
 
@@ -518,15 +633,7 @@ class ObscuraClient(
     /** The local, synchronous part of handling a message; runs inside the receive transaction. */
     private fun store(message: ClientMessage, senderUserId: String, senderDeviceId: String, envelopeId: String): Stored =
         when (payloadDisposition(message.payloadCase)) {
-            PayloadDisposition.INBOXED -> {
-                val entry = message.appEntry
-                if (entry.model.isBlank() || entry.id.isBlank()) {
-                    log("RECV APP_ENTRY with blank model or id from $senderUserId; ignored")
-                    Stored(message)
-                } else {
-                    Stored(message, inserted = inbox.putInTransaction(inboxRecord(entry, senderUserId, senderDeviceId, envelopeId)))
-                }
-            }
+            PayloadDisposition.CONTENT -> storeContent(message, senderUserId, senderDeviceId, envelopeId)
             PayloadDisposition.KIT_INTERNAL -> Stored(message, friendFollowUp = applyFriendMessage(message, senderUserId, senderDeviceId))
             PayloadDisposition.DROPPABLE -> {
                 if (message.payloadCase != ClientMessage.PayloadCase.TYPING_SIGNAL) {
@@ -540,7 +647,7 @@ class ObscuraClient(
     private suspend fun followUp(stored: Stored, senderUserId: String, senderDeviceId: String, envelopeId: String) {
         val message = stored.message
         when (payloadDisposition(message.payloadCase)) {
-            PayloadDisposition.INBOXED -> wakeInbox(message, envelopeId, stored.inserted)
+            PayloadDisposition.CONTENT -> stored.wokeModel?.let { newEntries.trySend(it) }
             PayloadDisposition.DROPPABLE -> if (message.payloadCase == ClientMessage.PayloadCase.TYPING_SIGNAL) {
                 onTypingSignal(message, senderUserId, senderDeviceId)
             }
@@ -558,26 +665,146 @@ class ObscuraClient(
         }
     }
 
-    private fun inboxRecord(
-        entry: obscura.client.v1.Client.AppEntry,
+    private fun resolvePeerUserId(senderUserId: String, claimedPeerUserId: String): String? {
+        if (senderUserId.isBlank()) return null
+        val selfUserId = auth.credentials?.userId
+        return if (senderUserId == selfUserId) {
+            if (claimedPeerUserId.isNotBlank() && claimedPeerUserId != selfUserId) claimedPeerUserId else null
+        } else {
+            if (claimedPeerUserId.isNotBlank() && claimedPeerUserId != selfUserId && claimedPeerUserId != senderUserId) {
+                null
+            } else {
+                senderUserId
+            }
+        }
+    }
+
+    private fun storeContent(
+        message: ClientMessage,
         senderUserId: String,
         senderDeviceId: String,
         envelopeId: String,
-    ): InboxInsert = InboxInsert(
-        envelopeId = envelopeId,
-        senderUserId = senderUserId,
-        senderDeviceId = senderDeviceId,
-        modelKey = entry.model,
-        entryId = entry.id,
-        sentAt = clampFutureTimestamp(entry.timestamp),
-        payload = entry.data.toByteArray(),
-    )
-
-    private fun wakeInbox(message: ClientMessage, envelopeId: String, inserted: Boolean) {
-        when {
-            !inserted && message.appEntry.model.isNotBlank() && message.appEntry.id.isNotBlank() ->
-                log("RECV duplicate envelope $envelopeId")
-            inserted -> newEntries.trySend(message.appEntry.model)
+    ): Stored {
+        if (!content.recordEnvelopeInTransaction(envelopeId)) {
+            log("RECV duplicate envelope $envelopeId")
+            return Stored(message)
+        }
+        val sentAt = clampFutureTimestamp(message.timestamp)
+        return when (message.payloadCase) {
+            ClientMessage.PayloadCase.DIRECT_MESSAGE -> {
+                val dm = message.directMessage
+                val peer = resolvePeerUserId(senderUserId, dm.peerUserId)
+                if (dm.id.isBlank() || peer == null) {
+                    log("RECV DIRECT_MESSAGE with blank id or invalid peer from $senderUserId; ignored")
+                    Stored(message)
+                } else if (!content.canInsertConversationInTransaction(dm.id)) {
+                    Stored(message)
+                } else {
+                    content.insertConversationInTransaction(
+                        ConversationItemData(
+                            id = dm.id,
+                            peerUserId = peer,
+                            kind = "message",
+                            authorUserId = senderUserId,
+                            sentAt = sentAt,
+                            viewedAt = null,
+                            expiresAt = expiresAt(sentAt, null),
+                            content = dm.content,
+                        ),
+                    )
+                    Stored(message, wokeModel = "directMessage")
+                }
+            }
+            ClientMessage.PayloadCase.PIX -> {
+                val pix = message.pix
+                val peer = resolvePeerUserId(senderUserId, pix.peerUserId)
+                val att = if (pix.hasAttachment()) pix.attachment else null
+                if (pix.id.isBlank() || peer == null || att == null || att.id.isBlank() || att.contentKey.isEmpty || att.nonce.isEmpty) {
+                    log("RECV PIX with invalid fields from $senderUserId; ignored")
+                    Stored(message)
+                } else if (!content.canInsertConversationInTransaction(pix.id)) {
+                    Stored(message)
+                } else {
+                    content.insertConversationInTransaction(
+                        ConversationItemData(
+                            id = pix.id,
+                            peerUserId = peer,
+                            kind = "pix",
+                            authorUserId = senderUserId,
+                            sentAt = sentAt,
+                            viewedAt = null,
+                            expiresAt = expiresAt(sentAt, null),
+                            content = "",
+                            mediaRef = att.id,
+                            contentKey = att.contentKey.toByteArray().toBase64(),
+                            nonce = att.nonce.toByteArray().toBase64(),
+                            mediaType = att.mediaType.ifEmpty { null },
+                            caption = pix.caption.ifEmpty { null },
+                            captionMeta = pix.captionMeta.ifEmpty { null },
+                            displayDuration = pix.displayDurationSecs,
+                        ),
+                    )
+                    Stored(message, wokeModel = "pix")
+                }
+            }
+            ClientMessage.PayloadCase.SEEN_RECEIPT -> {
+                val sr = message.seenReceipt
+                val peer = resolvePeerUserId(senderUserId, sr.peerUserId)
+                if (sr.entryId.isBlank() || peer == null) {
+                    log("RECV SEEN_RECEIPT with blank entryId or invalid peer from $senderUserId; ignored")
+                    Stored(message)
+                } else {
+                    val row = content.getConversationInTransaction(sr.entryId)
+                    if (row != null && row.peerUserId == peer && row.authorUserId != senderUserId && row.viewedAt == null) {
+                        val viewedAt = minOf(sr.viewedAt.coerceAtLeast(0L), sentAt)
+                        content.markConversationViewedInTransaction(sr.entryId, viewedAt, expiresAt(row.sentAt, viewedAt))
+                        Stored(message, wokeModel = "seen")
+                    } else {
+                        Stored(message)
+                    }
+                }
+            }
+            ClientMessage.PayloadCase.STORY -> {
+                val st = message.story
+                if (st.id.isBlank()) {
+                    log("RECV STORY with blank id from $senderUserId; ignored")
+                    Stored(message)
+                } else if (!content.canInsertStoryInTransaction(st.id)) {
+                    Stored(message)
+                } else {
+                    val att = st.attachment.takeIf { st.hasAttachment() && it.id.isNotBlank() }
+                    content.insertStoryInTransaction(
+                        StoryItemData(
+                            id = st.id,
+                            authorUserId = senderUserId,
+                            sentAt = sentAt,
+                            expiresAt = sentAt + STORY_MAX_AGE_MS,
+                            content = st.content,
+                            mediaRef = att?.id,
+                            contentKey = att?.contentKey?.takeUnless { it.isEmpty }?.toByteArray()?.toBase64(),
+                            nonce = att?.nonce?.takeUnless { it.isEmpty }?.toByteArray()?.toBase64(),
+                            mediaType = att?.mediaType?.ifEmpty { null },
+                            captionMeta = st.captionMeta.ifEmpty { null },
+                        ),
+                    )
+                    Stored(message, wokeModel = "story")
+                }
+            }
+            ClientMessage.PayloadCase.PROFILE -> {
+                val pr = message.profile
+                val updated = content.upsertProfileIfNewerInTransaction(
+                    ProfileItemData(
+                        userId = senderUserId,
+                        authorDeviceId = senderDeviceId,
+                        updatedAt = sentAt,
+                        displayName = pr.displayName,
+                        bio = pr.bio,
+                        undelivered = false,
+                    ),
+                )
+                Stored(message, wokeModel = if (updated) "profile" else null)
+            }
+            else -> Stored(message)
         }
     }
 
@@ -707,31 +934,314 @@ class ObscuraClient(
         api.registerPushToken(token)
     }
 
-    /**
-     * Send an entry to every device of [recipientUserIds] and to this user's other devices.
-     * No inbox row is written here; the app stores its own copy in [entries].
-     */
-    suspend fun send(
-        recipientUserIds: List<String>,
-        modelKey: String,
-        entryId: String,
-        sentAt: Long,
-        payload: ByteArray,
-    ): SendReport {
+    suspend fun getMessages(): List<ConversationItemData> = content.getMessages()
+
+    suspend fun sendMessage(peerUserId: String, content: String): String {
+        if (peerUserId.isBlank()) throw ObscuraError.InvalidArgument("peerUserId must not be blank")
         val self = requireFreshToken()
-        val message = clientMessage {
-            setAppEntry(appEntry {
-                model = modelKey
-                id = entryId
-                timestamp = sentAt
-                data = ByteString.copyFrom(payload)
-            })
+        val sentAt = System.currentTimeMillis()
+        val id = generateEntryId("dm", sentAt)
+        this.content.putConversation(
+            ConversationItemData(
+                id = id,
+                peerUserId = peerUserId,
+                kind = "message",
+                authorUserId = self.userId,
+                sentAt = sentAt,
+                viewedAt = null,
+                expiresAt = expiresAt(sentAt, null),
+                content = content,
+            ),
+        )
+        val message = ClientMessage.newBuilder()
+            .setTimestamp(sentAt)
+            .setDirectMessage(
+                DirectMessage.newBuilder()
+                    .setId(id)
+                    .setPeerUserId(peerUserId)
+                    .setContent(content),
+            )
+            .build()
+        val peers = acceptedFriendIds(self.userId).intersect(setOf(peerUserId)).toList()
+        val report = sendToPeersAndSelf(self.userId, peers, message)
+        if (peers.isEmpty() || report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
+            this.content.setConversationUndelivered(id, true)
+            throw sendFailed("directMessage", report)
         }
-        val peers = recipientUserIds.distinct().filter { it != self.userId }
-        val results = sender.send(peers + self.userId, message)
-        val (selfSync, recipients) = results.partition { it.userId == self.userId }
+        return id
+    }
+
+    suspend fun sendPix(
+        peerUserId: String,
+        mediaRef: String,
+        contentKey: String,
+        nonce: String,
+        mediaType: String,
+        caption: String,
+        captionMeta: String?,
+        displayDuration: Int,
+    ): String {
+        if (peerUserId.isBlank()) throw ObscuraError.InvalidArgument("peerUserId must not be blank")
+        if (mediaRef.isBlank() || contentKey.isBlank() || nonce.isBlank()) {
+            throw ObscuraError.InvalidArgument("pix attachment fields must not be blank")
+        }
+        val keyBytes = try {
+            contentKey.fromBase64()
+        } catch (e: Exception) {
+            throw ObscuraError.InvalidArgument("Invalid base64 contentKey: ${e.message}")
+        }
+        val nonceBytes = try {
+            nonce.fromBase64()
+        } catch (e: Exception) {
+            throw ObscuraError.InvalidArgument("Invalid base64 nonce: ${e.message}")
+        }
+        val self = requireFreshToken()
+        val sentAt = System.currentTimeMillis()
+        val id = generateEntryId("pix", sentAt)
+        val item = ConversationItemData(
+            id = id,
+            peerUserId = peerUserId,
+            kind = "pix",
+            authorUserId = self.userId,
+            sentAt = sentAt,
+            viewedAt = null,
+            expiresAt = expiresAt(sentAt, null),
+            content = "",
+            mediaRef = mediaRef,
+            contentKey = contentKey,
+            nonce = nonce,
+            mediaType = mediaType.ifEmpty { null },
+            caption = caption.ifEmpty { null },
+            captionMeta = captionMeta?.ifEmpty { null },
+            displayDuration = displayDuration,
+        )
+        content.putConversation(item)
+        val message = buildPixClientMessage(item, keyBytes, nonceBytes)
+        val peers = acceptedFriendIds(self.userId).intersect(setOf(peerUserId)).toList()
+        val report = sendToPeersAndSelf(self.userId, peers, message)
+        if (peers.isEmpty() || report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
+            content.setConversationUndelivered(id, true)
+            throw sendFailed("pix", report)
+        }
+        return id
+    }
+
+    suspend fun markSeen(entryId: String) {
+        if (entryId.isBlank()) throw ObscuraError.InvalidArgument("entryId must not be blank")
+        val self = requireFreshToken()
+        val row = content.getConversation(entryId) ?: return
+        if (row.authorUserId == self.userId || row.viewedAt != null) return
+        val now = System.currentTimeMillis()
+        content.markConversationViewed(entryId, now, expiresAt(row.sentAt, now))
+        val message = ClientMessage.newBuilder()
+            .setTimestamp(now)
+            .setSeenReceipt(
+                SeenReceipt.newBuilder()
+                    .setEntryId(entryId)
+                    .setPeerUserId(row.peerUserId)
+                    .setViewedAt(now),
+            )
+            .build()
+        val peers = acceptedFriendIds(self.userId).intersect(setOf(row.peerUserId)).toList()
+        sendToPeersAndSelf(self.userId, peers, message)
+    }
+
+    suspend fun getStories(now: Long = System.currentTimeMillis()): List<StoryItemData> = content.getStories(now)
+
+    suspend fun postStory(
+        content: String,
+        mediaRef: String?,
+        contentKey: String?,
+        nonce: String?,
+        mediaType: String?,
+        captionMeta: String?,
+    ): String {
+        val hasMedia = !mediaRef.isNullOrBlank()
+        val keyBytes = if (hasMedia) {
+            if (contentKey.isNullOrBlank()) throw ObscuraError.InvalidArgument("story contentKey must not be blank when mediaRef is set")
+            try { contentKey.fromBase64() } catch (e: Exception) { throw ObscuraError.InvalidArgument("Invalid base64 contentKey: ${e.message}") }
+        } else null
+        val nonceBytes = if (hasMedia) {
+            if (nonce.isNullOrBlank()) throw ObscuraError.InvalidArgument("story nonce must not be blank when mediaRef is set")
+            try { nonce.fromBase64() } catch (e: Exception) { throw ObscuraError.InvalidArgument("Invalid base64 nonce: ${e.message}") }
+        } else null
+        val self = requireFreshToken()
+        val sentAt = System.currentTimeMillis()
+        val id = generateEntryId("story", sentAt)
+        val item = StoryItemData(
+            id = id,
+            authorUserId = self.userId,
+            sentAt = sentAt,
+            expiresAt = sentAt + STORY_MAX_AGE_MS,
+            content = content,
+            mediaRef = mediaRef?.takeIf { it.isNotBlank() },
+            contentKey = if (hasMedia) contentKey else null,
+            nonce = if (hasMedia) nonce else null,
+            mediaType = if (hasMedia) mediaType?.ifEmpty { null } else null,
+            captionMeta = captionMeta?.ifEmpty { null },
+        )
+        this.content.putStory(item)
+        val message = buildStoryClientMessage(item, keyBytes, nonceBytes)
+        val peers = acceptedFriendIds(self.userId).toList()
+        val report = sendToPeersAndSelf(self.userId, peers, message)
+        if (peers.isNotEmpty() && report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
+            this.content.setStoryUndelivered(id, true)
+            throw sendFailed("story", report)
+        }
+        return id
+    }
+
+    suspend fun getProfiles(): List<ProfileItemData> = content.getProfiles()
+
+    suspend fun updateProfile(displayName: String, bio: String) {
+        val self = requireFreshToken()
+        val existing = content.getProfile(self.userId)
+        val sentAt = maxOf(System.currentTimeMillis(), (existing?.updatedAt ?: 0L) + 1L)
+        val item = ProfileItemData(
+            userId = self.userId,
+            authorDeviceId = self.deviceId,
+            updatedAt = sentAt,
+            displayName = displayName,
+            bio = bio,
+        )
+        content.putProfile(item)
+        val message = buildProfileClientMessage(item)
+        val peers = acceptedFriendIds(self.userId).toList()
+        val report = sendToPeersAndSelf(self.userId, peers, message)
+        if (peers.isNotEmpty() && report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
+            content.setProfileUndelivered(self.userId, sentAt, true)
+            throw sendFailed("profile", report)
+        }
+    }
+
+    suspend fun flushOutbox(): Int {
+        val self = requireFreshToken()
+        val accepted = acceptedFriendIds(self.userId)
+        var delivered = 0
+        for (row in content.getUndeliveredMessages()) {
+            val peers = accepted.intersect(setOf(row.peerUserId)).toList()
+            if (peers.isEmpty()) continue
+            val message = if (row.kind == "pix") {
+                val keyBytes = row.contentKey?.let { runCatching { it.fromBase64() }.getOrNull() } ?: continue
+                val nonceBytes = row.nonce?.let { runCatching { it.fromBase64() }.getOrNull() } ?: continue
+                buildPixClientMessage(row, keyBytes, nonceBytes)
+            } else {
+                ClientMessage.newBuilder()
+                    .setTimestamp(row.sentAt)
+                    .setDirectMessage(
+                        DirectMessage.newBuilder()
+                            .setId(row.id)
+                            .setPeerUserId(row.peerUserId)
+                            .setContent(row.content),
+                    )
+                    .build()
+            }
+            val report = sendToPeersAndSelf(self.userId, peers, message)
+            if (report.recipients.any { it.status == SubmissionStatus.ACCEPTED }) {
+                content.setConversationUndelivered(row.id, false)
+                delivered++
+            }
+        }
+        for (row in content.getUndeliveredStories()) {
+            val peers = accepted.toList()
+            val hasMedia = !row.mediaRef.isNullOrBlank()
+            val keyBytes = if (hasMedia) row.contentKey?.let { runCatching { it.fromBase64() }.getOrNull() } else null
+            val nonceBytes = if (hasMedia) row.nonce?.let { runCatching { it.fromBase64() }.getOrNull() } else null
+            if (hasMedia && (keyBytes == null || nonceBytes == null)) continue
+            val message = buildStoryClientMessage(row, keyBytes, nonceBytes)
+            val report = sendToPeersAndSelf(self.userId, peers, message)
+            if (peers.isEmpty() || report.recipients.any { it.status == SubmissionStatus.ACCEPTED }) {
+                content.setStoryUndelivered(row.id, false)
+                delivered++
+            }
+        }
+        for (row in content.getUndeliveredProfiles()) {
+            val peers = accepted.toList()
+            val message = buildProfileClientMessage(row)
+            val report = sendToPeersAndSelf(self.userId, peers, message)
+            if (peers.isEmpty() || report.recipients.any { it.status == SubmissionStatus.ACCEPTED }) {
+                content.setProfileUndelivered(row.userId, row.updatedAt, false)
+                delivered++
+            }
+        }
+        return delivered
+    }
+
+    suspend fun sweepExpired(now: Long = System.currentTimeMillis()): SweepOutcome = content.sweepExpired(now)
+
+    private suspend fun acceptedFriendIds(selfUserId: String): Set<String> =
+        friends.getAll().asSequence().filter { it.status == FriendStatus.ACCEPTED && it.userId != selfUserId }.map { it.userId }.toSet()
+
+    private suspend fun sendToPeersAndSelf(selfUserId: String, peers: List<String>, message: ClientMessage): SendReport {
+        val distinctPeers = peers.distinct().filter { it != selfUserId }
+        val results = sender.send(distinctPeers + selfUserId, message)
+        val (selfSync, recipients) = results.partition { it.userId == selfUserId }
         return SendReport(recipients, selfSync)
     }
+
+    private fun sendFailed(model: String, report: SendReport): ObscuraError.SendFailed {
+        val reasons = report.recipients.joinToString("; ") { it.error ?: it.status.name.lowercase() }
+        return ObscuraError.SendFailed(if (reasons.isEmpty()) "$model reached none of its recipients" else "$model reached none of its recipients: $reasons")
+    }
+
+    private fun generateEntryId(prefix: String, now: Long): String {
+        val token = java.lang.Long.toUnsignedString(random.nextLong(), 36).take(8).padStart(8, '0')
+        return "${prefix}_${now}_$token"
+    }
+
+    private fun buildPixClientMessage(item: ConversationItemData, keyBytes: ByteArray, nonceBytes: ByteArray): ClientMessage =
+        ClientMessage.newBuilder()
+            .setTimestamp(item.sentAt)
+            .setPix(
+                PixMessage.newBuilder()
+                    .setId(item.id)
+                    .setPeerUserId(item.peerUserId)
+                    .setAttachment(
+                        AttachmentPointer.newBuilder()
+                            .setId(item.mediaRef ?: "")
+                            .setContentKey(ByteString.copyFrom(keyBytes))
+                            .setNonce(ByteString.copyFrom(nonceBytes))
+                            .setMediaType(item.mediaType ?: "")
+                            .build(),
+                    )
+                    .setCaption(item.caption ?: "")
+                    .setCaptionMeta(item.captionMeta ?: "")
+                    .setDisplayDurationSecs(item.displayDuration.coerceAtLeast(0)),
+            )
+            .build()
+
+    private fun buildStoryClientMessage(item: StoryItemData, keyBytes: ByteArray?, nonceBytes: ByteArray?): ClientMessage =
+        ClientMessage.newBuilder()
+            .setTimestamp(item.sentAt)
+            .setStory(
+                StoryPost.newBuilder()
+                    .setId(item.id)
+                    .setContent(item.content)
+                    .setCaptionMeta(item.captionMeta ?: "")
+                    .apply {
+                        if (!item.mediaRef.isNullOrBlank() && keyBytes != null && nonceBytes != null) {
+                            setAttachment(
+                                AttachmentPointer.newBuilder()
+                                    .setId(item.mediaRef)
+                                    .setContentKey(ByteString.copyFrom(keyBytes))
+                                    .setNonce(ByteString.copyFrom(nonceBytes))
+                                    .setMediaType(item.mediaType ?: "")
+                                    .build(),
+                            )
+                        }
+                    },
+            )
+            .build()
+
+    private fun buildProfileClientMessage(item: ProfileItemData): ClientMessage =
+        ClientMessage.newBuilder()
+            .setTimestamp(item.updatedAt)
+            .setProfile(
+                ProfileUpdate.newBuilder()
+                    .setDisplayName(item.displayName)
+                    .setBio(item.bio),
+            )
+            .build()
 
     /** Throttled per (context, state). A recipient that cannot be reached is logged and skipped. */
     suspend fun sendTyping(recipientUserIds: List<String>, contextId: String, state: TypingState) {
@@ -861,6 +1371,7 @@ class ObscuraClient(
         /** The name a new device put in its link [code], to show before [approveLink]. No network. */
         fun linkCodeDeviceName(code: String): String = LinkCrypto.decodeCode(code).deviceName
 
+        private val random = SecureRandom()
         private const val MESSAGE_RECEIVED_CAPACITY = 100
         private const val DEBUG_LOG_SIZE = 200
         private const val PREKEY_MIN_COUNT = 20L
@@ -872,10 +1383,16 @@ class ObscuraClient(
 }
 
 /**
- * A peer's `sentAt` capped at now + 60 s so it cannot win every later conflict. `AppEntry.timestamp`
+ * A peer's `sentAt` capped at now + 60 s so it cannot win every later conflict. `ClientMessage.timestamp`
  * is a uint64 that arrives negative above 2^63; that is far future too.
  */
 internal fun clampFutureTimestamp(sentAt: Long, nowMs: Long = System.currentTimeMillis()): Long {
     val cap = nowMs + 60_000L
     return if (sentAt < 0) cap else minOf(sentAt, cap)
 }
+
+const val EXPIRE_AFTER_VIEW_MS = dev.barrelmaker.obscura.kit.stores.EXPIRE_AFTER_VIEW_MS
+const val MAX_EPHEMERAL_AGE_MS = dev.barrelmaker.obscura.kit.stores.MAX_EPHEMERAL_AGE_MS
+const val STORY_MAX_AGE_MS = dev.barrelmaker.obscura.kit.stores.STORY_MAX_AGE_MS
+
+fun expiresAt(sentAt: Long, viewedAt: Long?): Long = dev.barrelmaker.obscura.kit.stores.expiresAt(sentAt, viewedAt)

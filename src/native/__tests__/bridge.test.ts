@@ -1,15 +1,17 @@
 import { Obscura, onObscuraEvent, type ObscuraEvent } from '../ObscuraModule';
+import { EXPIRE_AFTER_MS, MAX_AGE_MS, STORY_MAX_AGE_MS } from '../__fixtures__/FakeObscuraBridge';
 import { getFakeBridge } from '../__fixtures__/reactNativeMock';
 
 const bridge = getFakeBridge();
 
 describe('the double is actually installed', () => {
   it('resolves real values', async () => {
-    await Obscura.entryPut('directMessage', 'dm_1', JSON.stringify({ content: 'hi' }), 1_000, 'u_alice', 'device_a', null);
+    await Obscura.sendMessage('u_bob', 'hi');
 
-    const stored = await Obscura.entryAll('directMessage');
+    const stored = await Obscura.getMessages();
     expect(stored).toHaveLength(1);
-    expect(bridge.__calls).toContain('entryPut');
+    expect(stored[0]).toMatchObject({ peerUserId: 'u_bob', kind: 'message', content: 'hi' });
+    expect(bridge.__calls).toContain('sendMessage');
   });
 
   it('delivers events', () => {
@@ -38,109 +40,91 @@ describe('the double is actually installed', () => {
   });
 });
 
-describe('the JSON boundary', () => {
-  it('round-trips a payload the kit never parses', async () => {
-    const data = { conversationId: 'a_b', content: 'hello' };
+describe('typed domain operations', () => {
+  it('stores and orders messages and pix, and applies seen receipts', async () => {
+    const msgId = await Obscura.sendMessage('u_bob', 'hello');
+    const pixId = await Obscura.sendPix('u_bob', 'att_1', 'key', 'nonce', 'photo', 'look', null, 5);
 
-    await Obscura.entryPut('directMessage', 'dm_1', JSON.stringify(data), 1_000, 'u_alice', 'device_a', null);
+    let items = await Obscura.getMessages();
+    expect(items.map((i) => [i.id, i.kind, i.viewedAt])).toEqual([
+      [msgId, 'message', null],
+      [pixId, 'pix', null],
+    ]);
 
-    const [stored] = await Obscura.entryAll('directMessage');
-    expect(JSON.parse(stored.data)).toEqual(data);
-    expect(stored.authorUserId).toBe('u_alice');
-    expect(stored.authorDeviceId).toBe('device_a');
+    // A seen receipt from the peer marks the pix viewed, capped at the receipt's sentAt.
+    bridge.__deliverSeen({ entryId: pixId, senderUserId: 'u_bob', viewedAt: 9_999_999_999_999, sentAt: 1_700_000_005_000 });
+    items = await Obscura.getMessages();
+    expect(items.find((i) => i.id === pixId)?.viewedAt).toBe(1_700_000_005_000);
   });
 
-  it('round-trips nested and unicode payloads without mangling them', async () => {
-    const captionMeta = JSON.stringify({ style: 'bold', x: 0.5, colour: '#fff' });
-    const data = { content: 'sunset 🌅', captionMeta, tags: ['a', 'b'], meta: { nested: true } };
+  it('keeps the first write for APPEND models (messages, pix, stories)', async () => {
+    bridge.__deliverMessage({ id: 'dm_1', peerUserId: 'u_bob', authorUserId: 'u_bob', content: 'first', sentAt: 1_000 });
+    bridge.__deliverMessage({ id: 'dm_1', peerUserId: 'u_bob', authorUserId: 'u_bob', content: 'second', sentAt: 9_000 });
 
-    await Obscura.entryPut('story', 's_1', JSON.stringify(data), 2_000, 'u_alice', 'device_a', null);
-
-    const [stored] = await Obscura.entryAll('story');
-    expect(JSON.parse(stored.data)).toEqual(data);
+    const [msg] = await Obscura.getMessages();
+    expect(msg.content).toBe('first');
+    expect(msg.sentAt).toBe(1_000);
   });
 
-  it('rejects a non-string payload, so a forgotten stringify fails here not on device', async () => {
-    await expect(
-      // @ts-expect-error — deliberately passing the wrong type; TS would normally stop this, but the
-      // real bridge is untyped `any` at runtime, which is exactly why the double checks.
-      Obscura.entryPut('story', 's_1', { notAString: true }, 1_000, 'u_alice', 'device_a', null),
-    ).rejects.toThrow(/JSON string/);
-  });
-});
+  it('round-trips unicode stories and captionMeta, and hides stories older than 24h', async () => {
+    const captionMeta = JSON.stringify({ style: 'bold', x: 0.5, y: 0.5, color: '#fff' });
+    await Obscura.postStory('sunset 🌅', 'att_1', 'k', 'n', 'photo', captionMeta);
 
-describe('the entry store', () => {
-  it('keeps models separate', async () => {
-    await Obscura.entryPut('directMessage', 'a', '{}', 1, 'u', 'd', null);
-    await Obscura.entryPut('story', 'b', '{}', 1, 'u', 'd', null);
+    const [story] = await Obscura.getStories();
+    expect(story).toMatchObject({ content: 'sunset 🌅', captionMeta });
 
-    expect(await Obscura.entryAll('directMessage')).toHaveLength(1);
-    expect(await Obscura.entryAll('story')).toHaveLength(1);
-    expect(await Obscura.entryAll('profile')).toEqual([]);
+    bridge.__advanceTime(STORY_MAX_AGE_MS + 1);
+    expect(await Obscura.getStories()).toEqual([]);
   });
 
-  it('reads exactly the named entries through the bridge', async () => {
-    await Obscura.entryPut('directMessage', 'a', '{}', 1, 'u', 'd', null);
-    await Obscura.entryPut('directMessage', 'b', '{}', 1, 'u', 'd', null);
+  it('merges profiles with REPLACE ordered by (updatedAt, authorDeviceId)', async () => {
+    bridge.__deliverProfile({ userId: 'u_bob', authorDeviceId: 'device_a', updatedAt: 1_000, displayName: 'Old', bio: '' });
+    bridge.__deliverProfile({ userId: 'u_bob', authorDeviceId: 'device_z', updatedAt: 1_000, displayName: 'TieWinner', bio: 'bio' });
+    bridge.__deliverProfile({ userId: 'u_bob', authorDeviceId: 'device_a', updatedAt: 900, displayName: 'Stale', bio: '' });
 
-    expect((await Obscura.entryGet('directMessage', ['b', 'missing'])).map((e) => e.id)).toEqual(['b']);
+    const [profile] = await Obscura.getProfiles();
+    expect(profile).toMatchObject({ userId: 'u_bob', displayName: 'TieWinner', bio: 'bio', updatedAt: 1_000 });
   });
 
-  it('erases the named entries through the bridge and leaves the rest', async () => {
-    await Obscura.entryPut('directMessage', 'keep', '{}', 1, 'u', 'd', null);
-    await Obscura.entryPut('directMessage', 'gone', '{}', 1, 'u', 'd', null);
+  it('queues undelivered writes in the outbox and flushes them once reachable', async () => {
+    bridge.__setFriends([{ userId: 'u_bob', username: 'bob', status: 'accepted' }]);
+    bridge.__setUnreachable(['u_bob']);
 
-    await Obscura.entryErase('directMessage', ['gone']);
+    await expect(Obscura.sendMessage('u_bob', 'queued')).rejects.toMatchObject({ code: 'SEND_FAILED' });
+    expect(await Obscura.getMessages()).toHaveLength(1);
+    expect(bridge.__sent).toEqual([]);
 
-    expect((await Obscura.entryAll('directMessage')).map((e) => e.id)).not.toContain('gone');
-    expect((await Obscura.entryAll('directMessage')).map((e) => e.id)).toContain('keep');
-    expect(bridge.__calls).toContain('entryErase');
+    bridge.__setUnreachable([]);
+    expect(await Obscura.flushOutbox()).toBe(1);
+    expect(bridge.__sent).toHaveLength(1);
+    expect(bridge.__sent[0]).toMatchObject({ modelKey: 'directMessage', recipientUserIds: ['u_bob'] });
   });
 
-  /**
-   * `entryPut` is a blind upsert: an older write replaces a newer one. A double that merged here
-   * would hide an app that forgot to.
-   */
-  it('is a blind upsert — an older write overwrites a newer one', async () => {
-    await Obscura.entryPut('pix', 'p', JSON.stringify({ v: 'new' }), 9_000, 'u', 'd', null);
-    await Obscura.entryPut('pix', 'p', JSON.stringify({ v: 'old' }), 1_000, 'u', 'd', null);
+  it('sweeps expired seen items after 15m, unseen items after 30d, purges media, and blocks replays via tombstones', async () => {
+    const incomingPix = bridge.__deliverPix({
+      id: 'pix_1',
+      peerUserId: 'u_bob',
+      authorUserId: 'u_bob',
+      mediaRef: 'att_purge',
+      caption: 'view once',
+    });
+    await Obscura.markSeen(incomingPix.id);
 
-    const [stored] = await Obscura.entryAll('pix');
-    expect(JSON.parse(stored.data)).toEqual({ v: 'old' });
-    expect(stored.sentAt).toBe(1_000);
-  });
+    bridge.__advanceTime(EXPIRE_AFTER_MS + 1);
+    const touched = await Obscura.sweepExpired();
+    expect(touched).toContain('pix');
+    expect(await Obscura.getMessages()).toEqual([]);
+    expect(bridge.__purged).toContain('att_purge');
 
-});
+    // Replaying the erased pix is blocked by its tombstone.
+    bridge.__deliverPix({ id: 'pix_1', peerUserId: 'u_bob', authorUserId: 'u_bob', mediaRef: 'att_purge' });
+    expect(await Obscura.getMessages()).toEqual([]);
 
-describe('the inbox', () => {
-  it('peeks without consuming, so a crash mid-drain reprocesses rather than loses', async () => {
-    bridge.__deliverInbox({ entryId: 'dm_1', payload: '{}' });
-
-    const first = await Obscura.inboxPeek(50);
-    const second = await Obscura.inboxPeek(50);
-
-    expect(first).toHaveLength(1);
-    expect(second).toEqual(first);
-    expect(await Obscura.inboxDepth()).toBe(1);
-  });
-
-  it('consumes only what it is given', async () => {
-    const a = bridge.__deliverInbox({ entryId: 'a', payload: '{}' });
-    bridge.__deliverInbox({ entryId: 'b', payload: '{}' });
-
-    await Obscura.inboxConsume([a.id]);
-
-    expect(await Obscura.inboxDepth()).toBe(1);
-  });
-
-  /** Data loss chosen out loud: the reason must reach the kit, which logs it as a security event. */
-  it('carries a reason into discard', async () => {
-    const row = bridge.__deliverInbox({ modelKey: 'unknownModel', payload: 'x' });
-
-    await Obscura.inboxDiscard([row.id], 'unknown-model');
-
-    expect(bridge.__discarded).toEqual([{ ids: [row.id], reason: 'unknown-model' }]);
-    expect(await Obscura.inboxDepth()).toBe(0);
+    // Unseen messages expire after the 30d ceiling.
+    await Obscura.sendMessage('u_bob', 'unseen');
+    bridge.__advanceTime(MAX_AGE_MS + 1);
+    expect(await Obscura.sweepExpired()).toContain('directMessage');
+    expect(await Obscura.getMessages()).toEqual([]);
   });
 });
 
@@ -150,17 +134,17 @@ describe('failures', () => {
    * every bridge call resolves.
    */
   it('rejects with a code the app can branch on', async () => {
-    bridge.__failNext('sendEntry', 'SEND_FAILED', 'reached nobody');
+    bridge.__failNext('sendMessage', 'SEND_FAILED', 'reached nobody');
 
-    await expect(Obscura.sendEntry([], 'directMessage', 'x', 1, '{}'))
+    await expect(Obscura.sendMessage('u_bob', 'hi'))
       .rejects.toMatchObject({ code: 'SEND_FAILED' });
   });
 
   it('fails only the next call, so a suite is not poisoned by one injection', async () => {
-    bridge.__failNext('entryPut', 'ENTRY_PUT_ERROR');
+    bridge.__failNext('postStory', 'STORAGE_ERROR');
 
-    await expect(Obscura.entryPut('story', 'a', '{}', 1, 'u', 'd', null)).rejects.toThrow();
-    await expect(Obscura.entryPut('story', 'b', '{}', 1, 'u', 'd', null)).resolves.toBeUndefined();
+    await expect(Obscura.postStory('a', null, null, null, null, null)).rejects.toThrow();
+    await expect(Obscura.postStory('b', null, null, null, null, null)).resolves.toEqual(expect.any(String));
   });
 });
 

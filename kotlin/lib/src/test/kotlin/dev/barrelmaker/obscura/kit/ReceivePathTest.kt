@@ -1,17 +1,23 @@
 package dev.barrelmaker.obscura.kit
 
 import com.google.protobuf.ByteString
+import dev.barrelmaker.obscura.kit.crypto.toBase64
 import dev.barrelmaker.obscura.kit.stores.FriendData
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import obscura.client.v1.Client
+import obscura.client.v1.Client.AttachmentPointer
 import obscura.client.v1.Client.ClientMessage
-import org.junit.jupiter.api.Assertions.assertArrayEquals
+import obscura.client.v1.Client.DirectMessage
+import obscura.client.v1.Client.PixMessage
+import obscura.client.v1.Client.ProfileUpdate
+import obscura.client.v1.Client.SeenReceipt
+import obscura.client.v1.Client.StoryPost
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -21,14 +27,98 @@ import org.junit.jupiter.api.Test
 class ReceivePathTest {
     private val peer = "019f025a-0000-7de6-84b6-000000000002"
     private val peerDevice = "019f025a-0000-7de6-84b6-0000000000d2"
+    private val thirdParty = "019f025a-0000-7de6-84b6-000000000003"
 
-    private fun appEntry(entryId: String, model: String = "pix", timestamp: Long = 1_700_000_000_000) =
-        ClientMessage.newBuilder().setTimestamp(timestamp).setAppEntry(obscura.client.v1.appEntry {
-            this.model = model
-            id = entryId
-            this.timestamp = timestamp
-            data = ByteString.copyFrom("payload".toByteArray())
-        }).build()
+    private fun directMessage(
+        id: String,
+        content: String = "payload",
+        peerUserId: String = "",
+        timestamp: Long = 1_700_000_000_000,
+    ) = ClientMessage.newBuilder()
+        .setTimestamp(timestamp)
+        .setDirectMessage(
+            DirectMessage.newBuilder()
+                .setId(id)
+                .setPeerUserId(peerUserId)
+                .setContent(content),
+        )
+        .build()
+
+    private fun pixMessage(
+        id: String,
+        peerUserId: String = "",
+        mediaRef: String = "att_1",
+        contentKey: ByteArray = ByteArray(32) { 1 },
+        nonce: ByteArray = ByteArray(12) { 2 },
+        mediaType: String = "photo",
+        caption: String = "look",
+        captionMeta: String = """{"style":"bar"}""",
+        displayDuration: Int = 5,
+        timestamp: Long = 1_700_000_000_000,
+    ) = ClientMessage.newBuilder()
+        .setTimestamp(timestamp)
+        .setPix(
+            PixMessage.newBuilder()
+                .setId(id)
+                .setPeerUserId(peerUserId)
+                .setAttachment(
+                    AttachmentPointer.newBuilder()
+                        .setId(mediaRef)
+                        .setContentKey(ByteString.copyFrom(contentKey))
+                        .setNonce(ByteString.copyFrom(nonce))
+                        .setMediaType(mediaType),
+                )
+                .setCaption(caption)
+                .setCaptionMeta(captionMeta)
+                .setDisplayDurationSecs(displayDuration),
+        )
+        .build()
+
+    private fun seenReceipt(
+        entryId: String,
+        viewedAt: Long = 1_700_000_000_500,
+        peerUserId: String = "",
+        timestamp: Long = 1_700_000_000_600,
+    ) = ClientMessage.newBuilder()
+        .setTimestamp(timestamp)
+        .setSeenReceipt(
+            SeenReceipt.newBuilder()
+                .setEntryId(entryId)
+                .setPeerUserId(peerUserId)
+                .setViewedAt(viewedAt),
+        )
+        .build()
+
+    private fun storyPost(
+        id: String,
+        content: String = "story text",
+        mediaRef: String? = null,
+        timestamp: Long = 1_700_000_000_000,
+    ) = ClientMessage.newBuilder()
+        .setTimestamp(timestamp)
+        .setStory(
+            StoryPost.newBuilder()
+                .setId(id)
+                .setContent(content)
+                .apply {
+                    if (mediaRef != null) {
+                        setAttachment(
+                            AttachmentPointer.newBuilder()
+                                .setId(mediaRef)
+                                .setContentKey(ByteString.copyFrom(ByteArray(32) { 3 }))
+                                .setNonce(ByteString.copyFrom(ByteArray(12) { 4 }))
+                                .setMediaType("photo"),
+                        )
+                    }
+                },
+        )
+        .build()
+
+    private fun profileUpdate(displayName: String, bio: String = "", timestamp: Long = 1_700_000_000_000) =
+        ClientMessage.newBuilder()
+            .setTimestamp(timestamp)
+            .setProfile(ProfileUpdate.newBuilder().setDisplayName(displayName).setBio(bio))
+            .build()
 
     private fun friendRequest(username: String) = ClientMessage.newBuilder()
         .setFriendRequest(obscura.client.v1.friendRequest { this.username = username }).build()
@@ -41,8 +131,12 @@ class ReceivePathTest {
             this.state = state
         }).build()
 
-    private suspend fun ObscuraClient.receive(message: ClientMessage, envelopeId: String = "env-1", device: String = peerDevice) =
-        route(message, peer, device, envelopeId)
+    private suspend fun ObscuraClient.receive(
+        message: ClientMessage,
+        envelopeId: String = "env-1",
+        sender: String = peer,
+        device: String = peerDevice,
+    ) = route(message, sender, device, envelopeId)
 
     // ── Timestamps ────────────────────────────────────────────
 
@@ -61,76 +155,133 @@ class ReceivePathTest {
     @Test
     fun `a stored entry's sentAt is clamped`() = runBlocking {
         val c = authenticatedClient()
-        c.receive(appEntry("e", timestamp = Long.MAX_VALUE))
-        assertTrue(c.inbox.peek().single().sentAt!! <= System.currentTimeMillis() + 60_000L)
+        c.receive(directMessage("e", timestamp = Long.MAX_VALUE))
+        assertTrue(c.getMessages().single().sentAt <= System.currentTimeMillis() + 60_000L)
     }
 
-    // ── Inbox ─────────────────────────────────────────────────
+    // ── Content arms ──────────────────────────────────────────
 
     @Test
-    fun `a new entry is inboxed and announced once, a redelivery neither`() = runBlocking {
+    fun `a new entry is stored and announced once, a redelivery or duplicate id neither`() = runBlocking {
         val c = authenticatedClient()
 
-        c.receive(appEntry("entry-1"), envelopeId = "env-1")
-        c.receive(appEntry("entry-1"), envelopeId = "env-1")
+        c.receive(directMessage("entry-1", content = "first"), envelopeId = "env-1")
+        c.receive(directMessage("entry-1", content = "redelivered"), envelopeId = "env-1")
+        c.receive(directMessage("entry-1", content = "replayed-id"), envelopeId = "env-2")
 
-        assertEquals(1L, c.inbox.depth())
-        assertEquals("pix", c.messageReceived.tryReceive().getOrNull())
+        val stored = c.getMessages().single()
+        assertEquals("first", stored.content)
+        assertEquals(peer, stored.authorUserId)
+        assertEquals(peer, stored.peerUserId)
+        assertEquals("directMessage", c.messageReceived.tryReceive().getOrNull())
         assertNull(c.messageReceived.tryReceive().getOrNull())
     }
 
     @Test
-    fun `a distinct envelope carrying the same entry is a separate row`() = runBlocking {
+    fun `self-synced direct message uses claimed peerUserId and rejects missing or third-party spoofing`() = runBlocking {
         val c = authenticatedClient()
-        c.receive(appEntry("entry-1"), envelopeId = "env-1")
-        c.receive(appEntry("entry-1"), envelopeId = "env-2")
-        assertEquals(2L, c.inbox.depth())
+
+        c.receive(directMessage("dm_self", content = "synced", peerUserId = peer), envelopeId = "e1", sender = SELF_USER_ID)
+        c.receive(directMessage("dm_blank_peer", content = "ignored", peerUserId = ""), envelopeId = "e2", sender = SELF_USER_ID)
+        c.receive(directMessage("dm_self_peer", content = "ignored", peerUserId = SELF_USER_ID), envelopeId = "e3", sender = SELF_USER_ID)
+        c.receive(directMessage("dm_spoof", content = "spoofed", peerUserId = thirdParty), envelopeId = "e4", sender = peer)
+
+        val stored = c.getMessages().single()
+        assertEquals("dm_self", stored.id)
+        assertEquals(peer, stored.peerUserId)
+        assertEquals(SELF_USER_ID, stored.authorUserId)
     }
 
     @Test
-    fun `an inbox row records the authenticated sender`() = runBlocking {
+    fun `pix is stored with base64 attachment fields and seen receipt updates viewedAt and expiresAt`() = runBlocking {
         val c = authenticatedClient()
-        c.receive(appEntry("entry-1"))
+        val key = ByteArray(32) { 7 }
+        val nonce = ByteArray(12) { 8 }
+        c.receive(pixMessage("pix_1", contentKey = key, nonce = nonce, timestamp = 1_000L), envelopeId = "e1")
+        assertEquals("pix", c.messageReceived.tryReceive().getOrNull())
 
-        val row = c.inbox.peek().single()
-        assertEquals(peer, row.senderUserId)
-        assertEquals(peerDevice, row.senderDeviceId)
-        assertEquals("pix", row.modelKey)
-        assertEquals("entry-1", row.entryId)
-        assertArrayEquals("payload".toByteArray(), row.payload)
+        val beforeSeen = c.getMessages().single()
+        assertEquals("pix", beforeSeen.kind)
+        assertEquals(key.toBase64(), beforeSeen.contentKey)
+        assertEquals(nonce.toBase64(), beforeSeen.nonce)
+        assertNull(beforeSeen.viewedAt)
+        assertEquals(1_000L + MAX_EPHEMERAL_AGE_MS, beforeSeen.expiresAt)
+
+        // Author cannot mark their own pix as seen
+        c.receive(seenReceipt("pix_1", viewedAt = 1_500L, timestamp = 1_600L), envelopeId = "e2", sender = peer)
+        assertNull(c.getMessages().single().viewedAt)
+
+        // Self-synced seen receipt from another own device marks peer's pix as seen and caps viewedAt at sentAt
+        c.receive(
+            seenReceipt("pix_1", viewedAt = 9_999L, peerUserId = peer, timestamp = 2_000L),
+            envelopeId = "e3",
+            sender = SELF_USER_ID,
+        )
+        assertEquals("seen", c.messageReceived.tryReceive().getOrNull())
+        val afterSeen = c.getMessages().single()
+        assertEquals(2_000L, afterSeen.viewedAt)
+        assertEquals(2_000L + EXPIRE_AFTER_VIEW_MS, afterSeen.expiresAt)
     }
 
     @Test
-    fun `entry bytes with NUL and awkward characters are inboxed byte for byte`() = runBlocking {
+    fun `story and profile updates follow expiry and LWW tie-break rules`() = runBlocking {
         val c = authenticatedClient()
-        val bytes = "a\u0000b\u0000 é 😀 \u2028\r\n".toByteArray() + byteArrayOf(0, 0, -1, 0x7F)
-        val message = ClientMessage.newBuilder().setAppEntry(obscura.client.v1.appEntry {
-            model = "m"; id = "e"; timestamp = 1; data = ByteString.copyFrom(bytes)
-        }).build()
+        val now = System.currentTimeMillis()
+        c.receive(storyPost("st_1", "hello story", mediaRef = "att_s", timestamp = now), envelopeId = "e1")
+        assertEquals("story", c.messageReceived.tryReceive().getOrNull())
+        assertEquals(1, c.getStories(now = now + 1_000L).size)
+        assertTrue(c.getStories(now = now + STORY_MAX_AGE_MS + 1L).isEmpty())
+
+        c.receive(profileUpdate("Alice 1", "bio 1", timestamp = 1_000L), envelopeId = "e2", device = "dev_b")
+        assertEquals("profile", c.messageReceived.tryReceive().getOrNull())
+        // Older timestamp loses
+        c.receive(profileUpdate("Stale", "old", timestamp = 900L), envelopeId = "e3", device = "dev_z")
+        assertNull(c.messageReceived.tryReceive().getOrNull())
+        // Same timestamp, lexicographically smaller device loses
+        c.receive(profileUpdate("Tie Loser", "tie", timestamp = 1_000L), envelopeId = "e4", device = "dev_a")
+        assertNull(c.messageReceived.tryReceive().getOrNull())
+        // Same timestamp, lexicographically greater device wins
+        c.receive(profileUpdate("Alice 2", "bio 2", timestamp = 1_000L), envelopeId = "e5", device = "dev_c")
+        assertEquals("profile", c.messageReceived.tryReceive().getOrNull())
+
+        val profile = c.getProfiles().single()
+        assertEquals("Alice 2", profile.displayName)
+        assertEquals("bio 2", profile.bio)
+        assertEquals("dev_c", profile.authorDeviceId)
+    }
+
+    @Test
+    fun `content with NUL and awkward characters is stored verbatim`() = runBlocking {
+        val c = authenticatedClient()
+        val text = "a\u0000b\u0000 é 😀 \u2028\r\n"
+        val message = directMessage("e", content = text)
 
         c.receive(ClientMessage.parseFrom(message.toByteArray()))
 
-        assertArrayEquals(bytes, c.inbox.peek().single().payload)
+        assertEquals(text, c.getMessages().single().content)
     }
 
     @Test
-    fun `an unknown arm or blank AppEntry is acked and ignored without an inbox row`() = runBlocking {
+    fun `an unknown arm or blank id is acked and ignored`() = runBlocking {
         val c = authenticatedClient()
-        val unknown = ClientMessage.newBuilder().setTimestamp(5).build()
+        c.receive(ClientMessage.newBuilder().setTimestamp(5).build(), envelopeId = "e1")
+        c.receive(directMessage("", content = "blank"), envelopeId = "e2")
 
-        c.receive(unknown)
-
-        assertTrue(c.inbox.peek().isEmpty())
+        assertTrue(c.getMessages().isEmpty())
         assertNull(c.messageReceived.tryReceive().getOrNull())
     }
 
     @Test
     fun `the wake-up stream keeps the newest 100`() = runBlocking {
         val c = authenticatedClient()
-        repeat(101) { c.receive(appEntry("e$it", model = "m$it"), envelopeId = "env-$it") }
+        repeat(101) {
+            val msg = if (it % 2 == 0) directMessage("e$it") else storyPost("s$it")
+            c.receive(msg, envelopeId = "env-$it")
+        }
 
         val keys = generateSequence { c.messageReceived.tryReceive().getOrNull() }.toList()
-        assertEquals((1..100).map { "m$it" }, keys)
+        assertEquals(100, keys.size)
+        assertEquals((1..100).map { if (it % 2 == 0) "directMessage" else "story" }, keys)
     }
 
     // ── Friends ───────────────────────────────────────────────
@@ -140,7 +291,6 @@ class ReceivePathTest {
         val c = authenticatedClient()
         c.receive(friendRequest("alice"))
         assertEquals(listOf(FriendData(peer, "alice", FriendStatus.PENDING_RECEIVED)), c.getFriends())
-        assertEquals(0L, c.inbox.depth())
     }
 
     @Test
@@ -211,7 +361,6 @@ class ReceivePathTest {
         c.receive(typing("thread", Client.TypingState.TYPING_STATE_STOPPED), device = "phone")
         c.receive(typing("thread", Client.TypingState.TYPING_STATE_STOPPED), device = "laptop")
         assertEquals(listOf(other), c.observeTyping("thread").first())
-        assertEquals(0L, c.inbox.depth())
     }
 
     @Test

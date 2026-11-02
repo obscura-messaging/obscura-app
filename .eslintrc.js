@@ -36,15 +36,9 @@ module.exports = {
           {
             patterns: [
               {
-                group: [
-                  '**/native/ObscuraModule*',
-                  '**/state/entryStore*',
-                  '**/state/drainInbox*',
-                  '**/state/writeEntry*',
-                  '**/state/expiry*',
-                ],
+                group: ['**/native/ObscuraModule*'],
                 message:
-                  'UI and navigation layers must not import ObscuraModule, entryStore, or sync internals directly; go through src/state/ or src/domain/.',
+                  'UI and navigation layers must not import ObscuraModule directly; go through src/state/ or src/domain/.',
               },
             ],
           },

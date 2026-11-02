@@ -13,23 +13,21 @@ toolchains and language-specific signatures, not different behavior.
 ## Kit boundary
 
 The kit owns authentication, device provisioning, Signal sessions, the friend
-graph, REST and gateway transport, typing, attachment encryption, the durable
-inbox, and the opaque entry store.
+graph, REST and gateway transport, typing, attachment encryption, and the typed
+content store (`ConversationEntry`, `StoryEntry`, `ProfileEntry`,
+`ErasedEntry`, and `ProcessedEnvelope`), including audience resolution, merge,
+expiry, and the outbox.
 
-The app owns payload schemas, recipients, authorization, merge, expiry,
-outbox policy, rendering, and notification policy. Hosts own OS lifecycle,
-secure session storage, files, permissions, push, and notifications.
+Hosts own OS lifecycle, secure session storage, files, permissions, push, and
+notifications.
 
-**If the kit reads a content field, it is declared in `client.proto`.**
-Application payloads and `localMetadata` are opaque. Kits must not contain
-application model names, infer recipients from payloads, implement an
-application query/merge/expiry engine, or post OS notifications.
+**Every client-to-client message is a typed protobuf message declared in
+`client.proto`.** Kits do not post OS notifications.
 
 Wire mappings live in each kit's `WireCodec` and are checked against
-[`wire.json`](../protocol/conformance/wire.json). `AppEntry` encoding
-preserves model, id, timestamp and data; byte-canonical encoding is not
-required. Typing maps only STARTED/STOPPED; unspecified states are ignored.
-The device-link envelope derivation and link code encoding are checked against
+[`wire.json`](../protocol/conformance/wire.json). Typing maps only
+STARTED/STOPPED; unspecified states are ignored. The device-link envelope
+derivation and link code encoding are checked against
 [`link.json`](../protocol/conformance/link.json).
 
 Takeover and device announcements do not exist.
@@ -182,10 +180,11 @@ unconditional request-pacing sleeps.
 | `observeTyping(contextId)` | Current distinct typing user ids, sorted, then changes |
 | `getDebugLog()` | Up to 200 lines, newest first |
 
-`messageReceived` yields once per newly inboxed `APP_ENTRY`, never for a
-duplicate or another payload arm. Capacity is 100, dropping oldest wake-ups:
-the inbox, not the stream, is the delivery path. Hosts drain on cold start,
-foreground and reconnect as well.
+`messageReceived` yields the model key (`directMessage`, `pix`, `seen`, `story`,
+`profile`) once per newly stored content update, never for a duplicate or
+another payload arm. Capacity is 100, dropping oldest wake-ups: the local SQLite
+content store, not the stream, is the delivery path. Hosts refresh and sweep on
+cold start, foreground, and reconnect as well.
 
 Observers must be cancellable without blocking mutations or other
 observers. Stream callbacks must not execute under a state lock.
@@ -223,11 +222,11 @@ transaction.
 
 | Payload | Handling |
 |---|---|
-| `APP_ENTRY` | Inbox opaque `data`, model, id and timestamp (blank model or id is logged and ignored) |
+| `DIRECT_MESSAGE`, `PIX`, `SEEN_RECEIPT`, `STORY`, `PROFILE` | Validated and merged into local content tables (`ConversationEntry`, `StoryEntry`, `ProfileEntry`) inside the decrypt transaction |
 | `FRIEND_REQUEST`, `FRIEND_ACCEPT` | Kit-internal friend transition |
-| `TYPING_SIGNAL` | Ephemeral, no inbox row |
+| `TYPING_SIGNAL` | Ephemeral, no stored row |
 | `FRIEND_LIST_SYNC` | Kit-internal: replaces the friend list if sent by the account's primary with a newer version, otherwise ignored |
-| Unknown/unset arm | Logged and acknowledged without an inbox row |
+| Unknown/unset arm | Logged and acknowledged without a stored row |
 
 A request from an unknown sender becomes pending-received. Crossed
 requests accept the friendship. Other requests do not relabel known
@@ -252,66 +251,25 @@ device, registration id, payload identity, or fallback bundle.
 The app authorizes the inbox using this attribution; successful transport
 delivery alone does not authorize an application write.
 
-## Inbox
+## Content store, outbox, and expiry
 
-`peek(limit)`, `consume(ids)`, `discard(ids, reason)`, and `depth()` are
-the public API. Insert is internal.
+The kit exposes typed content operations:
 
-Rows contain a local monotonic `id`, authenticated sender user/device,
-model, entry id, timestamp, and opaque bytes. Peek is stable oldest-first
-and has no side effects. Consume/discard are idempotent and accept partial
-batches. Discard logs its reason.
+- `getMessages()`, `sendMessage(peerUserId, content)`, `sendPix(...)`, `markSeen(entryId)`
+- `getStories()`, `postStory(...)`
+- `getProfiles()`, `updateProfile(displayName, bio)`
+- `flushOutbox()`, `sweepExpired()`
 
-Envelope ids are unique while pending, preventing duplicate insertion or
-notification. Consumed ids are not retained as tombstones: application
-merge must be idempotent.
+1:1 messages (`DirectMessage`, `PixMessage`) and `SeenReceipt` target the
+accepted friend `peerUserId` plus self-sync. Stories (`StoryPost`) and profile
+updates (`ProfileUpdate`) target all accepted friends plus self-sync. When a
+send fails to reach its required audience, the local row is marked
+`undelivered = 1`, `SEND_FAILED` is thrown, and `flushOutbox()` retries it on
+reconnect or foreground.
 
-An app drain peeks a bounded batch, validates and authorizes, merges and
-writes entries, then consumes. No transaction spans entries and consume;
-a crash can replay a row. Transient failures leave rows pending; permanent
-rejections are discarded explicitly. The app monitors abnormal inbox depth.
-
-## Entry store
-
-`put(model, entry)`, `get(model, ids)`, `all(model)`, `erase(model, ids)`.
-
-`StoredEntry` contains id, opaque data, timestamp, author user, author device,
-and nullable opaque `localMetadata`. Put is a blind upsert. Merge is the app's
-job. Local metadata never enters the wire payload.
-
-Get returns named rows that exist. Erase enables `secure_delete` on the
-deleting connection, deletes in bounded batches, then checkpoints and
-truncates the WAL once per call. It must remove recoverable content from
-both main database and WAL, not merely make rows invisible. An empty erase
-is a no-op. Durable deletion failures propagate.
-
-## Send
-
-`send(recipientUserIds, modelKey, entryId, sentAt, payload)`
-returns `SendReport { recipients, selfSync }`.
-
-The kit never infers or broadens recipients. Duplicates and the sender's
-own user id are excluded from peer recipients. Peer recipients and the
-sender's own user id (for self-sync) are batched into one `POST /v1/messages`
-request per round, and the kit never writes a local entry.
-
-Each result has user id, nullable device id, status
-(`accepted`, `rejected`, `unknown`), and optional error.
-Accepted means queued by the server, not delivered or viewed. Bundles or
-encryption failures are rejected; uncertain submission outcomes are unknown.
-HTTP 200 alone is not enough: the server's `invalid_device_ids` and
-`device_mismatches` are decoded.
-Pre-processing HTTP 400 and 413 responses reject the affected submissions;
-401, 403, transport failures, server failures, and unusable responses leave
-them unknown, because they describe the session or the attempt, not the
-message.
-
-A missing device list is a rejected user-level result, not empty-audience
-success. Self-sync/discovery failure cannot prevent peer attempts or
-invalidate their acceptance.
-
-The kit owns no send queue. Durable retries, audience policy, versioning,
-and expiry belong to the app.
+`sweepExpired()` deletes expired conversation and story rows with
+`PRAGMA secure_delete = ON`, records their IDs in `ErasedEntry`, truncates the
+WAL, and returns `purgedMediaRefs` and `touchedModels`.
 
 ## Typing, attachments and push
 

@@ -5,28 +5,24 @@ Android is the release target; iOS ships internal TestFlight builds and works in
 the foreground without push ([`docs/IOS_PARITY.md`](docs/IOS_PARITY.md)).
 
 A **pix** is a direct, disappearing photo or video message, not the app's name.
-Its `pix` model key is part of stored and transmitted data and does not change
-with the repository name.
 
 ## Layer boundaries
 
 Code and tests are the authority on behaviour; Markdown documents explain only
 **why** boundaries and constraints exist.
 
-- **Bridge & storage (`src/native/`, `src/state/entryStore.ts`, `android/`, `ios/`):**
+- **Bridge & storage (`src/native/`, `android/`, `ios/`):**
   Native hosts manage OS lifecycle, permissions, files, push, and React Native
-  marshalling. `src/state/entryStore.ts` is the sole module allowed to read or
-  write the kit's entry store (`Obscura.entryPut/Get/All/Erase`) so serialization
-  and lock ordering cannot be bypassed.
-- **Domain (`src/domain/`):** Pure, synchronous logic, model schemas, and
-  narrowed view-model projections. Independent of React, React Native, native
-  bridges, and stateful orchestration. Domain types make invalid UI states
-  unrepresentable before data reaches a screen.
-- **State (`src/state/`):** Orchestrates storage, bridge events, and domain
-  rules into reactive Zustand state and actions.
+  marshalling, exposing typed domain operations over ObscuraKit.
+- **Domain (`src/domain/`):** Pure, synchronous logic and narrowed view-model
+  projections. Independent of React, React Native, native bridges, and stateful
+  orchestration. Domain types make invalid UI states unrepresentable before
+  data reaches a screen.
+- **State (`src/state/`):** Orchestrates native domain operations, bridge
+  events, and domain projections into reactive Zustand state and actions.
 - **UI (`src/screens/`, `src/components/`, `src/navigation/`):** Renders domain
   projections and dispatches actions. Enforced by ESLint (`no-restricted-imports`),
-  UI code cannot import the native bridge, `entryStore`, or sync internals.
+  UI code cannot import the native bridge directly.
 
 ## Rationale & guides
 

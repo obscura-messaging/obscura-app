@@ -66,16 +66,15 @@ public actor ObscuraClient {
     static let preKeyMinimum = 20
     static let preKeyReplenishCount: UInt32 = 50
 
-    public nonisolated let inbox: InboxStore
-    public nonisolated let entries: EntryStore
-    /// Model key of each newly inboxed `APP_ENTRY`. Single consumer; the inbox is the delivery path,
-    /// so the oldest keys are dropped when 100 are unread.
+    /// Model key of each newly persisted content message (`directMessage`, `pix`, `seen`, `story`, `profile`).
+    /// Single consumer; theoldest keys are dropped when 100 are unread.
     public nonisolated let messageReceived: AsyncStream<String>
 
     nonisolated let api: APIClient
     nonisolated let db: DatabaseQueue
     nonisolated let friends: FriendStore
     nonisolated let directory: DeviceStore
+    nonisolated let content: ContentStore
     nonisolated let signalStore: PersistentSignalStore
     nonisolated let messenger: Messenger
     nonisolated let logger: RecordingLogger
@@ -128,8 +127,7 @@ public actor ObscuraClient {
         self.sessionStorage = sessionStorage
         self.friends = FriendStore(db: database)
         self.directory = DeviceStore(db: database)
-        self.inbox = InboxStore(db: database, logger: recording)
-        self.entries = EntryStore(db: database)
+        self.content = ContentStore(db: database)
         self.signalStore = PersistentSignalStore(db: database, logger: recording)
         self.messenger = Messenger(api: api, store: signalStore)
         (messageReceived, messageContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(100))

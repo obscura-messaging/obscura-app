@@ -7,7 +7,11 @@ import org.junit.jupiter.api.Test
 class PayloadDispositionTest {
     /** Every arm, written out. A new arm in `client.proto` fails here until it is given a class. */
     private val expected = mapOf(
-        PayloadCase.APP_ENTRY to PayloadDisposition.INBOXED,
+        PayloadCase.DIRECT_MESSAGE to PayloadDisposition.CONTENT,
+        PayloadCase.PIX to PayloadDisposition.CONTENT,
+        PayloadCase.SEEN_RECEIPT to PayloadDisposition.CONTENT,
+        PayloadCase.STORY to PayloadDisposition.CONTENT,
+        PayloadCase.PROFILE to PayloadDisposition.CONTENT,
         PayloadCase.FRIEND_REQUEST to PayloadDisposition.KIT_INTERNAL,
         PayloadCase.FRIEND_ACCEPT to PayloadDisposition.KIT_INTERNAL,
         PayloadCase.TYPING_SIGNAL to PayloadDisposition.DROPPABLE,

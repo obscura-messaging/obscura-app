@@ -32,3 +32,21 @@ export function displayNameFor(userId: string, { myUserId, myUsername, friends }
   if (userId === myUserId) return myUsername;
   return friends.find((f) => f.userId === userId && isAccepted(f))?.username ?? null;
 }
+
+export interface ProfileItem {
+  userId: string;
+  authorDeviceId: string;
+  updatedAt: number;
+  displayName: string;
+  bio: string;
+}
+
+export function friendProfileEntries<P extends { userId: string }>(
+  profiles: readonly P[],
+  identity: Identity,
+): Array<{ entry: P; name: string }> {
+  return profiles.flatMap((entry) => {
+    const name = entry.userId === identity.myUserId ? null : displayNameFor(entry.userId, identity);
+    return name === null ? [] : [{ entry, name }];
+  });
+}

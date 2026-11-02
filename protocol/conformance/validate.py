@@ -110,16 +110,28 @@ def check_wire(rep: Report, doc: dict) -> None:
             if not isinstance(rt, dict):
                 rep.err(w, "must be an object")
                 continue
-            rep.only_keys(w, rt, {"name", "appEntry"})
             rep.is_str(w, rt, "name")
-            if rep.is_dict(w, rt, "appEntry"):
-                ms = rt["appEntry"]
-                rep.only_keys(w + " appEntry", ms, {"model", "id", "timestamp", "data"})
-                rep.is_str(w + " appEntry", ms, "model")
-                rep.is_str(w + " appEntry", ms, "id")
-                rep.is_dict(w + " appEntry", ms, "data")
-                if not isinstance(ms.get("timestamp"), (int, float)) or isinstance(ms.get("timestamp"), bool):
-                    rep.err(w + " appEntry", f"'timestamp' must be a number, got {ms.get('timestamp')!r}")
+            if "directMessage" in rt and rep.is_dict(w, rt, "directMessage"):
+                dm = rt["directMessage"]
+                rep.only_keys(w + " directMessage", dm, {"id", "peerUserId", "content", "timestamp"})
+                rep.is_str(w + " directMessage", dm, "id")
+                rep.is_str(w + " directMessage", dm, "peerUserId")
+                rep.is_str(w + " directMessage", dm, "content")
+                _is_uint(rep, w + " directMessage", dm, "timestamp")
+            elif "pix" in rt and rep.is_dict(w, rt, "pix"):
+                px = rt["pix"]
+                rep.only_keys(w + " pix", px, {
+                    "id", "peerUserId", "attachmentId", "contentKey", "nonce",
+                    "mediaType", "caption", "captionMeta", "displayDurationSecs", "timestamp",
+                })
+                for k in ("id", "peerUserId", "attachmentId", "mediaType", "caption", "captionMeta"):
+                    rep.is_str(w + " pix", px, k)
+                _is_hex(rep, w + " pix", px, "contentKey", 32)
+                _is_hex(rep, w + " pix", px, "nonce", 12)
+                _is_uint(rep, w + " pix", px, "displayDurationSecs")
+                _is_uint(rep, w + " pix", px, "timestamp")
+            else:
+                rep.err(w, "must contain either 'directMessage' or 'pix'")
 
 
 def _is_hex(rep: Report, where: str, obj: dict, key: str, length: int | None = None) -> None:

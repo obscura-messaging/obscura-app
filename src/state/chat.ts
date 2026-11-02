@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Obscura, onObscuraEvent } from '../native/ObscuraModule';
+import { conversationId } from '../domain/chats';
 import { logError } from '../utils/log';
-import { saveEntry } from './store';
+import { refreshMessages, useStore } from './store';
 
 /** Real-time typing indicator and message sending for a 1:1 conversation. */
 
@@ -13,9 +14,14 @@ export function notifyTyping(friendUserId: string, convId: string, prevText: str
   }
 }
 
-export async function sendChatMessage(convId: string, friendUserId: string, content: string): Promise<void> {
+export async function sendChatMessage(friendUserId: string, content: string): Promise<void> {
+  const convId = conversationId(useStore.getState().myUserId, friendUserId);
   await Obscura.stopTyping([friendUserId], convId);
-  await saveEntry('directMessage', { conversationId: convId, content });
+  try {
+    await Obscura.sendMessage(friendUserId, content);
+  } finally {
+    await refreshMessages();
+  }
 }
 
 export function usePeerTyping(convId: string, friendUserId: string): boolean {

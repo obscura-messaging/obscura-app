@@ -32,7 +32,7 @@ class TypingTests {
 
         alice.sendTyping(listOf(bob.userId!!), context, TypingState.STOPPED)
         withTimeout(15_000) { bob.observeTyping(context).first { it.isEmpty() } }
-        assertEquals(0L, bob.inbox.depth(), "typing is never inboxed")
+        assertEquals(0, bob.getMessages().size)
 
         listOf(alice, bob, carol, dave).forEach { it.disconnect() }
     }

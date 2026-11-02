@@ -1,9 +1,8 @@
 import { Obscura, type Friend } from '../native/ObscuraModule';
-import { conversationId } from '../domain/audience';
 import { attachmentOf, type Attachment } from '../domain/viewer';
 import { fileUri } from '../utils/files';
 import { logError } from '../utils/log';
-import { saveEntry, useStore } from './store';
+import { refreshMessages, refreshStories } from './store';
 
 export { attachmentOf, type Attachment };
 export type MediaType = 'photo' | 'video';
@@ -58,25 +57,44 @@ export async function sendCapture(capture: Capture, recipients: readonly Friend[
     ? await Obscura.resizeImage(path, PHOTO_MAX_DIMENSION, PHOTO_QUALITY).catch((e) => { logError('resize', e); return null; })
     : null;
   const attachment = await Obscura.uploadAttachment(resized?.path ?? path);
-  const media = { mediaRef: attachment.id, contentKey: attachment.contentKey, nonce: attachment.nonce, mediaType, captionMeta };
+  const meta = captionMeta ?? null;
 
-  const { myUserId } = useStore.getState();
   const undelivered: string[] = [];
   for (const friend of recipients) {
     try {
-      await saveEntry('pix', { conversationId: conversationId(myUserId, friend.userId), ...media, caption, displayDuration });
+      await Obscura.sendPix(
+        friend.userId,
+        attachment.id,
+        attachment.contentKey,
+        attachment.nonce,
+        mediaType,
+        caption,
+        meta,
+        displayDuration,
+      );
     } catch (e) {
       undelivered.push(friend.username);
       logError('send.pix:' + friend.username, e);
     }
   }
+  if (recipients.length > 0) {
+    await refreshMessages();
+  }
   if (toStory) {
     try {
-      await saveEntry('story', { content: caption, ...media });
+      await Obscura.postStory(
+        caption,
+        attachment.id,
+        attachment.contentKey,
+        attachment.nonce,
+        mediaType,
+        meta,
+      );
     } catch (e) {
       undelivered.push('My story');
       logError('send.story', e);
     }
+    await refreshStories();
   }
 
   for (const temp of new Set([path, resized?.path ?? path])) {

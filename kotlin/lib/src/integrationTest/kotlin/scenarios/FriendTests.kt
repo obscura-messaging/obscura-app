@@ -27,7 +27,7 @@ class FriendTests {
         eventually { alice.friendStatus(bob.userId!!) == FriendStatus.ACCEPTED }
         assertEquals(FriendStatus.ACCEPTED, bob.friendStatus(alice.userId!!))
         assertEquals(bob.username, alice.getFriends().single().username)
-        assertEquals(0L, alice.inbox.depth() + bob.inbox.depth(), "friend messages are not inboxed")
+        assertEquals(0, alice.getMessages().size + bob.getMessages().size)
 
         // Rescanning an accepted friend changes nothing.
         alice.addFriendByCode(bob.friendCode())

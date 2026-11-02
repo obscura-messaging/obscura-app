@@ -1,11 +1,9 @@
-import { conversationId } from '../audience';
 import {
-  activityPreview, chatTimeline, friendActivities, conversationEntries,
-  pixBadgeFor, pixStatus,
+  activityPreview, chatTimeline, conversationId, conversationItems, friendActivities,
+  pixBadgeFor, pixStatus, type ConversationItem,
 } from '../chats';
-import { STORY_MAX_AGE_MS, type ScreenEntry } from '../expiry';
-import type { Friend } from '../friends';
-import { displayMs, storyGroups } from '../viewer';
+import { friendProfileEntries, type Friend, type ProfileItem } from '../friends';
+import { attachmentOf, displayMs, storyGroups, type StoryItem } from '../viewer';
 import { isBackSwipeGesture, shouldCompleteBackSwipe } from '../../utils/gesture';
 
 const ME = 'uMe';
@@ -13,12 +11,78 @@ const BOB: Friend = { userId: 'uBob', username: 'bob', status: 'accepted' };
 const CAROL: Friend = { userId: 'uCarol', username: 'carol', status: 'accepted' };
 const DAVE: Friend = { userId: 'uDave', username: 'dave', status: 'pending_received' };
 
-function entry(id: string, sentAt: number, authorUserId: string, data: Record<string, unknown> = {}, viewedAt: number | null = null):
-  ScreenEntry<{ conversationId: string; [key: string]: unknown }> {
-  return { id, sentAt, authorUserId, authorDeviceId: 'd', viewedAt, data: { conversationId: '', ...data } };
+function msg(
+  id: string,
+  sentAt: number,
+  authorUserId: string,
+  peerUserId: string,
+  content = '',
+  viewedAt: number | null = null,
+): ConversationItem {
+  return {
+    id,
+    peerUserId,
+    kind: 'message',
+    authorUserId,
+    sentAt,
+    viewedAt,
+    content,
+    mediaRef: null,
+    contentKey: null,
+    nonce: null,
+    mediaType: null,
+    caption: null,
+    captionMeta: null,
+    displayDuration: 0,
+  };
 }
-const withBob = (id: string, sentAt: number, author: string, viewedAt: number | null = null) =>
-  entry(id, sentAt, author, { conversationId: conversationId(ME, BOB.userId) }, viewedAt);
+
+function pixItem(
+  id: string,
+  sentAt: number,
+  authorUserId: string,
+  peerUserId: string,
+  viewedAt: number | null = null,
+  caption: string | null = null,
+): ConversationItem {
+  return {
+    id,
+    peerUserId,
+    kind: 'pix',
+    authorUserId,
+    sentAt,
+    viewedAt,
+    content: '',
+    mediaRef: 'att_1',
+    contentKey: 'key',
+    nonce: 'nonce',
+    mediaType: 'photo',
+    caption,
+    captionMeta: null,
+    displayDuration: 5,
+  };
+}
+
+function storyItem(id: string, sentAt: number, authorUserId: string, content = ''): StoryItem {
+  return {
+    id,
+    authorUserId,
+    sentAt,
+    content,
+    mediaRef: null,
+    contentKey: null,
+    nonce: null,
+    mediaType: null,
+    captionMeta: null,
+  };
+}
+
+describe('conversationId', () => {
+  it('produces a canonical sorted pair for typing contexts', () => {
+    expect(conversationId('uBob', 'uAlice')).toBe('uAlice_uBob');
+    expect(conversationId('uAlice', 'uBob')).toBe('uAlice_uBob');
+  });
+});
 
 describe('pixStatus', () => {
   it('reads direction from the author and state from viewedAt', () => {
@@ -29,39 +93,46 @@ describe('pixStatus', () => {
   });
 });
 
-describe('displayMs', () => {
+describe('displayMs & attachmentOf', () => {
   it('uses the default for no limit or no value', () => {
     expect(displayMs(3)).toBe(3_000);
     expect(displayMs(0)).toBe(5_000);
     expect(displayMs(undefined)).toBe(5_000);
   });
+
+  it('extracts a complete attachment or null', () => {
+    expect(attachmentOf({ mediaRef: 'r1', contentKey: 'k1', nonce: 'n1' })).toEqual({
+      mediaRef: 'r1',
+      contentKey: 'k1',
+      nonce: 'n1',
+    });
+    expect(attachmentOf({ mediaRef: null, contentKey: 'k1', nonce: 'n1' })).toBeNull();
+    expect(attachmentOf(undefined)).toBeNull();
+  });
 });
 
-describe('conversationEntries', () => {
-  it('keeps one conversation, oldest first', () => {
-    const other = entry('o', 1, ME, { conversationId: conversationId(ME, CAROL.userId) });
+describe('conversationItems', () => {
+  it('keeps one peer conversation, oldest first', () => {
+    const other = msg('o', 1, ME, CAROL.userId);
+    const b = msg('b', 2, ME, BOB.userId);
+    const a = msg('a', 1, ME, BOB.userId);
 
-    expect(conversationEntries([withBob('b', 2, ME), other, withBob('a', 1, ME)], conversationId(ME, BOB.userId))
-      .map((e) => e.id)).toEqual(['a', 'b']);
+    expect(conversationItems([b, other, a], BOB.userId).map((e) => e.id)).toEqual(['a', 'b']);
   });
 });
 
 describe('chatTimeline', () => {
-  const convId = conversationId(ME, BOB.userId);
-
   it('orders messages and active pix chronologically and hides received_viewed pix', () => {
-    const messages = [
-      entry('m1', 10, BOB.userId, { conversationId: convId, content: 'hi' }),
-      entry('m2', 40, ME, { conversationId: convId, content: 'yo' }),
-    ];
-    const pix = [
-      entry('p_viewed', 15, BOB.userId, { conversationId: convId, caption: 'secret' }, 16),
-      entry('p_new', 20, BOB.userId, { conversationId: convId, caption: 'do not leak' }, null),
-      entry('p_sent_pending', 25, ME, { conversationId: convId, caption: 'mine' }, null),
-      entry('p_sent_opened', 30, ME, { conversationId: convId, caption: 'opened' }, 35),
+    const items: ConversationItem[] = [
+      msg('m1', 10, BOB.userId, BOB.userId, 'hi'),
+      msg('m2', 40, ME, BOB.userId, 'yo'),
+      pixItem('p_viewed', 15, BOB.userId, BOB.userId, 16, 'secret'),
+      pixItem('p_new', 20, BOB.userId, BOB.userId, null, 'do not leak'),
+      pixItem('p_sent_pending', 25, ME, BOB.userId, null, 'mine'),
+      pixItem('p_sent_opened', 30, ME, BOB.userId, 35, 'opened'),
     ];
 
-    const timeline = chatTimeline(messages, pix, convId, ME);
+    const timeline = chatTimeline(items, BOB.userId, ME);
 
     expect(timeline.map((item) => [item.kind, item.id])).toEqual([
       ['message', 'm1'],
@@ -72,12 +143,12 @@ describe('chatTimeline', () => {
     ]);
   });
 
-  it('omits payload data and captions from pix timeline items so captions cannot leak in chat', () => {
-    const pix = [
-      entry('p_new', 20, BOB.userId, { conversationId: convId, caption: 'hidden until opened', mediaRef: 'r1' }),
+  it('omits captions and media fields from pix timeline items so captions cannot leak in chat', () => {
+    const items: ConversationItem[] = [
+      pixItem('p_new', 20, BOB.userId, BOB.userId, null, 'hidden until opened'),
     ];
 
-    const [item] = chatTimeline([], pix, convId, ME);
+    const [item] = chatTimeline(items, BOB.userId, ME);
 
     expect(item).toEqual({
       kind: 'pix',
@@ -86,7 +157,8 @@ describe('chatTimeline', () => {
       authorUserId: BOB.userId,
       status: 'received_new',
     });
-    expect('data' in item).toBe(false);
+    expect('caption' in item).toBe(false);
+    expect('mediaRef' in item).toBe(false);
   });
 });
 
@@ -108,10 +180,15 @@ describe('back swipe gesture helpers', () => {
 
 describe('friendActivities', () => {
   it('summarizes each conversation and orders by latest activity', () => {
-    const messages = [withBob('m1', 10, BOB.userId), withBob('m2', 20, ME)];
-    const pix = [withBob('p1', 5, BOB.userId), withBob('p2', 30, BOB.userId, 31), withBob('p3', 6, BOB.userId)];
+    const items: ConversationItem[] = [
+      msg('m1', 10, BOB.userId, BOB.userId, 'hey'),
+      msg('m2', 20, ME, BOB.userId, 'yo'),
+      pixItem('p1', 5, BOB.userId, BOB.userId),
+      pixItem('p2', 30, BOB.userId, BOB.userId, 31),
+      pixItem('p3', 6, BOB.userId, BOB.userId),
+    ];
 
-    const [bob, carol] = friendActivities([CAROL, BOB], ME, messages, pix);
+    const [bob, carol] = friendActivities([CAROL, BOB], ME, items);
 
     expect(bob.friend).toBe(BOB);
     expect(bob.lastMessage?.id).toBe('m2');
@@ -131,31 +208,40 @@ describe('friendActivities', () => {
   });
 
   it('computes activityPreview and badge from unopened pix, latest message, or latest pix status', () => {
-    const [unopenedActivity] = friendActivities([BOB], ME, [], [withBob('p1', 10, BOB.userId), withBob('p2', 20, BOB.userId)]);
+    const [unopenedActivity] = friendActivities(
+      [BOB],
+      ME,
+      [pixItem('p1', 10, BOB.userId, BOB.userId), pixItem('p2', 20, BOB.userId, BOB.userId)],
+    );
     expect(activityPreview(unopenedActivity, ME)).toEqual({ text: '2 new pix · tap to view', highlight: true });
     expect(unopenedActivity.badge).toEqual({ kind: 'new', count: 2 });
 
-    const [sentPixActivity] = friendActivities([BOB], ME, [], [withBob('p3', 30, ME)]);
+    const [sentPixActivity] = friendActivities([BOB], ME, [pixItem('p3', 30, ME, BOB.userId)]);
     expect(activityPreview(sentPixActivity, ME)).toEqual({ text: 'Pix delivered', highlight: false });
     expect(sentPixActivity.badge).toEqual({ kind: 'sent' });
 
-    const [msgActivity] = friendActivities([BOB], ME, [entry('m1', 40, ME, { conversationId: conversationId(ME, BOB.userId), content: 'yo' })], [withBob('p3', 30, ME)]);
+    const [msgActivity] = friendActivities(
+      [BOB],
+      ME,
+      [msg('m1', 40, ME, BOB.userId, 'yo'), pixItem('p3', 30, ME, BOB.userId)],
+    );
     expect(activityPreview(msgActivity, ME)).toEqual({ text: 'You: yo', highlight: false });
     expect(pixBadgeFor(0, 'sent_opened')).toEqual({ kind: 'opened' });
   });
 });
 
-describe('storyGroups', () => {
-  const NOW = 10 * STORY_MAX_AGE_MS;
+describe('storyGroups & friendProfileEntries', () => {
   const identity = { myUserId: ME, myUsername: 'me', friends: [BOB, CAROL, DAVE] };
 
-  it('groups live stories by author, mine apart, freshest friend first', () => {
+  it('groups stories by author, mine apart, freshest friend first', () => {
     const stories = [
-      entry('b1', NOW - 3, BOB.userId), entry('c1', NOW - 2, CAROL.userId),
-      entry('b2', NOW - 1, BOB.userId), entry('m1', NOW - 4, ME),
+      storyItem('b1', 100, BOB.userId),
+      storyItem('c1', 200, CAROL.userId),
+      storyItem('b2', 300, BOB.userId),
+      storyItem('m1', 50, ME),
     ];
 
-    const { mine, others } = storyGroups(stories, identity, NOW);
+    const { mine, others } = storyGroups(stories, identity);
 
     expect(mine).toMatchObject({ userId: ME, username: 'me' });
     expect(mine.stories.map((s) => s.id)).toEqual(['m1']);
@@ -164,16 +250,28 @@ describe('storyGroups', () => {
     ]);
   });
 
-  it('hides expired stories and authors who are not accepted friends', () => {
+  it('hides authors who are not accepted friends', () => {
     const stories = [
-      entry('old', NOW - STORY_MAX_AGE_MS, BOB.userId),
-      entry('d', NOW - 1, DAVE.userId),
-      entry('s', NOW - 1, 'uStranger'),
+      storyItem('d', 100, DAVE.userId),
+      storyItem('s', 100, 'uStranger'),
     ];
 
-    const { mine, others } = storyGroups(stories, identity, NOW);
+    const { mine, others } = storyGroups(stories, identity);
 
     expect(mine.stories).toEqual([]);
     expect(others).toEqual([]);
+  });
+
+  it('projects friend profiles only for accepted friends, never self or strangers', () => {
+    const profiles: ProfileItem[] = [
+      { userId: ME, authorDeviceId: 'd', updatedAt: 1, displayName: 'Me', bio: '' },
+      { userId: BOB.userId, authorDeviceId: 'd', updatedAt: 1, displayName: 'Bobby', bio: 'hi' },
+      { userId: DAVE.userId, authorDeviceId: 'd', updatedAt: 1, displayName: 'Dave', bio: '' },
+      { userId: 'uStranger', authorDeviceId: 'd', updatedAt: 1, displayName: 'Who', bio: '' },
+    ];
+
+    expect(friendProfileEntries(profiles, identity)).toEqual([
+      { entry: profiles[1], name: 'bob' },
+    ]);
   });
 });

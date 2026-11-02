@@ -15,11 +15,10 @@ import dev.barrelmaker.obscura.kit.messaging.parsePeerBundles
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import kotlinx.coroutines.runBlocking
 import obscura.client.v1.Client.ClientMessage
-import obscura.client.v1.appEntry
+import obscura.client.v1.Client.DirectMessage
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
-import java.util.Base64
 import java.util.UUID
 
 /** Contracts from the real server's auth, key, device and message services. */
@@ -37,7 +36,7 @@ class ServerContractTests {
     }
 
     private fun entry(id: String) = ClientMessage.newBuilder()
-        .setAppEntry(appEntry { model = "contract"; this.id = id }).build()
+        .setDirectMessage(DirectMessage.newBuilder().setId(id).setContent(id)).build()
 
     // Alter only the access credential; the refresh credential is still issued by the real server.
     private fun expireAccess(client: ObscuraClient) {
@@ -82,7 +81,7 @@ class ServerContractTests {
             assertTrue(receiver.signalStore.containsSignedPreKey(originalSignedId))
             assertEquals(SubmissionStatus.ACCEPTED,
                 sender.submit(receiver.userId!!, listOf(delayed)).submitted.single().result.status)
-            receiver.awaitRow { it.entryId == "delayed-before-rotation" }
+            receiver.awaitRow { it.id == "delayed-before-rotation" }
 
             // Consumption while connected must trigger another advisory-driven refill, including refresh.
             val oldRefresh = storage.data!!.getValue("refreshToken")
@@ -102,8 +101,8 @@ class ServerContractTests {
 
             val fresh = registerAndConnect("fresh_signal")
             try {
-                assertEquals(SubmissionStatus.ACCEPTED, sendText(fresh, receiver, "after automatic refill")
-                    .recipients.single().status)
+                becomeFriends(fresh, receiver)
+                sendText(fresh, receiver, "after automatic refill")
                 receiver.awaitContent("after automatic refill")
             } finally { fresh.logout() }
         } finally { receiver.logout(); inspector.logout() }
@@ -115,7 +114,7 @@ class ServerContractTests {
         try {
             val userId = UUID.randomUUID().toString()
             alice.devices.add(userId, listOf(UUID.randomUUID().toString()))
-            suspend fun gone(text: String) = alice.send(listOf(userId), "directMessage", text, 1, text.toByteArray()).recipients
+            suspend fun gone(text: String) = alice.sender.send(listOf(userId), entry(text))
             val results = gone("not deliverable")
             assertEquals(1, results.size)
             assertEquals(userId, results.single().userId)
@@ -221,6 +220,7 @@ class ServerContractTests {
     fun `own metadata consumes no prekeys and established sends reuse their session`(): Unit = runBlocking {
         val alice = registerAndConnect("reuse_sender")
         val bob = registerAndConnect("reuse_target")
+        becomeFriends(alice, bob)
         try {
             val before = alice.api.fetchPreKeyBundles(bob.userId!!).getJSONObject(0)
                 .getJSONObject("oneTimePreKey").getInt("keyId")
@@ -251,8 +251,8 @@ class ServerContractTests {
     }
 
     @Test
-    fun `failed local inbox persistence rolls back decrypt and redelivery persists exactly once`(): Unit = runBlocking {
-        verifyReceiveRecovery("InboxRow")
+    fun `failed local content persistence rolls back decrypt and redelivery persists exactly once`(): Unit = runBlocking {
+        verifyReceiveRecovery("ConversationEntry")
     }
 
     @Test
@@ -268,37 +268,36 @@ class ServerContractTests {
         bob.register(uniqueName("durable_receiver"), TEST_PASSWORD)
         bob.connect()
         try {
+            becomeFriends(alice, bob)
             // Use an established ratchet, not a repeated initial prekey message.
             sendAndVerify(alice, bob, "establish durable session")
             sendAndVerify(bob, alice, "acknowledge Signal session")
-            bob.inbox.consume(bob.inbox.peek().map { it.id })
+            bob.sweepExpired(now = Long.MAX_VALUE / 2)
             while (bob.messageReceived.tryReceive().isSuccess) { }
             driver.execute(null,
                 "CREATE TRIGGER fail_contract_write BEFORE INSERT ON $table BEGIN SELECT RAISE(FAIL, 'contract disk failure'); END", 0)
-            assertEquals(SubmissionStatus.ACCEPTED, sendText(alice, bob, "recover after storage failure").recipients.single().status)
+            sendText(alice, bob, "recover after storage failure")
             eventually(message = "local durable insert rejection") {
                 bob.getDebugLog().any { it.contains("contract disk failure") }
             }
-            assertEquals(0L, bob.inbox.depth())
+            assertTrue(bob.getMessages().isEmpty())
             assertNull(bob.messageReceived.tryReceive().getOrNull())
             bob.disconnect()
             driver.execute(null, "DROP TRIGGER fail_contract_write", 0)
             bob.connect()
             val recovered = bob.awaitContent("recover after storage failure")
-            assertEquals(alice.userId, recovered.senderUserId)
-            assertEquals(alice.deviceId, recovered.senderDeviceId)
-            assertEquals(1L, bob.inbox.depth())
+            assertEquals(alice.userId, recovered.authorUserId)
+            assertEquals(1, bob.getMessages().size)
             assertEquals("directMessage", bob.messageReceived.tryReceive().getOrNull())
             assertNull(bob.messageReceived.tryReceive().getOrNull())
             bob.processPendingMessages(2_000)
             bob.disconnect()
-            // Remove the local deduplication row: an unacknowledged server copy would now fail decrypt.
-            bob.inbox.consume(listOf(recovered.id))
+            bob.sweepExpired(now = Long.MAX_VALUE / 2)
             val decryptFailures = bob.getDebugLog().count { it.contains("decrypt failed") }
             bob.connect()
             sendAndVerify(alice, bob, "after recovered ack")
             assertEquals(decryptFailures, bob.getDebugLog().count { it.contains("decrypt failed") })
-            assertEquals(listOf("after recovered ack"), bob.inbox.peek().map { it.content() })
+            assertEquals(listOf("after recovered ack"), bob.getMessages().map { it.content })
         } finally { alice.logout(); bob.logout(); driver.close() }
     }
 

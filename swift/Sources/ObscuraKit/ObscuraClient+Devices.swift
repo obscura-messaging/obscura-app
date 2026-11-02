@@ -86,7 +86,7 @@ extension ObscuraClient {
             } catch {
                 throw ObscuraError.protocolViolation("invalid history snapshot")
             }
-            try await entries.importSnapshot(parsed)
+            try await content.importSnapshot(parsed)
         }
         try await connect()
     }
@@ -155,8 +155,8 @@ extension ObscuraClient {
         let friendList = try await friends.listSync()
         bundle.friendListVersion = friendList.version
         bundle.friends = friendList.friends
-        let snapshot = try await entries.snapshot()
-        if !snapshot.entries.isEmpty {
+        let snapshot = try await content.snapshot()
+        if !snapshot.messages.isEmpty || !snapshot.stories.isEmpty || !snapshot.profiles.isEmpty {
             let uploaded = try await uploadAttachment(snapshot.serializedData())
             bundle.history.attachmentID = uploaded.id
             bundle.history.contentKey = uploaded.contentKey

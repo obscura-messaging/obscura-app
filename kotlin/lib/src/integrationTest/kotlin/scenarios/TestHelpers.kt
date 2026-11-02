@@ -1,17 +1,16 @@
 package scenarios
 
 import dev.barrelmaker.obscura.kit.AuthState
+import dev.barrelmaker.obscura.kit.ConversationItemData
 import dev.barrelmaker.obscura.kit.NoOpLogger
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraConfig
 import dev.barrelmaker.obscura.kit.ObscuraLogger
 import dev.barrelmaker.obscura.kit.persistence.SessionStorage
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
-import dev.barrelmaker.obscura.kit.stores.InboxRecord
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import org.json.JSONObject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -92,36 +91,25 @@ suspend fun becomeFriends(a: ObscuraClient, b: ObscuraClient) {
     assertEquals(FriendStatus.ACCEPTED, b.friendStatus(a.userId!!))
 }
 
-fun InboxRecord.content(): String = runCatching { JSONObject(String(payload)).optString("content") }.getOrDefault("")
-
-/** The inbox row matching [predicate], waiting for it to arrive. */
-suspend fun ObscuraClient.awaitRow(timeoutMs: Long = 15_000, predicate: (InboxRecord) -> Boolean): InboxRecord {
-    var row: InboxRecord? = null
-    eventually(timeoutMs, "inbox row") { inbox.peek(500).find(predicate).also { row = it } != null }
+/** The stored message matching [predicate], waiting for it to arrive. */
+suspend fun ObscuraClient.awaitRow(timeoutMs: Long = 15_000, predicate: (ConversationItemData) -> Boolean): ConversationItemData {
+    var row: ConversationItemData? = null
+    eventually(timeoutMs, "message row") { getMessages().find(predicate).also { row = it } != null }
     return row!!
 }
 
-suspend fun ObscuraClient.awaitContent(content: String, timeoutMs: Long = 15_000) = awaitRow(timeoutMs) { it.content() == content }
+suspend fun ObscuraClient.awaitContent(content: String, timeoutMs: Long = 15_000) = awaitRow(timeoutMs) { it.content == content }
 
-/** Send a direct message entry to [receiver] without waiting for delivery. */
+/** Send a direct message to [receiver] without waiting for delivery. */
 suspend fun sendText(
     sender: ObscuraClient,
     receiver: ObscuraClient,
     text: String,
-    modelKey: String = "directMessage",
-    sentAt: Long = System.currentTimeMillis(),
-) = sender.send(
-    recipientUserIds = listOf(receiver.userId!!),
-    modelKey = modelKey,
-    entryId = "e_${System.currentTimeMillis()}_${(0..99999).random()}",
-    sentAt = sentAt,
-    payload = JSONObject(mapOf("content" to text)).toString().toByteArray(),
-)
+): String = sender.sendMessage(receiver.userId!!, text)
 
-suspend fun sendAndVerify(sender: ObscuraClient, receiver: ObscuraClient, text: String): InboxRecord {
+suspend fun sendAndVerify(sender: ObscuraClient, receiver: ObscuraClient, text: String): ConversationItemData {
     sendText(sender, receiver, text)
     val row = receiver.awaitContent(text)
-    assertEquals(sender.userId, row.senderUserId)
-    assertEquals(sender.deviceId, row.senderDeviceId)
+    assertEquals(sender.userId, row.authorUserId)
     return row
 }

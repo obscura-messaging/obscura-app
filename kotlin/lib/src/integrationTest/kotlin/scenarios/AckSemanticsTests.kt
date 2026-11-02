@@ -7,6 +7,7 @@ import dev.barrelmaker.obscura.kit.crypto.UuidCodec
 import dev.barrelmaker.obscura.kit.messaging.Messenger
 import kotlinx.coroutines.runBlocking
 import obscura.client.v1.Client.ClientMessage
+import obscura.client.v1.Client.DirectMessage
 import obscura.client.v1.Client.EncryptedMessage
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
@@ -36,7 +37,7 @@ class AckSemanticsTests {
     /** A real ciphertext for [deviceId] with its MAC corrupted, so it fails at the Signal decrypt. */
     private suspend fun sendCorruptCiphertext(sender: ObscuraClient, userId: String, deviceId: String) {
         val address = Messenger.addressFor(deviceId)
-        val plaintext = ClientMessage.newBuilder().setAppEntry(obscura.client.v1.appEntry { model = "corrupt" }).build()
+        val plaintext = ClientMessage.newBuilder().setDirectMessage(DirectMessage.newBuilder().setId("corrupt")).build()
         val ciphertext = SessionCipher(sender.signalStore, address).encrypt(plaintext.toByteArray())
         val bytes = ciphertext.serialize().also { it[it.size - 1] = (it[it.size - 1].toInt() xor 0xFF).toByte() }
         val encrypted = EncryptedMessage.newBuilder()
@@ -73,7 +74,7 @@ class AckSemanticsTests {
         alice.disconnect()
         alice.connect()
         eventually(message = "redelivery") { logger.decryptFailures.get() == 2 }
-        assertEquals(1L, alice.inbox.depth(), "only the warmup is stored")
+        assertEquals(1, alice.getMessages().size, "only the warmup is stored")
 
         alice.disconnect(); bob.disconnect()
     }

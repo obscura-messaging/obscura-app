@@ -35,7 +35,16 @@ final class ClientTests: XCTestCase {
         await assertThrows(.notAuthenticated) { _ = try await client.friendCode() }
         await assertThrows(.notAuthenticated) { try await client.sendTyping(to: ["x"], contextId: "c", state: .started) }
         await assertThrows(.notAuthenticated) {
-            _ = try await client.send(to: ["x"], modelKey: "m", entryId: "e", sentAt: 1, payload: Data())
+            _ = try await client.sendMessage(peerUserId: "x", content: "hi")
+        }
+        await assertThrows(.notAuthenticated) {
+            _ = try await client.postStory(content: "hi", mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil)
+        }
+        await assertThrows(.notAuthenticated) {
+            try await client.updateProfile(displayName: "A", bio: "B")
+        }
+        await assertThrows(.notAuthenticated) {
+            _ = try await client.flushOutbox()
         }
         await assertThrows(.notAuthenticated) { try await client.addFriendByCode(FriendCode.encode(userId: "u", username: "n")) }
         await assertThrows(.notAuthenticated) { try await client.approveLink("code") }
@@ -75,41 +84,88 @@ final class ClientTests: XCTestCase {
 
     // MARK: - Receive classification
 
-    func testANewAppEntryIsInboxedAndWakesWithItsModelKeyButARedeliveryDoesNot() async throws {
+    func testANewStoryIsStoredAndWakesWithItsModelKeyButARedeliveryDoesNot() async throws {
         let wakes = Task {
             var values: [String] = []
             for await value in client.messageReceived { values.append(value) }
             return values
         }
         try await send(clientMessage {
-            $0.appEntry.model = "story"
-            $0.appEntry.id = "s1"
-            $0.appEntry.timestamp = UInt64.max
-            $0.appEntry.data = Data([1, 2, 3])
+            $0.timestamp = UInt64.max
+            $0.story.id = "s1"
+            $0.story.content = "hello story"
         }, from: bob, to: phone.userId)
         let envelope = try XCTUnwrap(phone.envelopes().first)
 
         await client.receive(envelope) { _ in }
         await client.receive(envelope) { _ in }
 
-        let rows = try await client.inbox.peek(limit: 10)
-        XCTAssertEqual(rows.count, 1)
-        XCTAssertEqual(rows[0].senderDeviceId, bob.deviceId)
-        XCTAssertEqual(rows[0].payload, Data([1, 2, 3]))
-        XCTAssertLessThanOrEqual(rows[0].sentAt, UInt64(Date().timeIntervalSince1970 * 1000) + 60_000)
+        let stories = try await client.getStories()
+        XCTAssertEqual(stories.count, 1)
+        XCTAssertEqual(stories[0].id, "s1")
+        XCTAssertEqual(stories[0].authorUserId, bob.userId)
+        XCTAssertEqual(stories[0].content, "hello story")
+        XCTAssertLessThanOrEqual(stories[0].sentAt, UInt64(Date().timeIntervalSince1970 * 1000) + 60_000)
         wakes.cancel()
         let woken = await wakes.value
         XCTAssertEqual(woken, ["story"])
     }
 
-    func testAnUnknownArmIsAckedAndIgnoredWithoutAnInboxRow() async throws {
+    func testSendMessagePixSeenReceiptAndOutboxFlush() async throws {
+        // Sending to a non-friend stores locally with undelivered=1 and throws SEND_FAILED.
+        do {
+            _ = try await client.sendMessage(peerUserId: bob.userId, content: "queued")
+            XCTFail("expected send to non-friend to fail")
+        } catch {
+            XCTAssertEqual((error as? ObscuraError)?.code, "SEND_FAILED")
+        }
+        let stored = try await client.getMessages()
+        XCTAssertEqual(stored.count, 1)
+        XCTAssertEqual(stored[0].content, "queued")
+
+        // Once bob is an accepted friend, flushOutbox delivers it.
+        try await client.friends.add(bob.userId, username: "bob", status: .accepted)
+        let flushed = try await client.flushOutbox()
+        XCTAssertEqual(flushed, 1)
+        let bobReceived = try await bob.receive()
+        XCTAssertEqual(bobReceived.map(\.message.directMessage.content), ["queued"])
+
+        // Incoming pix and seen receipt:
+        let key = Data(repeating: 1, count: 32)
+        let nonce = Data(repeating: 2, count: 12)
+        _ = try await receive(clientMessage {
+            $0.timestamp = 5_000
+            $0.pix.id = "pix_1"
+            $0.pix.peerUserID = phone.userId
+            $0.pix.attachment.id = "att_1"
+            $0.pix.attachment.contentKey = key
+            $0.pix.attachment.nonce = nonce
+            $0.pix.attachment.mediaType = "photo"
+            $0.pix.caption = "look"
+            $0.pix.displayDurationSecs = 7
+        }, from: bob)
+
+        let messages = try await client.getMessages()
+        let pix = try XCTUnwrap(messages.first { $0.id == "pix_1" })
+        XCTAssertEqual(pix.kind, "pix")
+        XCTAssertEqual(pix.mediaRef, "att_1")
+        XCTAssertEqual(pix.caption, "look")
+        XCTAssertEqual(pix.displayDuration, 7)
+        XCTAssertNil(pix.viewedAt)
+
+        try await client.markSeen(entryId: "pix_1")
+        let afterSeen = try await client.getMessages()
+        XCTAssertNotNil(afterSeen.first { $0.id == "pix_1" }?.viewedAt)
+    }
+
+    func testAnUnknownArmIsAckedAndIgnoredWithoutRows() async throws {
         // Field 4, the removed device link approval arm, as an empty message.
         let unknown = try Obscura_Client_V1_ClientMessage(serializedBytes: Data([0x22, 0x00]))
 
         let acks = try await receive(unknown, from: bob)
 
         XCTAssertEqual(acks, 1)
-        let rows = try await client.inbox.peek(limit: 10)
+        let rows = try await client.getMessages()
         XCTAssertTrue(rows.isEmpty)
     }
 
@@ -127,8 +183,8 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(after, accepted)
         let reply = try await bob.receive()
         XCTAssertEqual(reply.map { WireCodec.messageKind($0.message.payload) }, ["FRIEND_ACCEPT"])
-        let depth = try await client.inbox.depth()
-        XCTAssertEqual(depth, 0, "friend traffic is kit-internal")
+        let messages = try await client.getMessages()
+        XCTAssertEqual(messages, [], "friend traffic is kit-internal")
     }
 
     func testAnAcceptPromotesOnlyARequestThisUserSent() async throws {
@@ -148,7 +204,7 @@ final class ClientTests: XCTestCase {
         XCTAssertNil(unknown)
     }
 
-    func testTypingSignalsDriveTheTrackerAndNeverTheInbox() async throws {
+    func testTypingSignalsDriveTheTrackerAndNeverContentStores() async throws {
         let carol = try await server.register(UUID().uuidString.lowercased())
         _ = try await receive(clientMessage {
             $0.typingSignal.contextID = "c"
@@ -162,8 +218,8 @@ final class ClientTests: XCTestCase {
         var typers = client.observeTyping(contextId: "c").makeAsyncIterator()
         let current = await typers.next()
         XCTAssertEqual(current, [bob.userId])
-        let depth = try await client.inbox.depth()
-        XCTAssertEqual(depth, 0)
+        let messages = try await client.getMessages()
+        XCTAssertEqual(messages, [])
 
         try await client.logout()
         let afterLogout = await typers.next()

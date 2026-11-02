@@ -11,11 +11,10 @@ import { toast } from '../components/Toast';
 import { confirm } from '../components/confirm';
 import type { RootStackParamList } from '../navigation/types';
 import {
-  useSession, useIdentity, useModelEntries, saveEntry, logout, loadDebugLog,
+  useSession, useIdentity, useProfiles, saveOwnProfile, logout, loadDebugLog,
   type ConnectionState,
 } from '../state/store';
-import { profileEntryId } from '../domain/schema';
-import { displayNameFor } from '../domain/friends';
+import { friendProfileEntries } from '../domain/friends';
 import { s, colors } from '../styles';
 
 const CONNECTION_LABELS: Record<ConnectionState, { color: string; label: string }> = {
@@ -32,8 +31,8 @@ export function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { myUserId, myUsername, connState } = useSession();
   const identity = useIdentity();
-  const profiles = useModelEntries('profile');
-  const ownProfile = profiles.find((p) => p.id === profileEntryId(myUserId));
+  const profiles = useProfiles();
+  const ownProfile = profiles.find((p) => p.userId === myUserId);
   const [displayName, setDisplayName] = useState(myUsername);
   const [bio, setBio] = useState('');
   const [saving, setSaving] = useState(false);
@@ -46,8 +45,8 @@ export function ProfileScreen() {
   useEffect(() => {
     if (hydrated.current || edited.current) return;
     if (ownProfile) {
-      setDisplayName(ownProfile.data.displayName || myUsername);
-      setBio(ownProfile.data.bio ?? '');
+      setDisplayName(ownProfile.displayName || myUsername);
+      setBio(ownProfile.bio ?? '');
       hydrated.current = true;
     } else {
       setDisplayName(myUsername);
@@ -72,7 +71,7 @@ export function ProfileScreen() {
     if (saving) return;
     setSaving(true);
     try {
-      await saveEntry('profile', { displayName, bio }, profileEntryId(myUserId));
+      await saveOwnProfile(displayName, bio);
       toast.success('Profile updated');
     } catch (e) {
       toast.error(errorMessage(e));
@@ -88,10 +87,7 @@ export function ProfileScreen() {
   };
 
   // The heading is the friend-graph name; `displayName` is content its owner chose.
-  const friendProfiles = profiles.flatMap((entry) => {
-    const name = entry.authorUserId === myUserId ? null : displayNameFor(entry.authorUserId, identity);
-    return name === null ? [] : [{ entry, name }];
-  });
+  const friendProfiles = friendProfileEntries(profiles, identity);
 
   const conn = CONNECTION_LABELS[connState];
 
@@ -117,10 +113,10 @@ export function ProfileScreen() {
         {friendProfiles.length > 0 && (<>
           <Text style={s.sectionTitle}>friend profiles</Text>
           {friendProfiles.map(({ entry, name }) => (
-            <View key={entry.id} style={pf.profileCard}>
+            <View key={entry.userId} style={pf.profileCard}>
               <Text style={pf.profileAuthor}>{name}</Text>
-              {entry.data.displayName ? <Text style={pf.profileContent}>{entry.data.displayName}</Text> : null}
-              {entry.data.bio ? <Text style={pf.profileContent}>{entry.data.bio}</Text> : null}
+              {entry.displayName ? <Text style={pf.profileContent}>{entry.displayName}</Text> : null}
+              {entry.bio ? <Text style={pf.profileContent}>{entry.bio}</Text> : null}
             </View>
           ))}
         </>)}

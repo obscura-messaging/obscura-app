@@ -21,8 +21,7 @@ final class MultiDeviceTests: XCTestCase {
         XCTAssertEqual(fromLaptop.recipients.map(\.status), [.accepted])
         XCTAssertEqual(Set(fromLaptop.selfSync.map(\.deviceId)), [alice.deviceId, tablet.deviceId])
         let atBob = try await bob.waitForEntry("from-laptop")
-        XCTAssertEqual(atBob.senderUserId, alice.userId)
-        XCTAssertEqual(atBob.senderDeviceId, laptop.deviceId)
+        XCTAssertEqual(atBob.authorUserId, alice.userId)
         _ = try await alice.waitForEntry("from-laptop")
         _ = try await tablet.waitForEntry("from-laptop")
         XCTAssertTrue(bob.client.getDebugLog().filter { $0.hasPrefix("identity changed") }.isEmpty,
@@ -159,23 +158,27 @@ final class MultiDeviceTests: XCTestCase {
                        ["identity changed for \(alice.userId)"])
     }
 
-    func testANewlyLinkedDeviceHasTheHistoryButNotTheLocalMetadata() async throws {
+    func testANewlyLinkedDeviceHasTheHistory() async throws {
         let alice = try await TestUser.register()
-        let story = StoredEntry(id: "s1", data: #"{"text":"hi"}"#, sentAt: 1_706_389_200_000,
-                                authorUserId: alice.userId, authorDeviceId: alice.deviceId, localMetadata: "seen")
-        let pix = StoredEntry(id: "p1", data: "opaque", sentAt: 1_706_389_300_000,
-                              authorUserId: "some-peer-user", authorDeviceId: "some-peer-device", localMetadata: nil)
-        try await alice.client.entries.put(model: "story", entry: story)
-        try await alice.client.entries.put(model: "pix", entry: pix)
+        let now = UInt64(Date().timeIntervalSince1970 * 1000)
+        let story = StoryItem(
+            id: "s1", authorUserId: alice.userId, sentAt: now, content: "hi",
+            mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil
+        )
+        let msg = ConversationItem(
+            id: "m1", peerUserId: "some-peer-user", kind: "message", authorUserId: "some-peer-user",
+            sentAt: now, viewedAt: nil, content: "opaque", mediaRef: nil, contentKey: nil,
+            nonce: nil, mediaType: nil, caption: nil, captionMeta: nil, displayDuration: 0
+        )
+        try await alice.client.content.insertStoryItem(story)
+        try await alice.client.content.insertConversationItem(msg)
 
         let laptop = try await TestUser.link(to: alice)
 
-        let stories = try await laptop.client.entries.all(model: "story")
-        let pixes = try await laptop.client.entries.all(model: "pix")
-        XCTAssertEqual(stories, [StoredEntry(id: story.id, data: story.data, sentAt: story.sentAt,
-                                             authorUserId: story.authorUserId, authorDeviceId: story.authorDeviceId,
-                                             localMetadata: nil)])
-        XCTAssertEqual(pixes, [pix])
+        let stories = try await laptop.client.getStories(now: now)
+        let messages = try await laptop.client.getMessages()
+        XCTAssertEqual(stories, [story])
+        XCTAssertEqual(messages, [msg])
         await laptop.client.disconnect()
     }
 }

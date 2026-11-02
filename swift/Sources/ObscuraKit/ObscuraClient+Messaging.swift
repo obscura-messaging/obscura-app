@@ -1,17 +1,339 @@
 import Foundation
 
 extension ObscuraClient {
-    // MARK: - Send
+    // MARK: - Content & Messaging
 
-    /// Sends an entry to every device of the named users and to this user's other devices. This
-    /// device gets nothing, so the app stores its own copy in `entries`.
-    public func send(to recipientUserIds: [String], modelKey: String, entryId: String, sentAt: UInt64,
-                     payload: Data) async throws -> SendReport {
+    static func nowMs() -> UInt64 {
+        UInt64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    static func generateId(prefix: String) -> String {
+        let rand = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(8)
+        return "\(prefix)_\(nowMs())_\(rand)"
+    }
+
+    public func getMessages() async throws -> [ConversationItem] {
+        try await content.messages()
+    }
+
+    public func sendMessage(peerUserId: String, content text: String) async throws -> String {
+        guard !peerUserId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ObscuraError.invalidArgument("peerUserId must not be blank")
+        }
+        let (selfUserId, _) = try await sendContext()
+        guard peerUserId != selfUserId else {
+            throw ObscuraError.invalidArgument("cannot message yourself")
+        }
+        let sentAt = Self.nowMs()
+        let id = Self.generateId(prefix: "dm")
+        let item = ConversationItem(
+            id: id,
+            peerUserId: peerUserId,
+            kind: "message",
+            authorUserId: selfUserId,
+            sentAt: sentAt,
+            viewedAt: nil,
+            content: text,
+            mediaRef: nil,
+            contentKey: nil,
+            nonce: nil,
+            mediaType: nil,
+            caption: nil,
+            captionMeta: nil,
+            displayDuration: 0
+        )
+        try await content.insertConversationItem(item, undelivered: false)
+
+        let isAccepted = try await friends.friend(peerUserId)?.status == .accepted
         var message = Obscura_Client_V1_ClientMessage()
-        message.appEntry.model = modelKey
-        message.appEntry.id = entryId
-        message.appEntry.timestamp = sentAt
-        message.appEntry.data = payload
+        message.timestamp = sentAt
+        message.directMessage.id = id
+        message.directMessage.peerUserID = peerUserId
+        message.directMessage.content = text
+
+        do {
+            let report = try await send(message, to: isAccepted ? [peerUserId] : [])
+            guard isAccepted, report.recipients.contains(where: { $0.status == .accepted }) else {
+                throw ObscuraError.sendFailed("directMessage to \(peerUserId) reached no recipient devices")
+            }
+            return id
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try? await content.setMessageUndelivered(id: id, undelivered: true)
+            throw error
+        }
+    }
+
+    public func sendPix(
+        peerUserId: String,
+        mediaRef: String,
+        contentKey: String,
+        nonce: String,
+        mediaType: String,
+        caption: String,
+        captionMeta: String?,
+        displayDuration: Int
+    ) async throws -> String {
+        guard !peerUserId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ObscuraError.invalidArgument("peerUserId must not be blank")
+        }
+        guard !mediaRef.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let keyBytes = Data(base64Encoded: contentKey), !keyBytes.isEmpty,
+              let nonceBytes = Data(base64Encoded: nonce), !nonceBytes.isEmpty else {
+            throw ObscuraError.invalidArgument("invalid pix attachment reference or key material")
+        }
+        let (selfUserId, _) = try await sendContext()
+        guard peerUserId != selfUserId else {
+            throw ObscuraError.invalidArgument("cannot message yourself")
+        }
+        let sentAt = Self.nowMs()
+        let id = Self.generateId(prefix: "pix")
+        let normalizedMediaType = mediaType.isEmpty ? "photo" : mediaType
+        let item = ConversationItem(
+            id: id,
+            peerUserId: peerUserId,
+            kind: "pix",
+            authorUserId: selfUserId,
+            sentAt: sentAt,
+            viewedAt: nil,
+            content: "",
+            mediaRef: mediaRef,
+            contentKey: contentKey,
+            nonce: nonce,
+            mediaType: normalizedMediaType,
+            caption: caption.isEmpty ? nil : caption,
+            captionMeta: (captionMeta?.isEmpty == false) ? captionMeta : nil,
+            displayDuration: max(0, displayDuration)
+        )
+        try await content.insertConversationItem(item, undelivered: false)
+
+        let isAccepted = try await friends.friend(peerUserId)?.status == .accepted
+        var message = Obscura_Client_V1_ClientMessage()
+        message.timestamp = sentAt
+        message.pix.id = id
+        message.pix.peerUserID = peerUserId
+        message.pix.attachment.id = mediaRef
+        message.pix.attachment.contentKey = keyBytes
+        message.pix.attachment.nonce = nonceBytes
+        message.pix.attachment.mediaType = normalizedMediaType
+        message.pix.caption = caption
+        message.pix.captionMeta = captionMeta ?? ""
+        message.pix.displayDurationSecs = UInt32(max(0, displayDuration))
+
+        do {
+            let report = try await send(message, to: isAccepted ? [peerUserId] : [])
+            guard isAccepted, report.recipients.contains(where: { $0.status == .accepted }) else {
+                throw ObscuraError.sendFailed("pix to \(peerUserId) reached no recipient devices")
+            }
+            return id
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try? await content.setMessageUndelivered(id: id, undelivered: true)
+            throw error
+        }
+    }
+
+    public func markSeen(entryId: String) async throws {
+        guard !entryId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let (selfUserId, _) = try await sendContext()
+        let now = Self.nowMs()
+        guard let updated = try await content.markSeenLocal(entryId: entryId, selfUserId: selfUserId, viewedAt: now) else {
+            return
+        }
+        let isAccepted = try await friends.friend(updated.peerUserId)?.status == .accepted
+        var message = Obscura_Client_V1_ClientMessage()
+        message.timestamp = now
+        message.seenReceipt.entryID = entryId
+        message.seenReceipt.peerUserID = updated.peerUserId
+        message.seenReceipt.viewedAt = now
+        _ = try await send(message, to: isAccepted ? [updated.peerUserId] : [])
+    }
+
+    public func getStories(now: UInt64 = UInt64(Date().timeIntervalSince1970 * 1000)) async throws -> [StoryItem] {
+        try await content.stories(now: now)
+    }
+
+    public func postStory(
+        content text: String,
+        mediaRef: String?,
+        contentKey: String?,
+        nonce: String?,
+        mediaType: String?,
+        captionMeta: String?
+    ) async throws -> String {
+        let hasMedia = (mediaRef?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+        var keyBytes: Data?
+        var nonceBytes: Data?
+        if hasMedia {
+            guard let contentKey, let decodedKey = Data(base64Encoded: contentKey), !decodedKey.isEmpty,
+                  let nonce, let decodedNonce = Data(base64Encoded: nonce), !decodedNonce.isEmpty else {
+                throw ObscuraError.invalidArgument("invalid story attachment key material")
+            }
+            keyBytes = decodedKey
+            nonceBytes = decodedNonce
+        }
+        let (selfUserId, _) = try await sendContext()
+        let sentAt = Self.nowMs()
+        let id = Self.generateId(prefix: "story")
+        let item = StoryItem(
+            id: id,
+            authorUserId: selfUserId,
+            sentAt: sentAt,
+            content: text,
+            mediaRef: hasMedia ? mediaRef : nil,
+            contentKey: hasMedia ? contentKey : nil,
+            nonce: hasMedia ? nonce : nil,
+            mediaType: hasMedia ? (mediaType?.isEmpty == false ? mediaType : "photo") : nil,
+            captionMeta: (captionMeta?.isEmpty == false) ? captionMeta : nil
+        )
+        try await content.insertStoryItem(item, undelivered: false)
+
+        let peerIds = try await friends.all().filter { $0.status == .accepted }.map(\.userId)
+        var message = Obscura_Client_V1_ClientMessage()
+        message.timestamp = sentAt
+        message.story.id = id
+        message.story.content = text
+        if hasMedia, let mediaRef, let keyBytes, let nonceBytes {
+            message.story.attachment.id = mediaRef
+            message.story.attachment.contentKey = keyBytes
+            message.story.attachment.nonce = nonceBytes
+            message.story.attachment.mediaType = item.mediaType ?? "photo"
+        }
+        message.story.captionMeta = captionMeta ?? ""
+
+        do {
+            let report = try await send(message, to: peerIds)
+            if !peerIds.isEmpty, !report.recipients.contains(where: { $0.status == .accepted }) {
+                throw ObscuraError.sendFailed("story reached no recipient devices")
+            }
+            return id
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try? await content.setStoryUndelivered(id: id, undelivered: true)
+            throw error
+        }
+    }
+
+    public func getProfiles() async throws -> [ProfileItem] {
+        try await content.profiles()
+    }
+
+    public func updateProfile(displayName: String, bio: String) async throws {
+        let session = try await requireFreshSession()
+        guard sender != nil else { throw ObscuraError.notAuthenticated }
+        let now = Self.nowMs()
+        let existing = try await content.profile(userId: session.userId)
+        let sentAt = existing.map { max(now, $0.updatedAt + 1) } ?? now
+        let item = ProfileItem(
+            userId: session.userId,
+            authorDeviceId: session.deviceId,
+            updatedAt: sentAt,
+            displayName: displayName,
+            bio: bio
+        )
+        try await content.upsertProfile(item, undelivered: false)
+
+        let peerIds = try await friends.all().filter { $0.status == .accepted }.map(\.userId)
+        var message = Obscura_Client_V1_ClientMessage()
+        message.timestamp = sentAt
+        message.profile.displayName = displayName
+        message.profile.bio = bio
+
+        do {
+            let report = try await send(message, to: peerIds)
+            if !peerIds.isEmpty, !report.recipients.contains(where: { $0.status == .accepted }) {
+                throw ObscuraError.sendFailed("profile reached no recipient devices")
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try? await content.setProfileUndelivered(userId: session.userId, updatedAt: sentAt, undelivered: true)
+            throw error
+        }
+    }
+
+    public func flushOutbox() async throws -> Int {
+        _ = try await sendContext()
+        let acceptedFriends = Set(try await friends.all().filter { $0.status == .accepted }.map(\.userId))
+        var delivered = 0
+
+        for row in try await content.undeliveredMessages() {
+            guard acceptedFriends.contains(row.peerUserId) else { continue }
+            var message = Obscura_Client_V1_ClientMessage()
+            message.timestamp = row.sentAt
+            if row.kind == "pix" {
+                guard let mediaRef = row.mediaRef,
+                      let contentKey = row.contentKey, let keyBytes = Data(base64Encoded: contentKey),
+                      let nonce = row.nonce, let nonceBytes = Data(base64Encoded: nonce) else { continue }
+                message.pix.id = row.id
+                message.pix.peerUserID = row.peerUserId
+                message.pix.attachment.id = mediaRef
+                message.pix.attachment.contentKey = keyBytes
+                message.pix.attachment.nonce = nonceBytes
+                message.pix.attachment.mediaType = row.mediaType ?? "photo"
+                message.pix.caption = row.caption ?? ""
+                message.pix.captionMeta = row.captionMeta ?? ""
+                message.pix.displayDurationSecs = UInt32(max(0, row.displayDuration))
+            } else {
+                message.directMessage.id = row.id
+                message.directMessage.peerUserID = row.peerUserId
+                message.directMessage.content = row.content
+            }
+            if let report = try? await send(message, to: [row.peerUserId]),
+               report.recipients.contains(where: { $0.status == .accepted }) {
+                try await content.setMessageUndelivered(id: row.id, undelivered: false)
+                delivered += 1
+            }
+        }
+
+        let friendList = Array(acceptedFriends)
+        for row in try await content.undeliveredStories() {
+            var message = Obscura_Client_V1_ClientMessage()
+            message.timestamp = row.sentAt
+            message.story.id = row.id
+            message.story.content = row.content
+            if let mediaRef = row.mediaRef, !mediaRef.isEmpty,
+               let contentKey = row.contentKey, let keyBytes = Data(base64Encoded: contentKey),
+               let nonce = row.nonce, let nonceBytes = Data(base64Encoded: nonce) {
+                message.story.attachment.id = mediaRef
+                message.story.attachment.contentKey = keyBytes
+                message.story.attachment.nonce = nonceBytes
+                message.story.attachment.mediaType = row.mediaType ?? "photo"
+            }
+            message.story.captionMeta = row.captionMeta ?? ""
+            if let report = try? await send(message, to: friendList),
+               friendList.isEmpty || report.recipients.contains(where: { $0.status == .accepted }) {
+                try await content.setStoryUndelivered(id: row.id, undelivered: false)
+                delivered += 1
+            }
+        }
+
+        for row in try await content.undeliveredProfiles() {
+            var message = Obscura_Client_V1_ClientMessage()
+            message.timestamp = row.updatedAt
+            message.profile.displayName = row.displayName
+            message.profile.bio = row.bio
+            if let report = try? await send(message, to: friendList),
+               friendList.isEmpty || report.recipients.contains(where: { $0.status == .accepted }) {
+                try await content.setProfileUndelivered(userId: row.userId, updatedAt: row.updatedAt, undelivered: false)
+                delivered += 1
+            }
+        }
+
+        return delivered
+    }
+
+    public func sweepExpired(
+        now: UInt64 = UInt64(Date().timeIntervalSince1970 * 1000)
+    ) async throws -> (purgedMediaRefs: [String], touchedModels: [String]) {
+        try await content.sweepExpired(now: now)
+    }
+
+    /// Sends a `ClientMessage` to every device of the named users and to this user's other devices.
+    func send(_ message: Obscura_Client_V1_ClientMessage, to recipientUserIds: [String]) async throws -> SendReport {
         let data = try message.serializedData()
 
         let (userId, sender) = try await sendContext()
