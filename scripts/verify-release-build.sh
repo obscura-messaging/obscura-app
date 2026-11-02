@@ -2,13 +2,13 @@
 set -euo pipefail
 
 if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
-    echo "error: internal builds must be started on main" >&2
+    echo "error: release builds must be started on main" >&2
     exit 1
 fi
 
 for actor in "${GITHUB_ACTOR:-}" "${GITHUB_TRIGGERING_ACTOR:-}"; do
     if [[ "$actor" != "barrelmaker97" && "$actor" != "rhelsing" ]]; then
-        echo "error: only Obscura owners can start or rerun internal builds" >&2
+        echo "error: only Obscura owners can start or rerun release builds" >&2
         exit 1
     fi
 done
@@ -42,7 +42,17 @@ if (( build_number > 2100000000 )); then
     echo "error: Android version code exceeds the supported limit" >&2
     exit 1
 fi
+if [[ ! -f package.json ]]; then
+    echo "error: package.json is missing" >&2
+    exit 1
+fi
+version="$(node -p "require('./package.json').version")"
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "error: package.json version must be X.Y.Z SemVer (found '$version')" >&2
+    exit 1
+fi
 {
     echo "sha=$sha"
     echo "build_number=$build_number"
+    echo "version=$version"
 } >> "$GITHUB_OUTPUT"

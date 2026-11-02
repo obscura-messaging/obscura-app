@@ -66,15 +66,15 @@ android-run: android-config ensure-node-modules
 
 # Assemble a compile-only Android release APK (env: dev or prod). Pass an
 # architecture list and false to skip R8 for a faster build:
-# just android-release arm64-v8a false
-android-release architectures="" minify="true" env="dev": android-config ensure-node-modules
+# just android-apk arm64-v8a false
+android-apk architectures="" minify="true" env="dev": android-config ensure-node-modules
     architectures={{quote(architectures)}}; minify={{quote(minify)}}; env={{quote(env)}}; args=("-PenableProguardInReleaseBuilds=$minify" "-PobscuraEnv=$env"); [[ -z "$architectures" ]] || args+=("-PreactNativeArchitectures=$architectures"); ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:assembleRelease --parallel "${args[@]}"
 
 # Bundle a signed, minified Android App Bundle (.aab) with real Firebase configuration.
 # Signing credentials are read from android/keystore.properties or the
 # ANDROID_RELEASE_* environment variables.
-android-distribution version_code version_name env="dev": android-config ensure-node-modules
-    version_code={{quote(version_code)}}; version_name={{quote(version_name)}}; env={{quote(env)}}; [[ "$version_code" =~ ^[1-9][0-9]*$ ]] || { echo "error: distribution version code must be a positive integer" >&2; exit 1; }; [[ -n "$version_name" ]] || { echo "error: distribution version name is required" >&2; exit 1; }; ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:bundleRelease --parallel -PenableProguardInReleaseBuilds=true -PobscuraDistributionBuild=true -PobscuraEnv="$env" -PobscuraVersionCode="$version_code" -PobscuraVersionName="$version_name"
+android-bundle version_code version_name env="dev": android-config ensure-node-modules
+    version_code={{quote(version_code)}}; version_name={{quote(version_name)}}; env={{quote(env)}}; [[ "$version_code" =~ ^[1-9][0-9]*$ ]] || { echo "error: bundle version code must be a positive integer" >&2; exit 1; }; [[ -n "$version_name" ]] || { echo "error: bundle version name is required" >&2; exit 1; }; ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:bundleRelease --parallel -PenableProguardInReleaseBuilds=true -PobscuraSignedBundle=true -PobscuraEnv="$env" -PobscuraVersionCode="$version_code" -PobscuraVersionName="$version_name"
 
 # Clean Android build outputs.
 android-clean: ensure-node-modules
@@ -95,4 +95,12 @@ ios-build architecture="" env="dev": ios-prepare
 
 # Archive the iOS device build for App Store Connect / TestFlight (env: dev or prod).
 ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="" env="dev" profile_specifier="": (ios-prepare "ios-device")
-    build_number={{quote(build_number)}}; version={{quote(version)}}; env={{quote(env)}}; profile_specifier={{quote(profile_specifier)}}; if [[ "$env" == "prod" ]]; then bundle_id="dev.barrelmaker.obscura"; display_name="Obscura"; api_host="obscura.barrelmaker.dev"; default_profile="Obscura App Store"; elif [[ "$env" == "dev" ]]; then bundle_id="dev.barrelmaker.obscura.dev"; display_name="Obscura Dev"; api_host="devscura.barrelmaker.dev"; default_profile="Obscura Dev App Store"; else echo "error: env must be 'dev' or 'prod'" >&2; exit 1; fi; args=(PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" OBSCURA_DISPLAY_NAME="$display_name" OBSCURA_API_HOST="$api_host" PROVISIONING_PROFILE_SPECIFIER="${profile_specifier:-$default_profile}"); [[ -z "$build_number" ]] || args+=(CURRENT_PROJECT_VERSION="$build_number"); [[ -z "$version" ]] || args+=(MARKETING_VERSION="$version"); GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura -configuration Release -destination 'generic/platform=iOS' -archivePath {{quote(archive_path)}} "${args[@]}" archive
+    build_number={{quote(build_number)}}; version={{quote(version)}}; env={{quote(env)}}; profile_specifier={{quote(profile_specifier)}}; [[ -n "$version" ]] || version="$(node -p "require('./package.json').version")"; if [[ "$env" == "prod" ]]; then bundle_id="dev.barrelmaker.obscura"; display_name="Obscura"; api_host="obscura.barrelmaker.dev"; default_profile="Obscura App Store"; elif [[ "$env" == "dev" ]]; then bundle_id="dev.barrelmaker.obscura.dev"; display_name="Obscura Dev"; api_host="devscura.barrelmaker.dev"; default_profile="Obscura Dev App Store"; else echo "error: env must be 'dev' or 'prod'" >&2; exit 1; fi; args=(PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" OBSCURA_DISPLAY_NAME="$display_name" OBSCURA_API_HOST="$api_host" PROVISIONING_PROFILE_SPECIFIER="${profile_specifier:-$default_profile}" MARKETING_VERSION="$version"); [[ -z "$build_number" ]] || args+=(CURRENT_PROJECT_VERSION="$build_number"); GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura -configuration Release -destination 'generic/platform=iOS' -archivePath {{quote(archive_path)}} "${args[@]}" archive
+
+# Dispatch a dev release build (Obscura Dev -> Play Internal + TestFlight) from main.
+release-dev:
+    gh workflow run release-dev.yml --ref main
+
+# Dispatch a prod release build (Obscura -> Play Internal + TestFlight) from main.
+release-prod:
+    gh workflow run release-prod.yml --ref main

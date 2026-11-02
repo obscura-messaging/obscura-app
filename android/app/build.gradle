@@ -17,7 +17,7 @@ def signingValue = { String propertyName, String environmentName ->
 def releaseStoreFilePath = signingValue("storeFile", "ANDROID_RELEASE_STORE_FILE")
 def releaseStorePassword = signingValue("storePassword", "ANDROID_RELEASE_STORE_PASSWORD")
 def releaseKeyAlias = signingValue("keyAlias", "ANDROID_RELEASE_KEY_ALIAS")
-def releaseKeyPassword = signingValue("keyPassword", "ANDROID_RELEASE_KEY_PASSWORD")
+def releaseKeyPassword = signingValue("keyPassword", "ANDROID_RELEASE_KEY_PASSWORD") ?: releaseStorePassword
 def releaseStoreFile = releaseStoreFilePath ? file(releaseStoreFilePath) : null
 def releaseSigningConfigured =
     releaseStoreFile?.isFile() &&
@@ -25,8 +25,8 @@ def releaseSigningConfigured =
     releaseKeyAlias &&
     releaseKeyPassword
 
-def distributionBuild =
-    (findProperty("obscuraDistributionBuild") ?: "false").toBoolean()
+def signedBundleBuild =
+    (findProperty("obscuraSignedBundle") ?: "false").toBoolean()
 def obscuraEnv =
     (findProperty("obscuraEnv") ?: "dev").toString()
 if (obscuraEnv != "dev" && obscuraEnv != "prod") {
@@ -36,10 +36,11 @@ def isProdEnv = obscuraEnv == "prod"
 def obscuraAppId = isProdEnv ? "dev.barrelmaker.obscura" : "dev.barrelmaker.obscura.dev"
 def obscuraAppName = isProdEnv ? "Obscura" : "Obscura Dev"
 def obscuraApiUrl = isProdEnv ? "https://obscura.barrelmaker.dev" : "https://devscura.barrelmaker.dev"
+def packageJsonVersion = new groovy.json.JsonSlurper().parse(file("../../package.json")).version.toString()
 def obscuraVersionCode =
     (findProperty("obscuraVersionCode") ?: "1").toString().toInteger()
 def obscuraVersionName =
-    (findProperty("obscuraVersionName") ?: "1.0").toString()
+    (findProperty("obscuraVersionName") ?: packageJsonVersion).toString()
 
 if (obscuraVersionCode <= 0) {
     throw new GradleException("obscuraVersionCode must be a positive integer")
@@ -47,26 +48,26 @@ if (obscuraVersionCode <= 0) {
 if (obscuraVersionName.trim().isEmpty()) {
     throw new GradleException("obscuraVersionName must not be empty")
 }
-if (distributionBuild) {
+if (signedBundleBuild) {
     if (!releaseSigningConfigured) {
         throw new GradleException(
-            "Distribution builds require a readable release keystore and all signing credentials"
+            "Signed bundle builds require a readable release keystore and all signing credentials"
         )
     }
     if (!hasProperty("obscuraVersionCode") || !hasProperty("obscuraVersionName")) {
         throw new GradleException(
-            "Distribution builds require obscuraVersionCode and obscuraVersionName"
+            "Signed bundle builds require obscuraVersionCode and obscuraVersionName"
         )
     }
 
     def firebaseConfig = file("google-services.json")
     def firebaseStub = file("google-services.stub.json")
     if (!firebaseConfig.isFile()) {
-        throw new GradleException("Distribution builds require android/app/google-services.json")
+        throw new GradleException("Signed bundle builds require android/app/google-services.json")
     }
     if (firebaseStub.isFile() && firebaseConfig.bytes == firebaseStub.bytes) {
         throw new GradleException(
-            "Distribution builds require the real Firebase config, not google-services.stub.json"
+            "Signed bundle builds require the real Firebase config, not google-services.stub.json"
         )
     }
 }

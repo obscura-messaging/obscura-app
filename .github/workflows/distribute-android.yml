@@ -1,12 +1,18 @@
-name: Internal / Android
+name: Distribute / Android
 
 on:
   workflow_call:
     inputs:
+      env:
+        required: true
+        type: string
       sha:
         required: true
         type: string
       build_number:
+        required: true
+        type: string
+      version:
         required: true
         type: string
 
@@ -18,15 +24,17 @@ jobs:
     name: Build signed AAB
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment: android-internal
+    environment: android-${{ inputs.env }}
     outputs:
       artifact_name: ${{ steps.metadata.outputs.artifact_name }}
       aab_sha256: ${{ steps.verify.outputs.aab_sha256 }}
       sha: ${{ steps.metadata.outputs.sha }}
     env:
+      OBSCURA_ENV: ${{ inputs.env }}
       DISTRIBUTION_REF: ${{ inputs.sha }}
       BUILD_NUMBER: ${{ inputs.build_number }}
-      ANDROID_PACKAGE_NAME: dev.barrelmaker.obscura.dev
+      RELEASE_VERSION: ${{ inputs.version }}
+      ANDROID_PACKAGE_NAME: ${{ inputs.env == 'prod' && 'dev.barrelmaker.obscura' || 'dev.barrelmaker.obscura.dev' }}
 
     steps:
       - name: Checkout tested commit
@@ -58,7 +66,6 @@ jobs:
           ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
           ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
           ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
-          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -66,11 +73,10 @@ jobs:
             GOOGLE_SERVICES_JSON_BASE64 \
             ANDROID_RELEASE_KEYSTORE_BASE64 \
             ANDROID_RELEASE_STORE_PASSWORD \
-            ANDROID_RELEASE_KEY_ALIAS \
-            ANDROID_RELEASE_KEY_PASSWORD
+            ANDROID_RELEASE_KEY_ALIAS
           do
             [[ -n "${!name:-}" ]] || {
-              echo "error: required android-internal environment value $name is missing" >&2
+              echo "error: required android-${OBSCURA_ENV} environment value $name is missing" >&2
               exit 1
             }
           done
@@ -114,8 +120,8 @@ jobs:
           }
           short_sha="$(git rev-parse --short=7 HEAD)"
           version_code="$BUILD_NUMBER"
-          version_name="1.0.0-dev.${version_code}+${short_sha}"
-          artifact_name="obscura-dev-android-${version_code}-${short_sha}"
+          version_name="$RELEASE_VERSION"
+          artifact_name="obscura-${OBSCURA_ENV}-android-${version_code}-${short_sha}"
 
           {
             echo "sha=$sha"
@@ -127,22 +133,22 @@ jobs:
 
           mkdir -p dist
           {
-            echo "Obscura Dev Android internal build ${version_name}"
+            echo "Obscura (${OBSCURA_ENV}) Android build ${version_name} (${version_code})"
             echo
             git show -s --format='%s%n%nCommit: %H'
           } > dist/release-notes.txt
 
-      - name: Build signed distribution AAB
+      - name: Build signed AAB
         env:
           ANDROID_RELEASE_STORE_FILE: ${{ runner.temp }}/android-release.p12
           ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
           ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
-          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD || secrets.ANDROID_RELEASE_STORE_PASSWORD }}
         run: >-
-          just android-distribution
+          just android-bundle
           '${{ steps.metadata.outputs.version_code }}'
           '${{ steps.metadata.outputs.version_name }}'
-          'dev'
+          '${{ env.OBSCURA_ENV }}'
 
       - name: Verify and stage AAB
         id: verify
@@ -176,17 +182,18 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: android-internal
+    environment: android-${{ inputs.env }}
     permissions:
       contents: read
       id-token: write
     env:
+      OBSCURA_ENV: ${{ inputs.env }}
       ARTIFACT_NAME: ${{ needs.build.outputs.artifact_name }}
       BUILD_SHA: ${{ needs.build.outputs.sha }}
       EXPECTED_REF: ${{ inputs.sha }}
       EXPECTED_SHA256: ${{ needs.build.outputs.aab_sha256 }}
       VERSION_CODE: ${{ inputs.build_number }}
-      ANDROID_PACKAGE_NAME: dev.barrelmaker.obscura.dev
+      ANDROID_PACKAGE_NAME: ${{ inputs.env == 'prod' && 'dev.barrelmaker.obscura' || 'dev.barrelmaker.obscura.dev' }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
     steps:
@@ -214,7 +221,7 @@ jobs:
             GCP_SERVICE_ACCOUNT
           do
             [[ -n "${!name:-}" ]] || {
-              echo "error: required android-internal environment value $name is missing" >&2
+              echo "error: required android-${OBSCURA_ENV} environment value $name is missing" >&2
               exit 1
             }
           done
