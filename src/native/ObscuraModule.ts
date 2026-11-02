@@ -1,8 +1,10 @@
 import { NativeEventEmitter, TurboModuleRegistry, type TurboModule } from 'react-native';
+import type { ConversationItem } from '../domain/chats';
 import type { DeviceInfo } from '../domain/devices';
-import type { Friend } from '../domain/friends';
+import type { Friend, ProfileItem } from '../domain/friends';
+import type { StoryItem } from '../domain/viewer';
 
-export type { DeviceInfo, Friend };
+export type { ConversationItem, DeviceInfo, Friend, ProfileItem, StoryItem };
 
 export interface ResizedImage {
   path: string;
@@ -14,43 +16,6 @@ export interface AttachmentRef {
   id: string;
   contentKey: string;
   nonce: string;
-}
-
-export interface ConversationItem {
-  id: string;
-  peerUserId: string;
-  kind: 'message' | 'pix';
-  authorUserId: string;
-  sentAt: number;
-  viewedAt: number | null;
-  content: string;
-  mediaRef: string | null;
-  contentKey: string | null;
-  nonce: string | null;
-  mediaType: string | null;
-  caption: string | null;
-  captionMeta: string | null;
-  displayDuration: number;
-}
-
-export interface StoryItem {
-  id: string;
-  authorUserId: string;
-  sentAt: number;
-  content: string;
-  mediaRef: string | null;
-  contentKey: string | null;
-  nonce: string | null;
-  mediaType: string | null;
-  captionMeta: string | null;
-}
-
-export interface ProfileItem {
-  userId: string;
-  authorDeviceId: string;
-  updatedAt: number;
-  displayName: string;
-  bio: string;
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'reconnecting' | 'connected';
@@ -134,15 +99,14 @@ export interface ObscuraBridge extends TurboModule, EventModule {
   flushOutbox(): Promise<number>;
   sweepExpired(): Promise<string[]>;
 
-  sendTyping(recipientUserIds: string[], conversationId: string): Promise<void>;
-  stopTyping(recipientUserIds: string[], conversationId: string): Promise<void>;
-  observeTyping(conversationId: string): Promise<void>;
-  stopObservingTyping(conversationId: string): Promise<void>;
+  sendTyping(peerUserId: string): Promise<void>;
+  stopTyping(peerUserId: string): Promise<void>;
+  observeTyping(peerUserId: string): Promise<void>;
+  stopObservingTyping(peerUserId: string): Promise<void>;
 
   uploadAttachment(filePath: string): Promise<AttachmentRef>;
   /** Decrypts to a cache file and resolves its absolute path. */
   downloadAttachment(id: string, contentKey: string, nonce: string): Promise<string>;
-  purgeAttachment(id: string): Promise<void>;
   resizeImage(srcPath: string, maxDim: number, quality: number): Promise<ResizedImage>;
   writeTestImage(width: number, height: number): Promise<ResizedImage>;
 
@@ -167,7 +131,7 @@ export type ObscuraEvent =
   | { type: 'launchedFrom'; screen: string }
   | { type: 'friendsChanged' }
   | { type: 'messageReceived'; model: string }
-  | { type: 'typingChanged'; conversationId: string; userIds: string[] }
+  | { type: 'typingChanged'; peerUserId: string; typing: boolean }
   | { type: 'pushTokenReceived'; token: string };
 
 const emitter = new NativeEventEmitter(Obscura);

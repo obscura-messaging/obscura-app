@@ -16,6 +16,7 @@ import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.ProfileItemData
 import dev.barrelmaker.obscura.kit.StoryItemData
 import dev.barrelmaker.obscura.kit.TypingState
+import dev.barrelmaker.obscura.kit.crypto.AttachmentCrypto
 import dev.barrelmaker.obscura.kit.stores.FriendData
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
@@ -479,16 +480,17 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     // ─── Signals ────────────────────────────────────────────────────────────
-    //
+
+    private fun typingConvId(userA: String, userB: String): String =
+        if (userA <= userB) "${userA}_$userB" else "${userB}_$userA"
+
     @ReactMethod
-    fun sendTyping(recipientUserIds: ReadableArray, conversationId: String, promise: Promise) {
+    fun sendTyping(peerUserId: String, promise: Promise) {
         scope.launch {
             try {
-                requireClient().sendTyping(
-                    recipientUserIds.toStringList(),
-                    conversationId,
-                    TypingState.STARTED,
-                )
+                val c = requireClient()
+                val selfId = c.userId ?: throw ObscuraError.NotAuthenticated()
+                c.sendTyping(listOf(peerUserId), typingConvId(selfId, peerUserId), TypingState.STARTED)
                 promise.resolve(null)
             } catch (e: Exception) {
                 promise.rejectKit("TYPING_ERROR", e)
@@ -497,14 +499,12 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun stopTyping(recipientUserIds: ReadableArray, conversationId: String, promise: Promise) {
+    fun stopTyping(peerUserId: String, promise: Promise) {
         scope.launch {
             try {
-                requireClient().sendTyping(
-                    recipientUserIds.toStringList(),
-                    conversationId,
-                    TypingState.STOPPED,
-                )
+                val c = requireClient()
+                val selfId = c.userId ?: throw ObscuraError.NotAuthenticated()
+                c.sendTyping(listOf(peerUserId), typingConvId(selfId, peerUserId), TypingState.STOPPED)
                 promise.resolve(null)
             } catch (e: Exception) {
                 promise.rejectKit("STOP_TYPING_ERROR", e)
@@ -513,20 +513,26 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun observeTyping(conversationId: String, promise: Promise) {
-        if (typingJobs.containsKey(conversationId)) { promise.resolve(null); return }
+    fun observeTyping(peerUserId: String, promise: Promise) {
+        if (typingJobs.containsKey(peerUserId)) { promise.resolve(null); return }
         val c = try {
             requireClient()
         } catch (e: Exception) {
             promise.rejectKit("OBSERVE_TYPING_ERROR", e)
             return
         }
+        val selfId = c.userId
+        if (selfId == null) {
+            promise.rejectKit("OBSERVE_TYPING_ERROR", ObscuraError.NotAuthenticated())
+            return
+        }
+        val convId = typingConvId(selfId, peerUserId)
 
-        typingJobs[conversationId] = scope.launch {
-            c.observeTyping(conversationId).collectLatest { userIds ->
+        typingJobs[peerUserId] = scope.launch {
+            c.observeTyping(convId).collectLatest { userIds ->
                 emit(BridgeEvent.TYPING_CHANGED) {
-                    putString("conversationId", conversationId)
-                    putArray("userIds", Arguments.createArray().apply { userIds.forEach(::pushString) })
+                    putString("peerUserId", peerUserId)
+                    putBoolean("typing", userIds.contains(peerUserId))
                 }
             }
         }
@@ -534,8 +540,8 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun stopObservingTyping(conversationId: String, promise: Promise) {
-        typingJobs.remove(conversationId)?.cancel()
+    fun stopObservingTyping(peerUserId: String, promise: Promise) {
+        typingJobs.remove(peerUserId)?.cancel()
         promise.resolve(null)
     }
 
@@ -549,7 +555,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         scope.launch {
             try {
                 val bytes = java.io.File(filePath).readBytes()
-                // The kit encrypts + uploads and returns the reference triple.
                 val ref = requireClient().uploadAttachment(bytes)
                 promise.resolve(Arguments.createMap().apply {
                     putString("id", ref.id)
@@ -564,48 +569,20 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     private fun attachmentDir() = java.io.File(reactApplicationContext.cacheDir, "attachments")
 
-    /** Cache file stem for an attachment id. Ids come from the server, so never trust them as a path. */
-    private fun attachmentStem(id: String) = id.replace(Regex("[^A-Za-z0-9_-]"), "_")
-
-    private val attachmentExtensions = listOf("jpg", "mp4", "mov")
-
     @ReactMethod
     fun downloadAttachment(id: String, contentKey: String, nonce: String, promise: Promise) {
         scope.launch {
             try {
                 val dir = attachmentDir().apply { mkdirs() }
-                val safe = attachmentStem(id)
-                for (ext in attachmentExtensions) {
-                    val c = java.io.File(dir, "$safe.$ext")
-                    if (c.exists() && c.length() > 0L) { promise.resolve(c.absolutePath); return@launch }
+                AttachmentCrypto.readCached(dir, id)?.let {
+                    promise.resolve(it.absolutePath)
+                    return@launch
                 }
 
                 val keyBytes = Base64.decode(contentKey, Base64.DEFAULT)
                 val nonceBytes = Base64.decode(nonce, Base64.DEFAULT)
                 val data = requireClient().downloadDecryptedAttachment(id, keyBytes, nonceBytes)
-
-                // Pick the extension from the content so players that key off it
-                // (ExoPlayer / AVPlayer) can decode. Video is ISO-BMFF with an
-                // "ftyp" box at offset 4; brand "qt  " => QuickTime .mov.
-                val ext = if (data.size >= 12 &&
-                    data[4] == 0x66.toByte() && data[5] == 0x74.toByte() &&
-                    data[6] == 0x79.toByte() && data[7] == 0x70.toByte()) {
-                    if (String(data, 8, 4, Charsets.US_ASCII) == "qt  ") "mov" else "mp4"
-                } else "jpg"
-                val dest = java.io.File(dir, "$safe.$ext")
-
-                // Atomic publish: write to a tmp file then rename into place so a
-                // concurrent reader never sees a partially-written file.
-                val tmp = java.io.File(dir, "$safe.$ext.tmp")
-                try {
-                    tmp.writeBytes(data)
-                    if (!tmp.renameTo(dest)) {
-                        // Fallback for the (unlikely) cross-mount rename failure.
-                        tmp.copyTo(dest, overwrite = true)
-                    }
-                } finally {
-                    tmp.delete()
-                }
+                val dest = AttachmentCrypto.writeCached(dir, id, data)
                 promise.resolve(dest.absolutePath)
             } catch (t: Throwable) {
                 promise.rejectKit("DOWNLOAD_ERROR", t)
@@ -614,19 +591,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     private fun purgeAttachmentFile(id: String) {
-        val dir = attachmentDir()
-        val stem = attachmentStem(id)
-        for (ext in attachmentExtensions) {
-            java.io.File(dir, "$stem.$ext").delete()
-            java.io.File(dir, "$stem.$ext.tmp").delete()
-        }
-    }
-
-    /** Delete this device's decrypted copy of an attachment. The server's ciphertext is untouched. */
-    @ReactMethod
-    fun purgeAttachment(id: String, promise: Promise) {
-        purgeAttachmentFile(id)
-        promise.resolve(null)
+        AttachmentCrypto.purgeCached(attachmentDir(), id)
     }
 
     // ─── Image processing (native, path-in/path-out) ────────────────────────
@@ -1152,7 +1117,4 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
             putString("displayName", p.displayName)
             putString("bio", p.bio)
         }
-
-    private fun ReadableArray.toStringList(): List<String> =
-        (0 until size()).mapNotNull { getString(it) }
 }

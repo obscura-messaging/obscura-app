@@ -8,7 +8,7 @@ import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  conversationId, chatTimeline, conversationItems, pixStatus, type ChatTimelineItem,
+  chatTimeline, conversationItems, pixStatus, type ChatTimelineItem,
 } from '../domain/chats';
 import { useSession, useMessages, useAcceptedFriends, markSeen } from '../state/store';
 import { usePeerTyping, notifyTyping, sendChatMessage } from '../state/chat';
@@ -58,8 +58,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const [text, setText] = useState('');
   const listRef = useRef<FlatList<TimelineItem>>(null);
   const prevCountRef = useRef(0);
-  const convId = conversationId(myUserId, friend.userId);
-  const peerTyping = usePeerTyping(convId, friend.userId);
+  const peerTyping = usePeerTyping(friend.userId);
 
   const peerItems = useMemo(() => conversationItems(allItems, friend.userId), [allItems, friend.userId]);
   const messages = useMemo(() => peerItems.filter((item) => item.kind === 'message'), [peerItems]);
@@ -126,7 +125,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   };
 
   const onChangeText = (t: string) => {
-    notifyTyping(friend.userId, convId, text, t);
+    notifyTyping(friend.userId, text, t);
     setText(t);
   };
 

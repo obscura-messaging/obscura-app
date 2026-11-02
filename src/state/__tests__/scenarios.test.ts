@@ -5,7 +5,7 @@ import {
 import { notifyTyping, sendChatMessage } from '../chat';
 import { logIn, linkThisDevice } from '../login';
 import { sendCapture, type Capture } from '../sendMedia';
-import { activityPreview, chatTimeline, conversationId, friendActivities } from '../../domain/chats';
+import { activityPreview, chatTimeline, friendActivities } from '../../domain/chats';
 import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { EXPIRE_AFTER_MS } from '../../native/__fixtures__/FakeObscuraBridge';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
@@ -15,7 +15,6 @@ const bridge = getFakeBridge();
 const ALICE = '11111111-1111-4111-8111-111111111111';
 const DEVICE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const BOB: Friend = { userId: '22222222-2222-4222-8222-222222222222', username: 'bob', status: 'accepted' };
-const CONV = conversationId(ALICE, BOB.userId);
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 8; i += 1) await Promise.resolve();
@@ -227,9 +226,9 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
   });
 
   it('sends sendTyping on non-empty input and stopTyping when cleared to empty', async () => {
-    notifyTyping(BOB.userId, CONV, '', 'h');
-    notifyTyping(BOB.userId, CONV, 'h', 'hi');
-    notifyTyping(BOB.userId, CONV, 'hi', '');
+    notifyTyping(BOB.userId, '', 'h');
+    notifyTyping(BOB.userId, 'h', 'hi');
+    notifyTyping(BOB.userId, 'hi', '');
     await flush();
 
     expect(bridge.__calls.filter((c) => c === 'sendTyping')).toHaveLength(2);

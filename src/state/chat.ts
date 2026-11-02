@@ -1,22 +1,20 @@
 import { useEffect, useState } from 'react';
 import { Obscura, onObscuraEvent } from '../native/ObscuraModule';
-import { conversationId } from '../domain/chats';
 import { logError } from '../utils/log';
-import { refreshMessages, useStore } from './store';
+import { refreshMessages } from './store';
 
 /** Real-time typing indicator and message sending for a 1:1 conversation. */
 
-export function notifyTyping(friendUserId: string, convId: string, prevText: string, nextText: string): void {
+export function notifyTyping(friendUserId: string, prevText: string, nextText: string): void {
   if (nextText.length > 0) {
-    Obscura.sendTyping([friendUserId], convId).catch((e) => logError('typing.send', e));
+    Obscura.sendTyping(friendUserId).catch((e) => logError('typing.send', e));
   } else if (prevText.length > 0) {
-    Obscura.stopTyping([friendUserId], convId).catch((e) => logError('typing.stop', e));
+    Obscura.stopTyping(friendUserId).catch((e) => logError('typing.stop', e));
   }
 }
 
 export async function sendChatMessage(friendUserId: string, content: string): Promise<void> {
-  const convId = conversationId(useStore.getState().myUserId, friendUserId);
-  await Obscura.stopTyping([friendUserId], convId);
+  await Obscura.stopTyping(friendUserId);
   try {
     await Obscura.sendMessage(friendUserId, content);
   } finally {
@@ -24,23 +22,22 @@ export async function sendChatMessage(friendUserId: string, content: string): Pr
   }
 }
 
-export function usePeerTyping(convId: string, friendUserId: string): boolean {
+export function usePeerTyping(friendUserId: string): boolean {
   const [peerTyping, setPeerTyping] = useState(false);
   useEffect(() => {
     setPeerTyping(false);
     const unsubscribe = onObscuraEvent((event) => {
       if (event.type === 'messageReceived' && event.model === 'directMessage') {
         setPeerTyping(false);
-      } else if (event.type === 'typingChanged' && event.conversationId === convId) {
-        // Anyone can signal under this id; only this conversation's friend counts.
-        setPeerTyping(event.userIds.includes(friendUserId));
+      } else if (event.type === 'typingChanged' && event.peerUserId === friendUserId) {
+        setPeerTyping(event.typing);
       }
     });
-    Obscura.observeTyping(convId).catch((e) => logError('typing.observe', e));
+    Obscura.observeTyping(friendUserId).catch((e) => logError('typing.observe', e));
     return () => {
       unsubscribe();
-      Obscura.stopObservingTyping(convId).catch((e) => logError('typing.unobserve', e));
+      Obscura.stopObservingTyping(friendUserId).catch((e) => logError('typing.unobserve', e));
     };
-  }, [convId, friendUserId]);
+  }, [friendUserId]);
   return peerTyping;
 }

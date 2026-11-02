@@ -17,11 +17,6 @@ export interface ConversationItem {
   displayDuration: number;
 }
 
-/** Canonical two-party conversation id: both user ids, sorted, joined by `_`. */
-export function conversationId(userIdA: string, userIdB: string): string {
-  return [userIdA, userIdB].sort().join('_');
-}
-
 /** How a pix looks from this user's side of the conversation. */
 export type PixStatus = 'received_new' | 'received_viewed' | 'sent_pending' | 'sent_opened';
 

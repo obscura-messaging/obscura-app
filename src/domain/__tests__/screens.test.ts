@@ -1,5 +1,5 @@
 import {
-  activityPreview, chatTimeline, conversationId, conversationItems, friendActivities,
+  activityPreview, chatTimeline, conversationItems, friendActivities,
   pixBadgeFor, pixStatus, type ConversationItem,
 } from '../chats';
 import { friendProfileEntries, type Friend, type ProfileItem } from '../friends';
@@ -76,13 +76,6 @@ function storyItem(id: string, sentAt: number, authorUserId: string, content = '
     captionMeta: null,
   };
 }
-
-describe('conversationId', () => {
-  it('produces a canonical sorted pair for typing contexts', () => {
-    expect(conversationId('uBob', 'uAlice')).toBe('uAlice_uBob');
-    expect(conversationId('uAlice', 'uBob')).toBe('uAlice_uBob');
-  });
-});
 
 describe('pixStatus', () => {
   it('reads direction from the author and state from viewedAt', () => {

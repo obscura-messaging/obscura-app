@@ -990,16 +990,16 @@ export class FakeObscuraBridge implements ObscuraBridge {
 
   // ─── Signals ───────────────────────────────────────────
 
-  async sendTyping(_recipientUserIds: string[], _conversationId: string): Promise<void> {
+  async sendTyping(_peerUserId: string): Promise<void> {
     this.record('sendTyping');
   }
-  async stopTyping(_recipientUserIds: string[], _conversationId: string): Promise<void> {
+  async stopTyping(_peerUserId: string): Promise<void> {
     this.record('stopTyping');
   }
-  async observeTyping(_conversationId: string): Promise<void> {
+  async observeTyping(_peerUserId: string): Promise<void> {
     this.record('observeTyping');
   }
-  async stopObservingTyping(_conversationId: string): Promise<void> {
+  async stopObservingTyping(_peerUserId: string): Promise<void> {
     this.record('stopObservingTyping');
   }
 
@@ -1017,14 +1017,8 @@ export class FakeObscuraBridge implements ObscuraBridge {
     return `/fake/cache/${id}`;
   }
 
-  /** Attachment ids passed to `purgeAttachment`, in order. */
+  /** Attachment ids purged by `sweepExpired`, in order. */
   __purged: string[] = [];
-
-  async purgeAttachment(id: string): Promise<void> {
-    this.record('purgeAttachment');
-    this.checkFailure('purgeAttachment');
-    this.__purged.push(id);
-  }
 
   async resizeImage(srcPath: string, maxDim: number, _quality: number): Promise<{ path: string; width: number; height: number }> {
     this.record('resizeImage');

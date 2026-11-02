@@ -165,23 +165,19 @@ async function refreshSlicesForModels(models: Iterable<string>): Promise<void> {
   let needStories = false;
   let needProfiles = false;
   for (const model of models) {
-    switch (model) {
-      case 'directMessage':
-      case 'pix':
-      case 'seen':
-      case 'message':
-      case 'messages':
-        needMessages = true;
-        break;
-      case 'story':
-      case 'stories':
-        needStories = true;
-        break;
-      case 'profile':
-      case 'profiles':
-        needProfiles = true;
-        break;
-    }
+  switch (model) {
+    case 'directMessage':
+    case 'pix':
+    case 'seen':
+      needMessages = true;
+      break;
+    case 'story':
+      needStories = true;
+      break;
+    case 'profile':
+      needProfiles = true;
+      break;
+  }
   }
   await Promise.all([
     needMessages ? refreshMessages() : Promise.resolve(),

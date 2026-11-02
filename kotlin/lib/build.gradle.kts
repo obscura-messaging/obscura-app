@@ -6,18 +6,6 @@ plugins {
     alias(libs.plugins.sqldelight)
     alias(libs.plugins.kover)
     `java-library`
-    `maven-publish`
-}
-
-publishing {
-    publications {
-        create<MavenPublication>("maven") {
-            groupId = "dev.barrelmaker.obscura.kit"
-            artifactId = "obscura-kit"
-            version = "0.1.0"
-            from(components["java"])
-        }
-    }
 }
 
 java {

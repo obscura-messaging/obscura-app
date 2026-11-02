@@ -65,7 +65,7 @@ kotlin-unit:
 
 # Run the Kotlin CI tasks in one Gradle process.
 kotlin-ci:
-    cd kotlin && ../scripts/run-with-java-21.sh ./gradlew :lib:test :lib:koverHtmlReport :lib:koverXmlReport :lib:koverVerify :lib:publishToMavenLocal --no-daemon
+    cd kotlin && ../scripts/run-with-java-21.sh ./gradlew :lib:test :lib:koverHtmlReport :lib:koverXmlReport :lib:koverVerify --no-daemon
 
 # Run the full fast Kotlin CI gate.
 kotlin-check: protocol-vectors kotlin-ci

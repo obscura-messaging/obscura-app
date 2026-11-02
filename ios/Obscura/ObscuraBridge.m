@@ -47,21 +47,19 @@ RCT_EXTERN_METHOD(addFriendByCode:(NSString *)code
 RCT_EXTERN_METHOD(getFriends:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 
 // ── Typing signals ────────────────────────────────────────────────────────
-RCT_EXTERN_METHOD(sendTyping:(NSArray *)recipientUserIds conversationId:(NSString *)conversationId
+RCT_EXTERN_METHOD(sendTyping:(NSString *)peerUserId
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(stopTyping:(NSArray *)recipientUserIds conversationId:(NSString *)conversationId
+RCT_EXTERN_METHOD(stopTyping:(NSString *)peerUserId
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(observeTyping:(NSString *)conversationId
+RCT_EXTERN_METHOD(observeTyping:(NSString *)peerUserId
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(stopObservingTyping:(NSString *)conversationId
+RCT_EXTERN_METHOD(stopObservingTyping:(NSString *)peerUserId
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 
 // ── Attachments ───────────────────────────────────────────────────────────
 RCT_EXTERN_METHOD(uploadAttachment:(NSString *)filePath
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(downloadAttachment:(NSString *)id contentKey:(NSString *)contentKey nonce:(NSString *)nonce
-                  resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(purgeAttachment:(NSString *)id
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 
 // ── Image processing ──────────────────────────────────────────────────────
