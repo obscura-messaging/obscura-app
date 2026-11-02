@@ -6,8 +6,8 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Obscura } from '../native/ObscuraModule';
 import { useCameraActive } from '../navigation/CameraActiveContext';
+import { createTestCapture, prewarmAudio } from '../state/sendMedia';
 import { logError } from '../utils/log';
 import { toPath } from '../utils/files';
 import { clamp, touchDist } from '../utils/gesture';
@@ -44,10 +44,7 @@ export function CameraScreen() {
   ]);
 
   // Re-warmed after each recording, because VisionCamera deactivates the audio session.
-  const prewarmAudio = useCallback(() => {
-    Obscura.prewarmAudioSession().catch((e) => logError('prewarmAudio', e));
-  }, []);
-  useEffect(() => { prewarmAudio(); }, [prewarmAudio]);
+  useEffect(() => { prewarmAudio(); }, []);
 
   // Read by the PanResponder, which is created once.
   const zoomRef = useRef(1);
@@ -81,8 +78,12 @@ export function CameraScreen() {
 
   const takePhoto = useCallback(async () => {
     if (!camera.current) return;
-    const photo = await camera.current.takePhoto({ flash });
-    nav.navigate('PhotoPreview', { path: toPath(photo.path), mediaType: 'photo' });
+    try {
+      const photo = await camera.current.takePhoto({ flash });
+      nav.navigate('PhotoPreview', { path: toPath(photo.path), mediaType: 'photo' });
+    } catch (e) {
+      logError('takePhoto', e);
+    }
   }, [flash, nav]);
 
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -109,7 +110,7 @@ export function CameraScreen() {
       },
       onRecordingError: (e) => { setRecording(false); prewarmAudio(); logError('record', e); },
     });
-  }, [nav, prewarmAudio]);
+  }, [nav]);
 
   const stopRecording = useCallback(async () => {
     try { await camera.current?.stopRecording(); } catch (e) { logError('stopRecording', e); }
@@ -135,8 +136,12 @@ export function CameraScreen() {
 
   // Emulators without a camera get a synthesized JPEG.
   const takeTestPhoto = useCallback(async () => {
-    const img = await Obscura.writeTestImage(100, 100);
-    nav.navigate('PhotoPreview', { path: img.path, mediaType: 'photo' });
+    try {
+      const path = await createTestCapture();
+      nav.navigate('PhotoPreview', { path, mediaType: 'photo' });
+    } catch (e) {
+      logError('takeTestPhoto', e);
+    }
   }, [nav]);
 
   // No camera device (the iOS simulator): render the real chrome over a placeholder so the layout
@@ -226,9 +231,4 @@ const cs = StyleSheet.create({
   captureBtnInnerActive: { width: 34, height: 34, borderRadius: 8, backgroundColor: colors.error },
   simPreview: { backgroundColor: '#1c1c1e', justifyContent: 'center', alignItems: 'center' },
   simPreviewText: { color: '#555', fontSize: 14 },
-  permissionContainer: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', padding: 32 },
-  permissionText: { color: '#fff', fontSize: 18, fontWeight: '600', marginBottom: 16 },
-  permissionBtn: { backgroundColor: colors.accent, borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12, marginBottom: 12 },
-  permissionBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 16 },
-  hint: { color: '#666', fontSize: 14, marginTop: 8 },
 });

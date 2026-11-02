@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { DeviceInfo } from '../native/ObscuraModule';
 import { toast } from '../components/Toast';
 import { confirm } from '../components/confirm';
 import { deviceLabel } from '../domain/devices';
-import { approveLink, linkCodeDeviceName, loadDevices, unlinkDevice } from '../state/devices';
+import { approveLink, linkCodeDeviceName, loadDevices, unlinkDevice, type DeviceInfo } from '../state/devices';
 import { useSession } from '../state/store';
 import { errorMessage } from '../utils/log';
 import type { RootStackParamList } from '../navigation/types';
@@ -44,6 +44,7 @@ export async function confirmAndApproveLink(code: string): Promise<boolean> {
 
 export function DevicesScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const insets = useSafeAreaInsets();
   const focused = useIsFocused();
   const { isPrimary } = useSession();
   const [devices, setDevices] = useState<DeviceInfo[] | null>(null);
@@ -81,8 +82,12 @@ export function DevicesScreen() {
   const thisDevice = devices?.find((d) => d.isThisDevice);
 
   return (
-    <ScrollView style={s.container} contentContainerStyle={dv.screen} keyboardShouldPersistTaps="handled">
-      <Text style={dv.sectionTitle}>your devices</Text>
+    <ScrollView
+      style={s.container}
+      contentContainerStyle={[dv.screen, { paddingBottom: insets.bottom + 24 }]}
+      keyboardShouldPersistTaps="handled"
+    >
+      <Text style={s.sectionTitle}>your devices</Text>
       {loadError !== null && <Text style={dv.error}>{loadError}</Text>}
       {devices === null && loadError === null && <Text style={dv.hint}>Loading…</Text>}
       {devices?.map((device) => (
@@ -103,14 +108,14 @@ export function DevicesScreen() {
       ))}
 
       {isPrimary === true && (<>
-        <Text style={dv.sectionTitle}>link a device</Text>
+        <Text style={s.sectionTitle}>link a device</Text>
         <Text style={dv.hint}>On the new device, log in to this account, then scan the code it shows.</Text>
-        <TouchableOpacity style={dv.scanBtn} onPress={() => nav.navigate('ScanLink')}>
-          <Text style={dv.scanBtnText}>Scan link code</Text>
+        <TouchableOpacity style={[s.primaryBtn, dv.scanBtn]} onPress={() => nav.navigate('ScanLink')}>
+          <Text style={s.primaryBtnText}>Scan link code</Text>
         </TouchableOpacity>
         <View style={dv.enterRow}>
           <TextInput
-            style={dv.input}
+            style={[s.input, dv.input]}
             placeholder="Or paste the code"
             placeholderTextColor={colors.textDim}
             value={codeInput}
@@ -118,8 +123,8 @@ export function DevicesScreen() {
             autoCapitalize="none"
             autoCorrect={false}
           />
-          <TouchableOpacity style={dv.linkBtn} onPress={linkPasted}>
-            <Text style={dv.linkBtnText}>Link</Text>
+          <TouchableOpacity style={s.secondaryBtn} onPress={linkPasted}>
+            <Text style={s.secondaryBtnText}>Link</Text>
           </TouchableOpacity>
         </View>
       </>)}
@@ -127,8 +132,8 @@ export function DevicesScreen() {
       {isPrimary === false && (<>
         <Text style={dv.hint}>Devices are linked and unlinked from your primary device.</Text>
         {thisDevice && (
-          <TouchableOpacity style={dv.dangerBtn} onPress={() => unlink(thisDevice)}>
-            <Text style={dv.dangerBtnText}>Unlink this device</Text>
+          <TouchableOpacity style={[s.dangerBtn, dv.dangerMargin]} onPress={() => unlink(thisDevice)}>
+            <Text style={s.dangerBtnText}>Unlink this device</Text>
           </TouchableOpacity>
         )}
       </>)}
@@ -138,10 +143,9 @@ export function DevicesScreen() {
 
 const dv = StyleSheet.create({
   screen: { padding: 16 },
-  sectionTitle: { color: colors.textDim, fontSize: 12, fontWeight: '700', marginTop: 20, marginBottom: 8, textTransform: 'uppercase' },
   hint: { color: colors.textDim, fontSize: 14, marginBottom: 12 },
   error: { color: colors.error, fontSize: 14, marginBottom: 12 },
-  row: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: 12, padding: 14, marginBottom: 8 },
+  row: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: colors.border },
   info: { flex: 1 },
   name: { color: colors.text, fontSize: 16, fontWeight: '600' },
   badges: { flexDirection: 'row', gap: 6, marginTop: 4 },
@@ -149,17 +153,8 @@ const dv = StyleSheet.create({
   primaryBadge: { color: colors.accent },
   unlinkBtn: { borderWidth: 1, borderColor: colors.error, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
   unlinkText: { color: colors.error, fontWeight: '700', fontSize: 13 },
-  scanBtn: {
-    backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginBottom: 12,
-  },
-  scanBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 15 },
+  scanBtn: { marginBottom: 12 },
   enterRow: { flexDirection: 'row', gap: 8 },
-  input: {
-    flex: 1, backgroundColor: colors.surface, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
-    color: colors.text, fontSize: 15, borderWidth: 1, borderColor: colors.border,
-  },
-  linkBtn: { backgroundColor: colors.surface, borderRadius: 12, paddingHorizontal: 20, justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
-  linkBtnText: { color: colors.text, fontWeight: '700', fontSize: 15 },
-  dangerBtn: { borderWidth: 1, borderColor: colors.error, borderRadius: 12, padding: 14, alignItems: 'center', marginTop: 12 },
-  dangerBtnText: { color: colors.error, fontWeight: '700', fontSize: 16 },
+  input: { flex: 1, marginBottom: 0 },
+  dangerMargin: { marginTop: 12 },
 });

@@ -17,7 +17,7 @@ export function profileEntryId(userId: string): string {
 const MEDIA_FIELDS = {
   /** `photo` when absent, or `video`. */
   mediaType: 'string?',
-  /** A `CaptionMeta` JSON blob (`components/Caption.tsx`). */
+  /** A `CaptionMeta` JSON blob (`domain/caption.ts`). */
   captionMeta: 'string?',
 } as const;
 

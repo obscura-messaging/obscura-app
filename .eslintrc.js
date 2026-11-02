@@ -23,4 +23,44 @@ module.exports = {
       },
     ],
   },
+  overrides: [
+    {
+      files: [
+        'src/screens/**/*.{ts,tsx}',
+        'src/components/**/*.{ts,tsx}',
+        'src/navigation/**/*.{ts,tsx}',
+      ],
+      rules: {
+        'no-restricted-imports': [
+          'error',
+          {
+            patterns: [
+              {
+                group: ['**/native/ObscuraModule*'],
+                message:
+                  'UI and navigation layers must not import ObscuraModule directly; go through src/state/ or src/domain/.',
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      files: ['src/domain/**/*.{ts,tsx}'],
+      excludedFiles: ['src/domain/__tests__/**'],
+      rules: {
+        'no-restricted-imports': [
+          'error',
+          {
+            patterns: [
+              {
+                group: ['react', 'react-native', '**/state/**', '**/screens/**', '**/components/**'],
+                message: 'src/domain/ must remain pure and independent of React, UI, and stateful orchestration.',
+              },
+            ],
+          },
+        ],
+      },
+    },
+  ],
 };

@@ -1,67 +1,29 @@
 import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
-import { logError } from '../utils/log';
-import { clamp } from '../utils/gesture';
+import {
+  CAPTION_FONT_LABELS, CAPTION_COLORS, DEFAULT_BAR, clamp01,
+  parseCaptionMeta, serializeCaptionMeta,
+  type CaptionMeta, type CaptionStyle, type BoldCaptionMeta,
+} from '../domain/caption';
 
-/**
- * The styled caption shared by the composer (PhotoPreviewScreen) and the viewer (StoriesScreen). It
- * travels as a JSON `CaptionMeta` in an entry's `captionMeta` field.
- */
+export {
+  CAPTION_FONT_LABELS, CAPTION_COLORS, DEFAULT_BAR,
+  parseCaptionMeta, serializeCaptionMeta,
+  type CaptionMeta, type CaptionStyle,
+};
 
 // The blob stores a font index, resolved here to the closest system font on each platform.
 const FONT_DEFS = [
-  { label: 'Clean', ios: 'System', android: 'sans-serif' },
-  { label: 'Comic', ios: 'Chalkboard SE', android: 'casual' },
-  { label: 'Serif', ios: 'Georgia', android: 'serif' },
-  { label: 'Script', ios: 'Snell Roundhand', android: 'cursive' },
-  { label: 'Mono', ios: 'Menlo', android: 'monospace' },
+  { ios: 'System', android: 'sans-serif' },
+  { ios: 'Chalkboard SE', android: 'casual' },
+  { ios: 'Georgia', android: 'serif' },
+  { ios: 'Snell Roundhand', android: 'cursive' },
+  { ios: 'Menlo', android: 'monospace' },
 ];
 
 export const CAPTION_FONTS = FONT_DEFS.map(
-  f => Platform.select({ ios: f.ios, android: f.android, default: f.ios }) as string,
+  (f) => Platform.select({ ios: f.ios, android: f.android, default: f.ios }) as string,
 );
-
-export const CAPTION_FONT_LABELS = FONT_DEFS.map(f => f.label);
-
-export const CAPTION_COLORS = [
-  '#ffffff', '#000000', '#ff2d55', '#ffcc00', '#34c759', '#0a84ff', '#af52de',
-];
-
-export type CaptionStyle = 'bar' | 'bold';
-
-export interface CaptionMeta {
-  style: CaptionStyle;
-  /** 0..1 from the top: the bar's top edge, or the bold text's center. */
-  y: number;
-  // Bold only:
-  /** 0..1 horizontal center. */
-  x?: number;
-  /** Radians. */
-  rot?: number;
-  scale?: number;
-  color?: string;
-  /** Index into CAPTION_FONTS. */
-  font?: number;
-}
-
-export const DEFAULT_BAR: CaptionMeta = { style: 'bar', y: 0.72 };
-
-const clamp01 = (v: number) => clamp(v, 0, 1);
-
-export function parseCaptionMeta(raw?: string | null): CaptionMeta | null {
-  if (!raw) return null;
-  try {
-    const m = JSON.parse(raw);
-    if (m && (m.style === 'bar' || m.style === 'bold') && typeof m.y === 'number') return m;
-  } catch (e) {
-    logError('caption.parse', e);
-  }
-  return null;
-}
-
-export function serializeCaptionMeta(meta: CaptionMeta): string {
-  return JSON.stringify(meta);
-}
 
 export const captionStyles = StyleSheet.create({
   barWrap: {
@@ -80,10 +42,10 @@ export const captionStyles = StyleSheet.create({
   },
 });
 
-export function boldTextStyle(meta: Pick<CaptionMeta, 'font' | 'color'>) {
+export function boldTextStyle(meta: Pick<BoldCaptionMeta, 'font' | 'color'>) {
   return [
     captionStyles.boldText,
-    { fontFamily: CAPTION_FONTS[meta.font ?? 0], color: meta.color ?? '#fff' },
+    { fontFamily: CAPTION_FONTS[meta.font] ?? CAPTION_FONTS[0], color: meta.color },
   ];
 }
 
@@ -107,10 +69,10 @@ export function CaptionView(
 
   const boldTransform = {
     transform: [
-      { translateX: ((meta.x ?? 0.5) - 0.5) * width },
+      { translateX: (meta.x - 0.5) * width },
       { translateY: (clamp01(meta.y) - 0.5) * height },
-      { rotate: `${meta.rot ?? 0}rad` },
-      { scale: meta.scale ?? 1 },
+      { rotate: `${meta.rot}rad` },
+      { scale: meta.scale },
     ],
   };
   return (

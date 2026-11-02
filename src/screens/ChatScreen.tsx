@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-  SafeAreaView, View, Text, TextInput, TouchableOpacity, FlatList,
+  View, Text, TextInput, TouchableOpacity, FlatList,
   KeyboardAvoidingView, Platform, Animated, StyleSheet, type ViewToken,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Obscura, onObscuraEvent } from '../native/ObscuraModule';
 import { conversationEntries } from '../domain/chats';
 import { conversationId } from '../domain/conversation';
 import { pixStatus } from '../domain/pix';
 import type { ScreenEntry } from '../domain/seen';
-import { useSession, useModelEntries, saveEntry, markSeen } from '../state/store';
+import { useSession, useModelEntries, useAcceptedFriends, markSeen } from '../state/store';
+import { usePeerTyping, notifyTyping, sendChatMessage } from '../state/chat';
 import { useAppActive } from '../hooks/useAppActive';
 import { errorMessage, logError } from '../utils/log';
 import type { ModelData } from '../models/schema';
@@ -50,15 +51,19 @@ type TimelineItem =
 const VIEWABILITY = { itemVisiblePercentThreshold: 50 };
 
 export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
-  const { friend } = route.params;
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { myUserId } = useSession();
+  const friends = useAcceptedFriends();
+  const friend = friends.find((f) => f.userId === route.params.userId)
+    ?? { userId: route.params.userId, username: route.params.username, status: 'accepted' as const };
   const headerHeight = useHeaderHeight();
   const allMessages = useModelEntries('directMessage');
   const allPix = useModelEntries('pix');
   const [text, setText] = useState('');
-  const [peerTyping, setPeerTyping] = useState(false);
+  const listRef = useRef<FlatList<TimelineItem>>(null);
+  const prevCountRef = useRef(0);
   const convId = conversationId(myUserId, friend.userId);
+  const peerTyping = usePeerTyping(convId, friend.userId);
 
   const messages = useMemo(() => conversationEntries(allMessages, convId), [allMessages, convId]);
   const timeline: TimelineItem[] = useMemo(() => [
@@ -84,37 +89,20 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
     }
   }, [isFocused, appActive, visibleIds, messages, myUserId]);
 
-  useEffect(() => {
-    const unsubscribe = onObscuraEvent((event) => {
-      if (event.type === 'messageReceived' && event.model === 'directMessage') {
-        setPeerTyping(false);
-      } else if (event.type === 'typingChanged' && event.conversationId === convId) {
-        // Anyone can signal under this id; only this conversation's friend counts.
-        setPeerTyping(event.userIds.includes(friend.userId));
-      }
-    });
-    Obscura.observeTyping(convId).catch((e) => logError('typing.observe', e));
-    return () => {
-      unsubscribe();
-      Obscura.stopObservingTyping(convId).catch((e) => logError('typing.unobserve', e));
-    };
-  }, [convId, friend.userId]);
-
   const send = async () => {
     if (!text.trim()) return;
     const content = text;
     setText('');
     try {
-      await Obscura.stopTyping([friend.userId], convId);
-      await saveEntry('directMessage', { conversationId: convId, content });
+      await sendChatMessage(convId, friend.userId, content);
     } catch (e) {
       toast.error(errorMessage(e));
     }
   };
 
   const onChangeText = (t: string) => {
+    notifyTyping(friend.userId, convId, text, t);
     setText(t);
-    if (t.length > 0) Obscura.sendTyping([friend.userId], convId).catch((e) => logError('typing.send', e));
   };
 
   const renderItem = ({ item }: { item: TimelineItem }) => {
@@ -131,33 +119,50 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
     switch (pixStatus(item, myUserId)) {
       case 'received_new':
         return (
-          <TouchableOpacity style={cs.pixBarFilled} onPress={() => openPixViewer(nav, friend, [item])}>
-            <Text style={cs.pixBarFilledText}>
-              {item.data.caption ? `Tap to view: ${item.data.caption}` : 'Tap to view'}
-            </Text>
-          </TouchableOpacity>
+          <View style={[cs.msgRow, cs.msgRowLeft]}>
+            <TouchableOpacity style={cs.pixBarFilled} onPress={() => openPixViewer(nav, friend, [item])}>
+              <Text style={cs.pixBarFilledText}>
+                {item.data.caption ? `New pix: ${item.data.caption}` : 'New pix · Tap to view'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         );
       case 'received_viewed':
         return (
-          <View style={cs.pixBarViewed}>
-            <Text style={cs.pixBarViewedText}>{item.data.caption || 'Viewed'}</Text>
+          <View style={[cs.msgRow, cs.msgRowLeft]}>
+            <View style={cs.pixBarViewed}>
+              <Text style={cs.pixBarViewedText}>{item.data.caption || 'Pix viewed'}</Text>
+            </View>
           </View>
         );
       case 'sent_pending':
-        return <Text style={cs.pixStatus}>You sent a pix</Text>;
+        return (
+          <View style={[cs.msgRow, cs.msgRowRight]}>
+            <View style={cs.pixSentPill}>
+              <Text style={cs.pixSentText}>Pix delivered</Text>
+            </View>
+          </View>
+        );
       case 'sent_opened':
-        return <Text style={cs.pixStatus}>{friend.username} viewed your pix</Text>;
+        return (
+          <View style={[cs.msgRow, cs.msgRowRight]}>
+            <View style={cs.pixSentPill}>
+              <Text style={cs.pixSentText}>Pix opened</Text>
+            </View>
+          </View>
+        );
     }
   };
 
   return (
-    <SafeAreaView style={s.container}>
+    <SafeAreaView style={s.container} edges={['bottom']}>
       <KeyboardAvoidingView
         style={s.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={headerHeight}
       >
         <FlatList
+          ref={listRef}
           data={timeline}
           keyExtractor={(item) => item.id}
           style={cs.messageList}
@@ -166,6 +171,19 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
           renderItem={renderItem}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={VIEWABILITY}
+          onContentSizeChange={() => {
+            if (timeline.length > prevCountRef.current) {
+              listRef.current?.scrollToEnd({ animated: prevCountRef.current > 0 });
+            }
+            prevCountRef.current = timeline.length;
+          }}
+          ListEmptyComponent={
+            <View style={cs.emptyWrap}>
+              <Text style={cs.emptyText}>
+                Messages and pix with {friend.username} are end-to-end encrypted and disappear after they are seen.
+              </Text>
+            </View>
+          }
           ListFooterComponent={peerTyping ? (
             <View style={[cs.msgRow, cs.msgRowLeft]}>
               <TypingBubble />
@@ -176,7 +194,11 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
         <View style={cs.composer}>
           <TextInput style={cs.composerInput} placeholder="Message" placeholderTextColor={colors.textDim}
             value={text} onChangeText={onChangeText} />
-          <TouchableOpacity style={cs.sendBtn} onPress={send} disabled={!text.trim()}>
+          <TouchableOpacity
+            style={[cs.sendBtn, !text.trim() && s.btnDisabled]}
+            onPress={send}
+            disabled={!text.trim()}
+          >
             <SendIcon size={20} color={colors.onAccent} />
           </TouchableOpacity>
         </View>
@@ -186,13 +208,13 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
 }
 
 const cs = StyleSheet.create({
-  messageList: { flex: 1, paddingHorizontal: 12 },
-  msgRow: { marginVertical: 2 },
+  messageList: { flex: 1, paddingHorizontal: 12, paddingTop: 8 },
+  msgRow: { marginVertical: 3 },
   msgRowRight: { alignItems: 'flex-end' },
   msgRowLeft: { alignItems: 'flex-start' },
-  msgBubble: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8, maxWidth: '75%' },
+  msgBubble: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 9, maxWidth: '78%' },
   myBubble: { backgroundColor: colors.accent },
-  theirBubble: { backgroundColor: colors.surface },
+  theirBubble: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   myBubbleText: { color: colors.onAccent, fontSize: 16 },
   theirBubbleText: { color: colors.text, fontSize: 16 },
   typingBubble: {
@@ -202,18 +224,27 @@ const cs = StyleSheet.create({
   typingDot: {
     width: 8, height: 8, borderRadius: 4, backgroundColor: colors.textDim,
   },
-  composer: { flexDirection: 'row', padding: 12, gap: 8, borderTopWidth: 0.5, borderTopColor: colors.border },
-  composerInput: { flex: 1, backgroundColor: colors.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, color: colors.text, fontSize: 16 },
+  composer: { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  composerInput: {
+    flex: 1, backgroundColor: colors.surface, borderRadius: 20,
+    paddingHorizontal: 16, paddingVertical: 10, color: colors.text, fontSize: 16,
+    borderWidth: 1, borderColor: colors.border,
+  },
   sendBtn: { backgroundColor: colors.accent, borderRadius: 20, width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
   pixBarFilled: {
-    backgroundColor: colors.accent, borderRadius: 12, padding: 14,
-    marginVertical: 4, marginHorizontal: 12, alignItems: 'center',
+    backgroundColor: colors.accent, borderRadius: 16, paddingHorizontal: 16, paddingVertical: 12,
   },
   pixBarFilledText: { color: colors.onAccent, fontWeight: '700', fontSize: 15 },
   pixBarViewed: {
-    borderWidth: 2, borderColor: colors.accent, borderStyle: 'dashed', borderRadius: 12,
-    padding: 14, marginVertical: 4, marginHorizontal: 12, alignItems: 'center',
+    borderWidth: 1.5, borderColor: colors.surfaceMuted, borderStyle: 'dashed', borderRadius: 16,
+    paddingHorizontal: 16, paddingVertical: 10,
   },
-  pixBarViewedText: { color: colors.accent, fontWeight: '600', fontSize: 14 },
-  pixStatus: { paddingVertical: 12, textAlign: 'center', color: colors.textDim, fontSize: 13 },
+  pixBarViewedText: { color: colors.textSecondary, fontWeight: '600', fontSize: 14 },
+  pixSentPill: {
+    borderRadius: 16, paddingHorizontal: 14, paddingVertical: 8,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+  },
+  pixSentText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
+  emptyWrap: { paddingHorizontal: 32, paddingTop: 48, alignItems: 'center' },
+  emptyText: { color: colors.textDim, fontSize: 13, textAlign: 'center', lineHeight: 19 },
 });

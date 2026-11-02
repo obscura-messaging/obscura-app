@@ -7,18 +7,26 @@ import {
 } from '../native/ObscuraModule';
 import { drainInboxFully } from './drainInbox';
 import { writeEntry, flushOutbox } from './writeEntry';
-import { requestStartupPermissions } from '../application/requestStartupPermissions';
-import { logError } from '../utils/log';
+import { primaryOnly } from './devices';
+import { requestStartupPermissions } from './permissions';
+import { getJsLog, logError } from '../utils/log';
 import type { Entry } from '../domain/merge';
 import type { ModelData, ModelName } from '../models/schema';
 import { EPHEMERAL_MODELS, isEphemeral } from '../domain/expiry';
 import { acceptedFriends, pendingFriends, type Identity } from '../domain/friends';
+import { cleanCode } from '../domain/qr';
 import { SEEN_MODEL, indexReceipts, seenEntryId, viewedAtFor } from '../domain/seen';
 import { readEntries } from './entryStore';
 import { sweepExpired } from './expiry';
 
+export type { Friend, ConnectionState };
+
 /** An entry as screens see it: `data` as sent, plus when its recipient saw it (ephemeral models). */
 export type ScreenEntry<D = Record<string, unknown>> = Entry<D> & { viewedAt: number | null };
+
+type ModelEntryMap = {
+  [M in ModelName]?: ScreenEntry<ModelData<M>>[];
+} & Record<string, ScreenEntry[] | undefined>;
 
 interface Session {
   /** The cold-start auth check has finished, so `authed` can be trusted. */
@@ -33,7 +41,7 @@ interface Session {
   friends: Friend[];
   connState: ConnectionState;
   /** Entries per model; `undefined` until a screen first reads the model. */
-  entries: Record<string, ScreenEntry[] | undefined>;
+  entries: ModelEntryMap;
 }
 
 const SIGNED_OUT = {
@@ -49,7 +57,17 @@ const SIGNED_OUT = {
 
 export const useStore = create<Session>(() => ({ bootstrapped: false, ...SIGNED_OUT }));
 
+/** Models a screen has requested, tracked before the first async read finishes so concurrent refreshes are not dropped. */
+const openedModels = new Set<string>();
+/** In-memory index of `seen` receipts, so receipt updates can re-project `viewedAt` without re-reading ephemeral tables. */
+let cachedReceipts: ReadonlyMap<string, Entry> | null = null;
+/** Incremented on every `resetSession()` so in-flight reads from a signed-out session never write into the next one. */
+let sessionEpoch = 0;
+
 export function resetSession(): void {
+  sessionEpoch += 1;
+  openedModels.clear();
+  cachedReceipts = null;
   useStore.setState(SIGNED_OUT);
 }
 
@@ -94,15 +112,30 @@ export function useModelEntries<M extends ModelName>(model: M): ScreenEntry<Mode
   useEffect(() => {
     if (entries === undefined) loadEntries(model);
   }, [model, entries]);
-  return (entries ?? []) as unknown as ScreenEntry<ModelData<M>>[];
+  return (entries ?? []) as ScreenEntry<ModelData<M>>[];
 }
 
 // ─── Entry cache ─────────────────────────────────────────
 
-export async function loadEntries(model: string): Promise<void> {
+async function loadReceipts(reload = false): Promise<ReadonlyMap<string, Entry>> {
+  if (cachedReceipts === null || reload) {
+    const epoch = sessionEpoch;
+    const rows = indexReceipts(await readEntries(SEEN_MODEL));
+    if (epoch !== sessionEpoch) return rows;
+    cachedReceipts = rows;
+  }
+  return cachedReceipts;
+}
+
+export async function loadEntries(model: string, preloadedReceipts?: ReadonlyMap<string, Entry>): Promise<void> {
+  const epoch = sessionEpoch;
+  openedModels.add(model);
   try {
     const rows = await readEntries(model);
-    const receipts = indexReceipts(isEphemeral(model) ? await readEntries(SEEN_MODEL) : []);
+    const receipts = isEphemeral(model)
+      ? (preloadedReceipts ?? await loadReceipts(true))
+      : new Map<string, Entry>();
+    if (epoch !== sessionEpoch) return;
     const entries = rows.map(({ undelivered: _undelivered, ...entry }) => (
       { ...entry, viewedAt: viewedAtFor(model, entry, receipts) }
     ));
@@ -112,28 +145,81 @@ export async function loadEntries(model: string): Promise<void> {
   }
 }
 
-/** Reload the changed models that a screen has loaded. A receipt change reloads what it marks. */
+/** Reload the changed models that a screen has loaded. A receipt-only change re-projects `viewedAt` in memory. */
 async function refreshLoaded(models: Iterable<string>): Promise<void> {
+  const epoch = sessionEpoch;
   const changed = new Set(models);
-  if (changed.has(SEEN_MODEL)) EPHEMERAL_MODELS.forEach((m) => changed.add(m));
-  for (const model of changed) {
-    if (useStore.getState().entries[model] !== undefined) await loadEntries(model);
+  const seenChanged = changed.delete(SEEN_MODEL);
+  const isOpened = (m: string) => openedModels.has(m) || useStore.getState().entries[m] !== undefined;
+  const toReload = [...changed].filter(isOpened);
+
+  const needsReceipts = seenChanged || toReload.some(isEphemeral);
+  const receipts = needsReceipts ? await loadReceipts(seenChanged) : undefined;
+  if (epoch !== sessionEpoch) return;
+
+  for (const model of toReload) {
+    await loadEntries(model, receipts);
+    if (epoch !== sessionEpoch) return;
+  }
+
+  if (seenChanged && receipts) {
+    const toReproject = EPHEMERAL_MODELS.filter(
+      (m) => !changed.has(m) && useStore.getState().entries[m] !== undefined,
+    );
+    if (toReproject.length > 0) {
+      useStore.setState((s) => {
+        const next: Record<string, ScreenEntry[] | undefined> = { ...s.entries };
+        for (const m of toReproject) {
+          const current = s.entries[m];
+          if (current) {
+            next[m] = current.map((e) => ({ ...e, viewedAt: viewedAtFor(m, e, receipts) }));
+          }
+        }
+        return { entries: next as ModelEntryMap };
+      });
+    }
   }
 }
 
 // ─── Sync ────────────────────────────────────────────────
 // These never reject: they run from event handlers and timers that cannot act on a failure.
 
-export async function drainAndRefresh(): Promise<void> {
+/** Coalesce concurrent triggers within the same session epoch into at most one in-flight execution plus one trailing pass. */
+function coalesce(task: () => Promise<void>): () => Promise<void> {
+  let inFlight: Promise<void> | null = null;
+  let inFlightEpoch = -1;
+  let rerun = false;
+  return () => {
+    if (inFlight !== null && inFlightEpoch === sessionEpoch) {
+      rerun = true;
+      return inFlight;
+    }
+    const epoch = sessionEpoch;
+    inFlightEpoch = epoch;
+    rerun = false;
+    const p = (async () => {
+      do {
+        rerun = false;
+        await task();
+      } while (rerun && epoch === sessionEpoch);
+    })().finally(() => {
+      if (inFlight === p) inFlight = null;
+    });
+    inFlight = p;
+    return p;
+  };
+}
+
+export const drainAndRefresh: () => Promise<void> = coalesce(async () => {
   try {
     await refreshLoaded((await drainInboxFully()).touched);
   } catch (e) {
     logError('inbox.drain', e);
   }
-}
+});
 
 /** Retry entries whose send reached nobody. */
-export async function flushOutboxFromStore(): Promise<void> {
+export const flushOutboxFromStore: () => Promise<void> = coalesce(async () => {
   const { myUserId, friends } = useStore.getState();
   if (myUserId === '') return;
   try {
@@ -141,17 +227,19 @@ export async function flushOutboxFromStore(): Promise<void> {
   } catch (e) {
     logError('outbox.flush', e);
   }
-}
+});
 
-export async function sweepAndRefresh(): Promise<void> {
+export const sweepAndRefresh: () => Promise<void> = coalesce(async () => {
   await refreshLoaded(await sweepExpired());
-}
+});
 
 /** Everything "the network or the app came back" means: receive, retry and expire. */
-function syncAll(): void {
-  drainAndRefresh();
-  flushOutboxFromStore();
-  sweepAndRefresh();
+async function syncAll(): Promise<void> {
+  await Promise.all([
+    drainAndRefresh(),
+    flushOutboxFromStore(),
+    sweepAndRefresh(),
+  ]);
 }
 
 const SWEEP_INTERVAL_MS = 30 * 1000;
@@ -184,10 +272,48 @@ export async function markSeen(model: string, entry: Entry): Promise<void> {
   await saveEntry(SEEN_MODEL, { conversationId, viewedAt: Date.now() }, seenEntryId(model, entry.id));
 }
 
-// ─── Session ─────────────────────────────────────────────
+// ─── Session & Friends ───────────────────────────────────
 
 export async function refreshFriends(): Promise<void> {
   useStore.setState({ friends: await Obscura.getFriends() });
+}
+
+export async function addFriend(rawCode: string): Promise<void> {
+  const code = cleanCode('friend', rawCode);
+  await primaryOnly(() => Obscura.addFriendByCode(code));
+  await refreshFriends();
+}
+
+export async function acceptFriend(userId: string): Promise<void> {
+  await primaryOnly(() => Obscura.acceptFriend(userId));
+  await refreshFriends();
+}
+
+export async function removeFriend(userId: string): Promise<void> {
+  await primaryOnly(() => Obscura.removeFriend(userId));
+  await refreshFriends();
+}
+
+export function getFriendCode(): Promise<string> {
+  return Obscura.getFriendCode();
+}
+
+export function copyToClipboard(text: string): Promise<void> {
+  return Obscura.setClipboard(text);
+}
+
+export async function loadDebugLog(): Promise<string[]> {
+  const native = await Obscura.getDebugLog();
+  return [...native, ...getJsLog()];
+}
+
+export function subscribeToLaunchScreen(onScreen: (screen: string) => void): () => void {
+  Obscura.getLaunchIntent()
+    .then((intent) => { if (intent) onScreen(intent.screen); })
+    .catch((e) => logError('launchIntent', e));
+  return onObscuraEvent((event) => {
+    if (event.type === 'launchedFrom') onScreen(event.screen);
+  });
 }
 
 export function applyObscuraEvent(event: ObscuraEvent): void {
@@ -205,8 +331,12 @@ export function applyObscuraEvent(event: ObscuraEvent): void {
       else useStore.setState({ authed: true });
       return;
     case 'appStateChanged':
-      // Native code may have stored rows while JS was suspended.
-      if (event.state === 'active') syncAll();
+      // Native code may have stored rows while JS was suspended; only flush the outbox if connected.
+      if (event.state === 'active') {
+        drainAndRefresh();
+        if (useStore.getState().connState === 'connected') flushOutboxFromStore();
+        sweepAndRefresh();
+      }
       return;
     case 'pushTokenReceived':
       Obscura.registerPushToken(event.token).catch((e) => logError('push.register', e));
@@ -218,26 +348,40 @@ export function applyObscuraEvent(event: ObscuraEvent): void {
   }
 }
 
-/** Load the session identity and friends, then sync: the drain needs the identity to authorize. */
+/** Load the session identity and friends atomically, then sync: the drain needs the identity to authorize. */
 export async function loadSession(): Promise<void> {
-  const set = (state: Partial<Session>) => useStore.setState(state);
-  await Promise.all([
-    Obscura.getUserId().then((id) => set({ myUserId: id ?? '' })),
-    Obscura.getUsername().then((name) => set({ myUsername: name ?? '' })),
-    Obscura.getDeviceId().then((id) => set({ myDeviceId: id ?? '' })),
-    Obscura.isPrimary().then((isPrimary) => set({ isPrimary })),
-    Obscura.getConnectionState().then((connState) => set({ connState })),
-    refreshFriends(),
-  ].map((pull) => pull.catch((e) => logError('session.load', e))));
+  const pull = <T>(p: Promise<T>, fallback: T): Promise<T> =>
+    p.catch((e) => { logError('session.load', e); return fallback; });
+  const [userId, username, deviceId, isPrimary, connState, friends] = await Promise.all([
+    pull(Obscura.getUserId(), null),
+    pull(Obscura.getUsername(), null),
+    pull(Obscura.getDeviceId(), null),
+    pull(Obscura.isPrimary(), null),
+    pull(Obscura.getConnectionState(), 'disconnected' as ConnectionState),
+    pull(Obscura.getFriends(), [] as Friend[]),
+  ]);
+  useStore.setState({
+    myUserId: userId ?? '',
+    myUsername: username ?? '',
+    myDeviceId: deviceId ?? '',
+    isPrimary,
+    connState,
+    friends,
+  });
   // Push can store rows with no JS running and `messageReceived` may be dropped, so cold start syncs.
-  syncAll();
+  await syncAll();
 }
 
 /** Mounted once at the app root: the auth check, the event subscription and the signed-in loops. */
 export function ObscuraBootstrap(): null {
   useEffect(() => {
     Obscura.getAuthState()
-      .then((state) => { if (state === 'authenticated') useStore.setState({ authed: true }); })
+      .then(async (state) => {
+        if (state === 'authenticated') {
+          await loadSession();
+          useStore.setState({ authed: true });
+        }
+      })
       .catch((e) => logError('bootstrap.authState', e))
       .finally(() => useStore.setState({ bootstrapped: true }));
   }, []);

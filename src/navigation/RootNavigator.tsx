@@ -6,10 +6,8 @@ import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationOptions, NativeStackNavigationProp } from '@react-navigation/native-stack';
 
-import { useSession, useStore } from '../state/store';
+import { useSession, useStore, subscribeToLaunchScreen } from '../state/store';
 import { useAppActive } from '../hooks/useAppActive';
-import { Obscura, onObscuraEvent } from '../native/ObscuraModule';
-import { logError } from '../utils/log';
 import { colors } from '../styles';
 import { CameraActiveContext } from './CameraActiveContext';
 
@@ -18,8 +16,8 @@ import { CameraScreen } from '../screens/CameraScreen';
 import { ChatListScreen } from '../screens/ChatListScreen';
 import { ChatScreen } from '../screens/ChatScreen';
 import { PhotoPreviewScreen } from '../screens/PhotoPreviewScreen';
-import { RecipientPicker } from '../screens/RecipientPicker';
-import { StoryViewer } from '../screens/StoriesScreen';
+import { RecipientPickerScreen } from '../screens/RecipientPickerScreen';
+import { StoryViewerScreen } from '../screens/StoryViewerScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { AddFriendScreen } from '../screens/AddFriendScreen';
 import { ScanFriendScreen } from '../screens/ScanFriendScreen';
@@ -103,14 +101,8 @@ export function RootNavigator() {
   // Notification taps: pulled once on cold start, and as an event while running.
   useEffect(() => {
     if (!authed) return;
-    const route = (screen: string) => {
+    return subscribeToLaunchScreen((screen) => {
       if (screen === 'chat') nav.navigate('MainTabs', { screen: 'Chats' });
-    };
-    Obscura.getLaunchIntent()
-      .then((intent) => { if (intent) route(intent.screen); })
-      .catch((e) => logError('launchIntent', e));
-    return onObscuraEvent((event) => {
-      if (event.type === 'launchedFrom') route(event.screen);
     });
   }, [authed, nav]);
 
@@ -127,7 +119,7 @@ export function RootNavigator() {
           <RootStack.Screen
             name="Chat"
             component={ChatScreen}
-            options={({ route }) => headerOptions(route.params.friend.username)}
+            options={({ route }) => headerOptions(route.params.username)}
           />
           <RootStack.Screen
             name="PhotoPreview"
@@ -137,12 +129,12 @@ export function RootNavigator() {
           />
           <RootStack.Screen
             name="RecipientPicker"
-            component={RecipientPicker}
+            component={RecipientPickerScreen}
             options={{ presentation: 'fullScreenModal' }}
           />
           <RootStack.Screen
             name="StoryViewer"
-            component={StoryViewer}
+            component={StoryViewerScreen}
             options={{ presentation: 'fullScreenModal', animation: 'fade' }}
           />
           <RootStack.Screen

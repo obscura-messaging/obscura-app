@@ -5,7 +5,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '../state/store';
 import type { RootStackParamList } from '../navigation/types';
-import { AddFriendIcon } from './AddFriendIcon';
+import { AddFriendIcon } from './icons';
 import { Avatar } from './Avatar';
 import { colors } from '../styles';
 

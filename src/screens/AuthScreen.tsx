@@ -1,37 +1,46 @@
 import React, { useState } from 'react';
-import { SafeAreaView, View, Text, TextInput, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MIN_PASSWORD_LENGTH, credentialsProblem, logIn, register } from '../state/login';
 import { KeyboardScreen } from '../components/KeyboardScreen';
-import { LinkThisDevice } from './LinkThisDevice';
+import { LinkThisDevice } from '../components/LinkThisDevice';
 import { errorMessage } from '../utils/log';
 import { s, colors } from '../styles';
+
+type Phase =
+  | { kind: 'idle' }
+  | { kind: 'submitting'; label: string }
+  | { kind: 'error'; message: string }
+  | { kind: 'linking' };
 
 export function AuthScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [status, setStatus] = useState('');
-  const [linking, setLinking] = useState(false);
+  const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
 
-  const submit = async (progress: string, action: () => Promise<void>) => {
+  const busy = phase.kind === 'submitting';
+
+  const submit = async (label: string, action: () => Promise<void>) => {
+    if (busy) return;
     const problem = credentialsProblem(username, password);
-    if (problem !== null) { setStatus(problem); return; }
-    setStatus(progress);
-    try { await action(); } catch (e) { setStatus(errorMessage(e)); }
+    if (problem !== null) { setPhase({ kind: 'error', message: problem }); return; }
+    setPhase({ kind: 'submitting', label });
+    try { await action(); } catch (e) { setPhase({ kind: 'error', message: errorMessage(e) }); }
   };
 
-  const onLogIn = () => submit('Logging in...', async () => {
+  const onLogIn = () => submit('Logging in…', async () => {
     switch (await logIn(username, password)) {
-      case 'invalidCredentials': setStatus('Wrong username or password'); return;
-      case 'linkRequired': setStatus(''); setLinking(true); return;
+      case 'invalidCredentials': setPhase({ kind: 'error', message: 'Wrong username or password' }); return;
+      case 'linkRequired': setPhase({ kind: 'linking' }); return;
       case 'signedIn': return;
     }
   });
-  const onRegister = () => submit('Registering...', () => register(username, password));
+  const onRegister = () => submit('Registering…', () => register(username, password));
 
-  if (linking) {
+  if (phase.kind === 'linking') {
     return (
       <SafeAreaView style={s.container}>
-        <LinkThisDevice username={username} password={password} onBack={() => setLinking(false)} />
+        <LinkThisDevice username={username} password={password} onBack={() => setPhase({ kind: 'idle' })} />
       </SafeAreaView>
     );
   }
@@ -42,17 +51,18 @@ export function AuthScreen() {
         <View style={a.box}>
           <Image source={require('../assets/logo.png')} style={a.logo} resizeMode="contain" />
           <Text style={a.subtitle}>Encrypted everything</Text>
-          {status ? <Text style={a.status}>{status}</Text> : null}
+          {phase.kind === 'error' && <Text style={a.error}>{phase.message}</Text>}
+          {phase.kind === 'submitting' && <Text style={a.progress}>{phase.label}</Text>}
           <TextInput style={s.input} placeholder="Username" placeholderTextColor={colors.textDim}
-            value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} />
+            value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} editable={!busy} />
           <TextInput style={s.input} placeholder={`Password (${MIN_PASSWORD_LENGTH}+ chars)`}
-            placeholderTextColor={colors.textDim} value={password} onChangeText={setPassword} secureTextEntry />
+            placeholderTextColor={colors.textDim} value={password} onChangeText={setPassword} secureTextEntry editable={!busy} />
           <View style={a.buttons}>
-            <TouchableOpacity style={a.primaryBtn} onPress={onLogIn}>
-              <Text style={a.primaryBtnText}>Log in</Text>
+            <TouchableOpacity style={[s.primaryBtn, busy && s.btnDisabled]} onPress={onLogIn} disabled={busy}>
+              <Text style={s.primaryBtnText}>Log in</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={a.secondaryBtn} onPress={onRegister}>
-              <Text style={a.secondaryBtnText}>Sign up</Text>
+            <TouchableOpacity style={[s.secondaryBtn, busy && s.btnDisabled]} onPress={onRegister} disabled={busy}>
+              <Text style={s.secondaryBtnText}>Sign up</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -65,10 +75,7 @@ const a = StyleSheet.create({
   box: { flex: 1, justifyContent: 'center', padding: 32 },
   logo: { width: 260, height: 60, alignSelf: 'center', marginBottom: 8 },
   subtitle: { fontSize: 14, color: colors.textDim, textAlign: 'center', marginBottom: 32 },
-  status: { color: colors.error, textAlign: 'center', marginBottom: 12, fontSize: 13 },
+  error: { color: colors.error, textAlign: 'center', marginBottom: 12, fontSize: 13 },
+  progress: { color: colors.textSecondary, textAlign: 'center', marginBottom: 12, fontSize: 13 },
   buttons: { flexDirection: 'column', gap: 12, marginTop: 8 },
-  primaryBtn: { backgroundColor: colors.accent, borderRadius: 12, padding: 14, alignItems: 'center' },
-  primaryBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 16 },
-  secondaryBtn: { borderWidth: 1, borderColor: colors.surfaceMuted, borderRadius: 12, padding: 14, alignItems: 'center' },
-  secondaryBtnText: { color: colors.text, fontWeight: '600', fontSize: 16 },
 });

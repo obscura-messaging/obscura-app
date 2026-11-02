@@ -1,4 +1,4 @@
-import { friendActivities, conversationEntries } from '../chats';
+import { activityPreview, friendActivities, conversationEntries } from '../chats';
 import { conversationId } from '../conversation';
 import { STORY_MAX_AGE_MS } from '../expiry';
 import { displayMs, pixStatus } from '../pix';
@@ -12,7 +12,7 @@ const CAROL: Friend = { userId: 'uCarol', username: 'carol', status: 'accepted' 
 const DAVE: Friend = { userId: 'uDave', username: 'dave', status: 'pending_received' };
 
 function entry(id: string, sentAt: number, authorUserId: string, data: Record<string, unknown> = {}, viewedAt: number | null = null):
-  ScreenEntry<{ conversationId: string }> {
+  ScreenEntry<{ conversationId: string; [key: string]: unknown }> {
   return { id, sentAt, authorUserId, authorDeviceId: 'd', viewedAt, data: { conversationId: '', ...data } };
 }
 const withBob = (id: string, sentAt: number, author: string, viewedAt: number | null = null) =>
@@ -57,6 +57,17 @@ describe('friendActivities', () => {
     expect(bob.latestPix).toBe('received_viewed');
     expect(bob.latestAt).toBe(30);
     expect(carol).toEqual({ friend: CAROL, lastMessage: undefined, unopenedPix: [], latestPix: undefined, latestAt: 0 });
+  });
+
+  it('computes activityPreview from unopened pix, latest message, or latest pix status', () => {
+    const [unopenedActivity] = friendActivities([BOB], ME, [], [withBob('p1', 10, BOB.userId), withBob('p2', 20, BOB.userId)]);
+    expect(activityPreview(unopenedActivity, ME)).toEqual({ text: '2 new pix · tap to view', highlight: true });
+
+    const [sentPixActivity] = friendActivities([BOB], ME, [], [withBob('p3', 30, ME)]);
+    expect(activityPreview(sentPixActivity, ME)).toEqual({ text: 'Pix delivered', highlight: false });
+
+    const [msgActivity] = friendActivities([BOB], ME, [entry('m1', 40, ME, { conversationId: conversationId(ME, BOB.userId), content: 'yo' })], [withBob('p3', 30, ME)]);
+    expect(activityPreview(msgActivity, ME)).toEqual({ text: 'You: yo', highlight: false });
   });
 });
 

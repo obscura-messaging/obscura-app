@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
-import { Obscura } from '../native/ObscuraModule';
+import { copyToClipboard } from '../state/store';
 import { toast } from './Toast';
 import { encodeQR, type QRKind } from '../domain/qr';
 import { errorMessage } from '../utils/log';
@@ -19,7 +19,7 @@ interface CodeCardProps {
 export function CodeCard({ kind, code, caption, copiedMessage }: CodeCardProps) {
   const copy = async () => {
     if (code === null) return;
-    try { await Obscura.setClipboard(code); toast.success(copiedMessage); }
+    try { await copyToClipboard(code); toast.success(copiedMessage); }
     catch (e) { toast.error(errorMessage(e)); }
   };
 

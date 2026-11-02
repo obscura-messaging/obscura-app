@@ -1,9 +1,38 @@
 import { Obscura, type Friend } from '../native/ObscuraModule';
 import { conversationId } from '../domain/conversation';
+import { attachmentOf, type Attachment } from '../domain/pix';
+import { fileUri } from '../utils/files';
 import { logError } from '../utils/log';
 import { saveEntry, useStore } from './store';
 
+export { attachmentOf, type Attachment };
 export type MediaType = 'photo' | 'video';
+
+/**
+ * Decrypt an attachment to the native cache and remember its `file://` URI by `mediaRef`. The
+ * native side returns the cached file when it already has one, so repeating this is cheap.
+ */
+export async function loadAttachmentUri(att: Attachment, cache: Map<string, string>): Promise<string> {
+  const cached = cache.get(att.mediaRef);
+  if (cached) return cached;
+  const path = await Obscura.downloadAttachment(att.mediaRef, att.contentKey, att.nonce);
+  const uri = fileUri(path);
+  cache.set(att.mediaRef, uri);
+  return uri;
+}
+
+export function discardCapture(path: string): void {
+  Obscura.deleteFile(path).catch((e) => logError('preview.cleanup', e));
+}
+
+export function prewarmAudio(): void {
+  Obscura.prewarmAudioSession().catch((e) => logError('prewarmAudio', e));
+}
+
+export async function createTestCapture(): Promise<string> {
+  const img = await Obscura.writeTestImage(100, 100);
+  return img.path;
+}
 
 export interface Capture {
   path: string;
@@ -41,7 +70,14 @@ export async function sendCapture(capture: Capture, recipients: readonly Friend[
       logError('send.pix:' + friend.username, e);
     }
   }
-  if (toStory) await saveEntry('story', { content: caption, ...media });
+  if (toStory) {
+    try {
+      await saveEntry('story', { content: caption, ...media });
+    } catch (e) {
+      undelivered.push('My story');
+      logError('send.story', e);
+    }
+  }
 
   for (const temp of new Set([path, resized?.path ?? path])) {
     Obscura.deleteFile(temp).catch((e) => logError('cleanup', e));

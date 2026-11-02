@@ -13,3 +13,17 @@ export const DEFAULT_DISPLAY_SECONDS = 5;
 export function displayMs(displayDuration: number | undefined): number {
   return (displayDuration || DEFAULT_DISPLAY_SECONDS) * 1000;
 }
+
+export interface Attachment {
+  readonly mediaRef: string;
+  readonly contentKey: string;
+  readonly nonce: string;
+}
+
+export function attachmentOf(entry: { data: Record<string, unknown> } | undefined): Attachment | null {
+  const mediaRef = entry?.data.mediaRef;
+  const contentKey = entry?.data.contentKey;
+  const nonce = entry?.data.nonce;
+  if (typeof mediaRef !== 'string' || typeof contentKey !== 'string' || typeof nonce !== 'string') return null;
+  return { mediaRef, contentKey, nonce };
+}
