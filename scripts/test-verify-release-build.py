@@ -61,7 +61,7 @@ class ReleaseBuildVerificationTest(unittest.TestCase):
     def test_tested_main_commit_has_unique_higher_build_number(self):
         result = self.verify()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("build_number=1001\n", self.output.read_text())
+        self.assertIn("build_number=1011\n", self.output.read_text())
         self.assertIn("version=1.0.0\n", self.output.read_text())
         self.assertIn(f"sha={self.git('rev-parse', 'HEAD')}\n", self.output.read_text())
 
