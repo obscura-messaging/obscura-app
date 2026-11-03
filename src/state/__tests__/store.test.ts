@@ -1,10 +1,11 @@
 import {
   useStore, refreshMessages, refreshStories, refreshProfiles,
   markSeen, saveOwnProfile, applyObscuraEvent, loadSession,
-  refreshFriends, resetSession, logout,
+  refreshFriends, resetSession, logout, flushOutboxFromStore, sweepAndRefresh,
+  subscribeToLaunchScreen, loadDebugLog, copyToClipboard, getFriendCode,
 } from '../store';
-import { Obscura } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
+import { logError } from '../../utils/log';
 
 const bridge = getFakeBridge();
 
@@ -27,7 +28,11 @@ function session() {
 
 beforeEach(() => {
   resetSession();
-  bridge.__authenticate({ userId: SELF, deviceId: DEVICE });
+  bridge.__authenticate({ userId: SELF, username: 'me', deviceId: DEVICE });
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 describe('refreshFriends', () => {
@@ -43,7 +48,7 @@ describe('refreshFriends', () => {
   });
 });
 
-describe('logout', () => {
+describe('logout & sessionEpoch race protection', () => {
   it('clears the session and tells the kit', async () => {
     session();
     useStore.setState({
@@ -71,6 +76,41 @@ describe('logout', () => {
 
     expect(useStore.getState().authed).toBe(false);
     warn.mockRestore();
+  });
+
+  it('discards stale in-flight getMessages, getStories, and getProfiles responses across resetSession/logout', async () => {
+    session();
+    let resolveMessages!: (v: any) => void;
+    let resolveStories!: (v: any) => void;
+    let resolveProfiles!: (v: any) => void;
+
+    jest.spyOn(bridge, 'getMessages').mockImplementationOnce(
+      () => new Promise((r) => { resolveMessages = r; }),
+    );
+    jest.spyOn(bridge, 'getStories').mockImplementationOnce(
+      () => new Promise((r) => { resolveStories = r; }),
+    );
+    jest.spyOn(bridge, 'getProfiles').mockImplementationOnce(
+      () => new Promise((r) => { resolveProfiles = r; }),
+    );
+
+    const inflight = Promise.all([refreshMessages(), refreshStories(), refreshProfiles()]);
+    await logout();
+
+    resolveMessages([{
+      kind: 'message', id: 'stale_m', peerUserId: BOB, authorUserId: BOB, sentAt: 1, viewedAt: null, content: 'stale',
+    }]);
+    resolveStories([{
+      id: 'stale_s', authorUserId: BOB, sentAt: 1, content: 'stale', attachment: null, captionMeta: null,
+    }]);
+    resolveProfiles([{
+      userId: BOB, authorDeviceId: 'd', updatedAt: 1, displayName: 'Stale', bio: '',
+    }]);
+    await inflight;
+
+    expect(useStore.getState().messages).toEqual([]);
+    expect(useStore.getState().stories).toEqual([]);
+    expect(useStore.getState().profiles).toEqual([]);
   });
 });
 
@@ -103,7 +143,7 @@ describe('seen receipts & profile writes', () => {
   });
 });
 
-describe('slice refresh', () => {
+describe('slice refresh & coalescing', () => {
   it('refreshes messages, stories, and profiles from the bridge', async () => {
     bridge.__deliverMessage({ id: 'dm_1', peerUserId: BOB, authorUserId: BOB, content: 'hello' });
     bridge.__deliverStory({ id: 's_1', authorUserId: BOB, content: 'my day' });
@@ -116,12 +156,42 @@ describe('slice refresh', () => {
     expect(useStore.getState().profiles.map((p) => p.userId)).toEqual([BOB]);
   });
 
-  it('swallows a refresh failure rather than rejecting', async () => {
+  it('coalesces concurrent refreshStories, refreshProfiles, flushOutboxFromStore, and sweepAndRefresh calls into at most one in-flight + one trailing pass', async () => {
+    bridge.__setSweepResult(['story']);
+    bridge.__calls.length = 0;
+
+    await Promise.all([refreshStories(), refreshStories(), refreshStories()]);
+    expect(bridge.__calls.filter((c) => c === 'getStories')).toHaveLength(2);
+
+    bridge.__calls.length = 0;
+    await Promise.all([refreshProfiles(), refreshProfiles(), refreshProfiles()]);
+    expect(bridge.__calls.filter((c) => c === 'getProfiles')).toHaveLength(2);
+
+    bridge.__calls.length = 0;
+    await Promise.all([flushOutboxFromStore(), flushOutboxFromStore(), flushOutboxFromStore()]);
+    expect(bridge.__calls.filter((c) => c === 'flushOutbox')).toHaveLength(2);
+
+    bridge.__calls.length = 0;
+    await Promise.all([sweepAndRefresh(), sweepAndRefresh(), sweepAndRefresh()]);
+    expect(bridge.__calls.filter((c) => c === 'sweepExpired')).toHaveLength(2);
+  });
+
+  it('swallows refresh, flushOutbox, and sweepExpired failures rather than rejecting', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     session();
     bridge.__failNext('getMessages', 'STORAGE_ERROR');
+    bridge.__failNext('getStories', 'STORAGE_ERROR');
+    bridge.__failNext('getProfiles', 'STORAGE_ERROR');
+    bridge.__failNext('flushOutbox', 'STORAGE_ERROR');
+    bridge.__failNext('sweepExpired', 'STORAGE_ERROR');
 
-    await expect(refreshMessages()).resolves.toBeUndefined();
+    await expect(Promise.all([
+      refreshMessages(),
+      refreshStories(),
+      refreshProfiles(),
+      flushOutboxFromStore(),
+      sweepAndRefresh(),
+    ])).resolves.toBeDefined();
     warn.mockRestore();
   });
 });
@@ -150,14 +220,17 @@ describe('event and lifecycle sync triggers', () => {
     expect(bridge.__calls.slice(callsBefore)).toEqual([]);
   });
 
-  it('refreshes and sweeps on foreground', async () => {
+  it('refreshes, sweeps, and flushes outbox when foregrounded while connected', async () => {
     session();
+    useStore.setState({ connState: 'connected' });
     bridge.__deliverMessage({ id: 'dm_1', peerUserId: BOB, authorUserId: BOB, content: 'hello' });
+    bridge.__calls.length = 0;
 
     applyObscuraEvent({ type: 'appStateChanged', state: 'active' });
     await flush();
 
     expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_1']);
+    expect(bridge.__calls).toContain('flushOutbox');
     expect(bridge.__calls).toContain('sweepExpired');
   });
 
@@ -189,31 +262,29 @@ describe('event and lifecycle sync triggers', () => {
     expect(useStore.getState().profiles.map((p) => p.displayName)).toEqual(['Bobby']);
   });
 
-  it('loads identity, friends, and all slices on cold start', async () => {
+  it('loads identity, friends, and all slices on cold start, falling back on individual pull failures', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__setFriends([{ userId: BOB, username: 'bob', status: 'accepted' }]);
     bridge.__deliverMessage({ id: 'dm_1', peerUserId: BOB, authorUserId: BOB, content: 'hello' });
+    bridge.__failNext('getFriends', 'STORAGE_ERROR');
 
     await loadSession();
     await flush();
 
     expect(useStore.getState().myUserId).toBe(SELF);
-    expect(useStore.getState().friends).toHaveLength(1);
+    expect(useStore.getState().friends).toEqual([]);
     expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_1']);
+    warn.mockRestore();
   });
 
-  it('flips authed on `authStateChanged: authenticated`', () => {
+  it('flips authed on `authStateChanged: authenticated` and clears on `loggedOut`', () => {
     expect(useStore.getState().authed).toBe(false);
 
     applyObscuraEvent({ type: 'authStateChanged', state: 'authenticated' });
-
     expect(useStore.getState().authed).toBe(true);
-  });
 
-  it('clears the session on `loggedOut`', () => {
     session();
-
     applyObscuraEvent({ type: 'authStateChanged', state: 'loggedOut' });
-
     expect(useStore.getState().authed).toBe(false);
     expect(useStore.getState().myUserId).toBe('');
   });
@@ -236,20 +307,37 @@ describe('event and lifecycle sync triggers', () => {
   });
 });
 
-describe('the outbox trigger', () => {
-  it('retries an undelivered entry on reconnect', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    session();
-    bridge.__setFriends([{ userId: BOB, username: 'bob', status: 'accepted' }]);
-    bridge.__failNext('postStory', 'SEND_FAILED', 'offline');
-    await expect(Obscura.postStory('stranded', null, null, null, null, null)).rejects.toThrow();
-    expect(bridge.__sent).toEqual([]);
+describe('launch intent, debug log, clipboard & friend code helpers', () => {
+  it('delivers both cold-start getLaunchIntent and warm launchedFrom events via subscribeToLaunchScreen', async () => {
+    bridge.launchIntent = { screen: 'ChatList' };
+    const screens: string[] = [];
 
-    applyObscuraEvent({ type: 'connectionChanged', state: 'connected' });
+    const off = subscribeToLaunchScreen((s) => screens.push(s));
     await flush();
+    expect(screens).toEqual(['ChatList']);
 
-    expect(bridge.__sent).toHaveLength(1);
-    expect(bridge.__sent[0].payload.content).toBe('stranded');
+    bridge.__emit({ type: 'launchedFrom', screen: 'Profile' });
+    expect(screens).toEqual(['ChatList', 'Profile']);
+
+    off();
+    bridge.__emit({ type: 'launchedFrom', screen: 'Camera' });
+    expect(screens).toEqual(['ChatList', 'Profile']);
+  });
+
+  it('combines native and JS debug logs, copies to clipboard, and fetches the friend code', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    bridge.debugLog = ['00:00:01 Native boot'];
+    logError('test.tag', new Error('boom'));
+
+    const lines = await loadDebugLog();
+    expect(lines[0]).toBe('00:00:01 Native boot');
+    expect(lines.some((l) => l.includes('[test.tag] boom'))).toBe(true);
+
+    await copyToClipboard('copied-text');
+    expect(bridge.clipboard).toBe('copied-text');
+
+    expect(await getFriendCode()).toBe(`${SELF}:me`);
     warn.mockRestore();
   });
 });
+

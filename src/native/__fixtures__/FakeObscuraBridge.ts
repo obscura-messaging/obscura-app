@@ -1,34 +1,14 @@
 /**
- * An in-memory `ObscuraBridge` for Jest. It models the bridge contract, not the kit: no crypto,
- * network or authentication. What the app relies on is faithful: messages/pix, stories, and
- * profiles are persisted with outbox `undelivered` flags, tombstones block replayed erased entries,
- * seen receipts expire messages/pix after 15m (capped by 30d max age), stories expire after 24h,
- * profiles merge by `(updatedAt, authorDeviceId)`, friend and device changes are primary only, and
- * `completeLink` waits until the test approves, expires or cancels the pending link.
+ * Dumb Tier-2 `ObscuraBridge` stub for testing `ObscuraModule.ts` and `src/state/`.
+ * Holds plain arrays and state fields, records calls, and emits events on demand.
  */
 
 import { serializeCaptionMeta, type CaptionMeta } from '../../domain/caption';
 import type {
-  AuthState, ConnectionState, DeviceInfo, Friend,
+  AuthState, ConnectionState, DeviceInfo, Friend, LaunchIntent,
   LoginScenario, ObscuraBridge, ProfileItem, RawAttachment,
   RawConversationItem, RawDirectMessageItem, RawPixItem, RawStoryItem,
 } from '../ObscuraModule';
-
-export const EXPIRE_AFTER_MS = 15 * 60 * 1000;
-export const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-export const STORY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
-type StoredDirectMessageItem = RawDirectMessageItem & { undelivered: boolean };
-type StoredPixItem = Omit<RawPixItem, 'attachment' | 'mediaRef' | 'contentKey' | 'nonce' | 'mediaType'> & {
-  attachment: RawAttachment;
-  undelivered: boolean;
-};
-type StoredConversationItem = StoredDirectMessageItem | StoredPixItem;
-type StoredStoryItem = Omit<RawStoryItem, 'attachment' | 'mediaRef' | 'contentKey' | 'nonce' | 'mediaType'> & {
-  attachment: RawAttachment | null;
-  undelivered: boolean;
-};
-type StoredProfileItem = ProfileItem & { undelivered: boolean };
 
 export interface SentRecord {
   recipientUserIds: string[];
@@ -44,788 +24,58 @@ export interface FakeBridgeOptions {
   deviceId?: string;
 }
 
+export const FAKE_LINK_DEVICE_NAME = 'Test phone';
+
+const rejection = (code: string, message: string): Error & { code: string } =>
+  Object.assign(new Error(message), { code });
+
 export class FakeObscuraBridge implements ObscuraBridge {
-  // ─── Session ───────────────────────────────────────────
-  userId: string;
-  username: string;
-  deviceId: string;
+  userId = 'user_self';
+  username = 'self';
+  deviceId = 'device_self';
   authState: AuthState = 'loggedOut';
   connectionState: ConnectionState = 'disconnected';
+  primary = true;
+  loginScenario: LoginScenario = 'existingDevice';
+  pushToken: string | null = null;
+  clipboard: string | null = null;
+  launchIntent: LaunchIntent | null = null;
+  debugLog: string[] = [];
+  deletedFiles: string[] = [];
 
-  // ─── Stores ────────────────────────────────────────────
-  private friends: Friend[] = [];
-  private listeners = new Set<(event: any) => void>();
-  private debugLog: string[] = [];
-  private pushToken: string | null = null;
-  private loginScenario: LoginScenario = 'existingDevice';
-  private primary = true;
-  private devices: DeviceInfo[] = [];
-  private linkCode: string | null = null;
-  private linkWait: { resolve: () => void; reject: (e: Error) => void } | null = null;
+  messages: RawConversationItem[] = [];
+  stories: RawStoryItem[] = [];
+  profiles: ProfileItem[] = [];
+  friends: Friend[] = [];
+  devices: DeviceInfo[] = [];
 
-  /** Codes `approveLink` accepted, in order. */
+  readonly __calls: string[] = [];
+  readonly __sent: SentRecord[] = [];
   readonly __approved: string[] = [];
 
-  /** Strictly increasing timestamps, so same-tick writes never tie. */
-  private clock = 1_700_000_000_000;
-  private nextTimestamp(): number {
-    return ++this.clock;
-  }
-
-  /** Every bridge call, in order. */
-  readonly __calls: string[] = [];
+  private listeners = new Set<(event: any) => void>();
+  private failures = new Map<string, { code: string; message: string }>();
+  private unreachable = new Set<string>();
+  private sweepResult: string[] = ['directMessage', 'pix', 'story'];
+  private linkCode: string | null = null;
+  private linkWait: { resolve: () => void; reject: (e: Error) => void } | null = null;
+  private seq = 1_700_000_000_000;
 
   constructor(opts: FakeBridgeOptions = {}) {
-    this.userId = opts.userId ?? 'user_self';
-    this.username = opts.username ?? 'self';
-    this.deviceId = opts.deviceId ?? 'device_self';
+    if (opts.userId) this.userId = opts.userId;
+    if (opts.username) this.username = opts.username;
+    if (opts.deviceId) this.deviceId = opts.deviceId;
   }
 
-  private record(method: string): void {
+  private async step<T>(method: string, fn: () => T): Promise<T> {
     this.__calls.push(method);
+    this.checkFailure(method);
+    return fn();
   }
 
-  // ─── Typed domain stores ───────────────────────────────────────────────
-
-  private messages = new Map<string, StoredConversationItem>();
-  private stories = new Map<string, StoredStoryItem>();
-  private profiles = new Map<string, StoredProfileItem>();
-  /** Erased entry IDs mapped to their `erasedAt` timestamp. */
-  private tombstones = new Map<string, number>();
-  /** Out-of-order seen receipts that arrived before their target message/pix. */
-  private pendingReceipts = new Map<string, { senderUserId: string; viewedAt: number; sentAt: number }>();
-  /** Local `markSeen` calls whose outgoing receipt could not be delivered yet. */
-  private undeliveredReceipts = new Map<string, { peerUserId: string; receiptId: string; viewedAt: number }>();
-
-  /** What outgoing domain operations put on the wire, in order. */
-  readonly __sent: SentRecord[] = [];
-
-  /** Users whose sends the kit reports rejected, as it does for a user with no devices. */
-  private unreachable = new Set<string>();
-  __setUnreachable(userIds: string[]): void {
-    this.unreachable = new Set(userIds);
-  }
-
-  private acceptedFriendIds(): string[] {
-    return this.friends
-      .filter((f) => f.status === 'accepted' && f.userId !== this.userId)
-      .map((f) => f.userId);
-  }
-
-  private canDeliverTo(recipients: readonly string[]): boolean {
-    return recipients.length === 0 || recipients.some((userId) => !this.unreachable.has(userId));
-  }
-
-  private deliverOutgoing(
-    method: string,
-    recipientUserIds: string[],
-    modelKey: SentRecord['modelKey'],
-    entryId: string,
-    sentAt: number,
-    payload: Record<string, unknown>,
-    markUndelivered: () => void,
-  ): void {
+  private checkFailure(method: string, ignoreSendFailed = false): void {
     const f = this.failures.get(method);
-    if (f) {
-      this.failures.delete(method);
-      markUndelivered();
-      throw rejection(f.code, f.message);
-    }
-    if (!this.canDeliverTo(recipientUserIds)) {
-      markUndelivered();
-      throw rejection('SEND_FAILED', `${modelKey} reached none of its recipients: No devices found`);
-    }
-    this.__sent.push({ recipientUserIds, modelKey, entryId, sentAt, payload });
-  }
-
-  async getMessages(): Promise<RawConversationItem[]> {
-    this.record('getMessages');
-    this.checkFailure('getMessages');
-    return [...this.messages.values()]
-      .sort((a, b) => a.sentAt - b.sentAt)
-      .map((item): RawConversationItem => (
-        item.kind === 'pix'
-          ? { ...stripUndelivered(item), attachment: { ...item.attachment } }
-          : stripUndelivered(item)
-      ));
-  }
-
-  async sendMessage(peerUserId: string, content: string): Promise<string> {
-    this.record('sendMessage');
-    this.checkPreStoreFailure('sendMessage');
-    if (peerUserId.trim() === '') {
-      throw rejection('INVALID_ARGUMENT', 'peerUserId is required');
-    }
-    const sentAt = this.nextTimestamp();
-    const id = `dm_${sentAt}`;
-    const item: StoredDirectMessageItem = {
-      kind: 'message',
-      id,
-      peerUserId,
-      authorUserId: this.userId,
-      sentAt,
-      viewedAt: null,
-      content,
-      undelivered: false,
-    };
-    this.messages.set(id, item);
-    this.deliverOutgoing(
-      'sendMessage',
-      [peerUserId],
-      'directMessage',
-      id,
-      sentAt,
-      { peerUserId, content },
-      () => { item.undelivered = true; },
-    );
-    return id;
-  }
-
-  async sendPix(
-    peerUserId: string,
-    mediaRef: string,
-    contentKey: string,
-    nonce: string,
-    mediaType: string,
-    caption: string,
-    captionMeta: string | null,
-    displayDuration: number,
-  ): Promise<string> {
-    this.record('sendPix');
-    this.checkPreStoreFailure('sendPix');
-    if (peerUserId.trim() === '') {
-      throw rejection('INVALID_ARGUMENT', 'peerUserId is required');
-    }
-    const sentAt = this.nextTimestamp();
-    const id = `pix_${sentAt}`;
-    const item: StoredPixItem = {
-      kind: 'pix',
-      id,
-      peerUserId,
-      authorUserId: this.userId,
-      sentAt,
-      viewedAt: null,
-      attachment: {
-        id: mediaRef,
-        contentKey,
-        nonce,
-        mediaType,
-      },
-      caption,
-      captionMeta,
-      displayDuration,
-      undelivered: false,
-    };
-    this.messages.set(id, item);
-    this.deliverOutgoing(
-      'sendPix',
-      [peerUserId],
-      'pix',
-      id,
-      sentAt,
-      { peerUserId, mediaRef, contentKey, nonce, mediaType, caption, captionMeta, displayDuration },
-      () => { item.undelivered = true; },
-    );
-    return id;
-  }
-
-  async markSeen(entryId: string): Promise<void> {
-    this.record('markSeen');
-    this.checkPreStoreFailure('markSeen');
-    const item = this.messages.get(entryId);
-    if (!item || item.authorUserId === this.userId) {
-      this.checkFailure('markSeen');
-      return;
-    }
-    if (item.viewedAt === null) {
-      const viewedAt = this.nextTimestamp();
-      item.viewedAt = viewedAt;
-      const receiptId = `seen_${item.kind === 'pix' ? 'pix' : 'directMessage'}_${entryId}`;
-      this.deliverOutgoing(
-        'markSeen',
-        [item.peerUserId],
-        'seen',
-        receiptId,
-        viewedAt,
-        { entryId, viewedAt },
-        () => { this.undeliveredReceipts.set(entryId, { peerUserId: item.peerUserId, receiptId, viewedAt }); },
-      );
-    } else {
-      this.checkFailure('markSeen');
-    }
-  }
-
-  async getStories(): Promise<RawStoryItem[]> {
-    this.record('getStories');
-    this.checkFailure('getStories');
-    return [...this.stories.values()]
-      .filter((s) => s.sentAt + STORY_MAX_AGE_MS > this.clock)
-      .sort((a, b) => a.sentAt - b.sentAt)
-      .map((story) => {
-        const stripped = stripUndelivered(story);
-        return {
-          ...stripped,
-          attachment: stripped.attachment ? { ...stripped.attachment } : null,
-        };
-      });
-  }
-
-  async postStory(
-    content: string,
-    mediaRef: string | null,
-    contentKey: string | null,
-    nonce: string | null,
-    mediaType: string | null,
-    captionMeta: string | null,
-  ): Promise<string> {
-    this.record('postStory');
-    this.checkPreStoreFailure('postStory');
-    const sentAt = this.nextTimestamp();
-    const id = `story_${sentAt}`;
-    const attachment: RawAttachment | null = mediaRef && contentKey && nonce
-      ? { id: mediaRef, contentKey, nonce, mediaType: mediaType ?? 'photo' }
-      : null;
-    const story: StoredStoryItem = {
-      id,
-      authorUserId: this.userId,
-      sentAt,
-      content,
-      attachment,
-      captionMeta,
-      undelivered: false,
-    };
-    this.stories.set(id, story);
-    const recipients = this.acceptedFriendIds();
-    this.deliverOutgoing(
-      'postStory',
-      recipients,
-      'story',
-      id,
-      sentAt,
-      { content, mediaRef, contentKey, nonce, mediaType, captionMeta },
-      () => { story.undelivered = true; },
-    );
-    return id;
-  }
-
-  async getProfiles(): Promise<ProfileItem[]> {
-    this.record('getProfiles');
-    this.checkFailure('getProfiles');
-    return [...this.profiles.values()].map(({ undelivered: _undelivered, ...profile }) => ({ ...profile }));
-  }
-
-  async updateProfile(displayName: string, bio: string): Promise<void> {
-    this.record('updateProfile');
-    this.checkPreStoreFailure('updateProfile');
-    const existing = this.profiles.get(this.userId);
-    const now = this.nextTimestamp();
-    const updatedAt = existing ? Math.max(now, existing.updatedAt + 1) : now;
-    const profile: StoredProfileItem = {
-      userId: this.userId,
-      authorDeviceId: this.deviceId,
-      updatedAt,
-      displayName,
-      bio,
-      undelivered: false,
-    };
-    this.profiles.set(this.userId, profile);
-    const recipients = this.acceptedFriendIds();
-    this.deliverOutgoing(
-      'updateProfile',
-      recipients,
-      'profile',
-      `profile_${this.userId}`,
-      updatedAt,
-      { displayName, bio },
-      () => { profile.undelivered = true; },
-    );
-  }
-
-  async flushOutbox(): Promise<number> {
-    this.record('flushOutbox');
-    this.checkFailure('flushOutbox');
-    let delivered = 0;
-
-    for (const item of this.messages.values()) {
-      if (!item.undelivered) continue;
-      if (!this.canDeliverTo([item.peerUserId])) continue;
-      item.undelivered = false;
-      this.__sent.push({
-        recipientUserIds: [item.peerUserId],
-        modelKey: item.kind === 'pix' ? 'pix' : 'directMessage',
-        entryId: item.id,
-        sentAt: item.sentAt,
-        payload: item.kind === 'pix'
-          ? {
-              peerUserId: item.peerUserId,
-              mediaRef: item.attachment.id,
-              contentKey: item.attachment.contentKey,
-              nonce: item.attachment.nonce,
-              mediaType: item.attachment.mediaType,
-              caption: item.caption,
-              captionMeta: item.captionMeta,
-              displayDuration: item.displayDuration,
-            }
-          : { peerUserId: item.peerUserId, content: item.content },
-      });
-      delivered += 1;
-    }
-
-    for (const [entryId, rec] of this.undeliveredReceipts) {
-      if (!this.canDeliverTo([rec.peerUserId])) continue;
-      this.undeliveredReceipts.delete(entryId);
-      this.__sent.push({
-        recipientUserIds: [rec.peerUserId],
-        modelKey: 'seen',
-        entryId: rec.receiptId,
-        sentAt: rec.viewedAt,
-        payload: { entryId, viewedAt: rec.viewedAt },
-      });
-      delivered += 1;
-    }
-
-    for (const story of this.stories.values()) {
-      if (!story.undelivered) continue;
-      const recipients = this.acceptedFriendIds();
-      if (!this.canDeliverTo(recipients)) continue;
-      story.undelivered = false;
-      this.__sent.push({
-        recipientUserIds: recipients,
-        modelKey: 'story',
-        entryId: story.id,
-        sentAt: story.sentAt,
-        payload: {
-          content: story.content,
-          mediaRef: story.attachment?.id ?? null,
-          contentKey: story.attachment?.contentKey ?? null,
-          nonce: story.attachment?.nonce ?? null,
-          mediaType: story.attachment?.mediaType ?? null,
-          captionMeta: story.captionMeta,
-        },
-      });
-      delivered += 1;
-    }
-
-    for (const profile of this.profiles.values()) {
-      if (!profile.undelivered) continue;
-      const recipients = this.acceptedFriendIds();
-      if (!this.canDeliverTo(recipients)) continue;
-      profile.undelivered = false;
-      this.__sent.push({
-        recipientUserIds: recipients,
-        modelKey: 'profile',
-        entryId: `profile_${profile.userId}`,
-        sentAt: profile.updatedAt,
-        payload: { displayName: profile.displayName, bio: profile.bio },
-      });
-      delivered += 1;
-    }
-
-    return delivered;
-  }
-
-  async sweepExpired(): Promise<string[]> {
-    this.record('sweepExpired');
-    this.checkFailure('sweepExpired');
-    const touched = new Set<string>();
-
-    for (const item of this.messages.values()) {
-      const ceiling = item.sentAt + MAX_AGE_MS;
-      const deadline = item.viewedAt === null ? ceiling : Math.min(ceiling, item.viewedAt + EXPIRE_AFTER_MS);
-      if (deadline <= this.clock) {
-        if (item.kind === 'pix') this.__purged.push(item.attachment.id);
-        this.tombstones.set(item.id, this.clock);
-        this.messages.delete(item.id);
-        this.undeliveredReceipts.delete(item.id);
-        touched.add(item.kind === 'pix' ? 'pix' : 'directMessage');
-      }
-    }
-
-    for (const story of this.stories.values()) {
-      if (story.sentAt + STORY_MAX_AGE_MS <= this.clock) {
-        if (story.attachment !== null) this.__purged.push(story.attachment.id);
-        this.tombstones.set(story.id, this.clock);
-        this.stories.delete(story.id);
-        touched.add('story');
-      }
-    }
-
-    for (const [entryId, rec] of this.pendingReceipts) {
-      if (rec.sentAt + MAX_AGE_MS <= this.clock) {
-        this.pendingReceipts.delete(entryId);
-      }
-    }
-
-    for (const [id, erasedAt] of this.tombstones) {
-      if (erasedAt + MAX_AGE_MS <= this.clock) {
-        this.tombstones.delete(id);
-      }
-    }
-
-    return [...touched];
-  }
-
-  // ─── Test controls (not part of the native surface) ───
-
-  /** Emit a raw event exactly as the native side would. */
-  __emit(event: Record<string, unknown>): void {
-    for (const l of [...this.listeners]) l(event);
-  }
-
-  /** Advance the fake clock by `ms` milliseconds. */
-  __advanceTime(ms: number): number {
-    this.clock += ms;
-    return this.clock;
-  }
-
-  /** Current fake clock value. */
-  __now(): number {
-    return this.clock;
-  }
-
-  /** Deliver an incoming direct message and emit `messageReceived`. */
-  __deliverMessage(input: {
-    id?: string;
-    peerUserId?: string;
-    authorUserId?: string;
-    sentAt?: number;
-    viewedAt?: number | null;
-    content?: string;
-  } = {}): RawDirectMessageItem {
-    const sentAt = input.sentAt ?? this.nextTimestamp();
-    const id = input.id ?? `dm_${sentAt}`;
-    const authorUserId = input.authorUserId ?? input.peerUserId ?? 'user_peer';
-    const peerUserId = input.peerUserId ?? (authorUserId === this.userId ? 'user_peer' : authorUserId);
-    const pending = this.pendingReceipts.get(id);
-    const viewedAt = input.viewedAt !== undefined
-      ? input.viewedAt
-      : pending && pending.senderUserId !== authorUserId
-      ? pending.viewedAt
-      : null;
-
-    const item: StoredDirectMessageItem = {
-      kind: 'message',
-      id,
-      peerUserId,
-      authorUserId,
-      sentAt,
-      viewedAt,
-      content: input.content ?? 'hello',
-      undelivered: false,
-    };
-
-    if (!this.tombstones.has(id) && !this.messages.has(id)) {
-      this.messages.set(id, item);
-      if (viewedAt !== null) this.pendingReceipts.delete(id);
-    }
-
-    const stored = this.messages.get(id);
-    const result = stored && stored.kind === 'message' ? stored : item;
-    this.__emit({ type: 'messageReceived', model: 'directMessage' });
-    return stripUndelivered(result);
-  }
-
-  /** Deliver an incoming pix and emit `messageReceived`. */
-  __deliverPix(input: {
-    id?: string;
-    peerUserId?: string;
-    authorUserId?: string;
-    sentAt?: number;
-    viewedAt?: number | null;
-    attachment?: {
-      id: string;
-      contentKey?: string;
-      nonce?: string;
-      mediaType?: string;
-    };
-    mediaRef?: string;
-    contentKey?: string;
-    nonce?: string;
-    mediaType?: string | null;
-    caption?: string | null;
-    captionMeta?: CaptionMeta | string | null;
-    displayDuration?: number;
-  } = {}): Omit<StoredPixItem, 'undelivered'> {
-    const sentAt = input.sentAt ?? this.nextTimestamp();
-    const id = input.id ?? `pix_${sentAt}`;
-    const authorUserId = input.authorUserId ?? input.peerUserId ?? 'user_peer';
-    const peerUserId = input.peerUserId ?? (authorUserId === this.userId ? 'user_peer' : authorUserId);
-    const pending = this.pendingReceipts.get(id);
-    const viewedAt = input.viewedAt !== undefined
-      ? input.viewedAt
-      : pending && pending.senderUserId !== authorUserId
-      ? pending.viewedAt
-      : null;
-
-    const attachment: RawAttachment = input.attachment
-      ? {
-          id: input.attachment.id,
-          contentKey: input.attachment.contentKey ?? 'key',
-          nonce: input.attachment.nonce ?? 'nonce',
-          mediaType: input.attachment.mediaType ?? 'photo',
-        }
-      : {
-          id: input.mediaRef ?? 'att_1',
-          contentKey: input.contentKey ?? 'key',
-          nonce: input.nonce ?? 'nonce',
-          mediaType: input.mediaType ?? 'photo',
-        };
-    const captionMeta = typeof input.captionMeta === 'object' && input.captionMeta !== null
-      ? serializeCaptionMeta(input.captionMeta)
-      : (input.captionMeta ?? null);
-
-    const item: StoredPixItem = {
-      kind: 'pix',
-      id,
-      peerUserId,
-      authorUserId,
-      sentAt,
-      viewedAt,
-      attachment,
-      caption: input.caption ?? null,
-      captionMeta,
-      displayDuration: input.displayDuration ?? 5,
-      undelivered: false,
-    };
-
-    if (!this.tombstones.has(id) && !this.messages.has(id)) {
-      this.messages.set(id, item);
-      if (viewedAt !== null) this.pendingReceipts.delete(id);
-    }
-
-    const stored = this.messages.get(id);
-    const result = stored && stored.kind === 'pix' ? stored : item;
-    this.__emit({ type: 'messageReceived', model: 'pix' });
-    return { ...stripUndelivered(result), attachment: { ...result.attachment } };
-  }
-
-  /** Deliver an incoming seen receipt and emit `messageReceived`. */
-  __deliverSeen(
-    input: string | {
-      entryId: string;
-      senderUserId?: string;
-      viewedAt?: number;
-      sentAt?: number;
-    },
-    viewedAtArg?: number,
-  ): void {
-    const opts = typeof input === 'string' ? { entryId: input, viewedAt: viewedAtArg } : input;
-    const item = this.messages.get(opts.entryId);
-    const sentAt = opts.sentAt ?? opts.viewedAt ?? this.nextTimestamp();
-    const rawViewedAt = opts.viewedAt ?? sentAt;
-    const effectiveViewedAt = Math.min(rawViewedAt, sentAt);
-    const senderUserId = opts.senderUserId ?? (item ? item.peerUserId : 'user_peer');
-
-    if (item) {
-      if (senderUserId !== item.authorUserId && item.viewedAt === null) {
-        item.viewedAt = effectiveViewedAt;
-      }
-    } else if (!this.tombstones.has(opts.entryId) && !this.pendingReceipts.has(opts.entryId)) {
-      this.pendingReceipts.set(opts.entryId, { senderUserId, viewedAt: effectiveViewedAt, sentAt });
-    }
-    this.__emit({ type: 'messageReceived', model: 'seen' });
-  }
-
-  /** Deliver an incoming story and emit `messageReceived`. */
-  __deliverStory(input: {
-    id?: string;
-    authorUserId?: string;
-    sentAt?: number;
-    content?: string;
-    attachment?: {
-      id: string;
-      contentKey?: string;
-      nonce?: string;
-      mediaType?: string;
-    } | null;
-    mediaRef?: string | null;
-    contentKey?: string | null;
-    nonce?: string | null;
-    mediaType?: string | null;
-    captionMeta?: CaptionMeta | string | null;
-  } = {}): Omit<StoredStoryItem, 'undelivered'> {
-    const sentAt = input.sentAt ?? this.nextTimestamp();
-    const id = input.id ?? `story_${sentAt}`;
-    const attachment: RawAttachment | null = input.attachment !== undefined
-      ? (input.attachment
-        ? {
-            id: input.attachment.id,
-            contentKey: input.attachment.contentKey ?? 'key',
-            nonce: input.attachment.nonce ?? 'nonce',
-            mediaType: input.attachment.mediaType ?? 'photo',
-          }
-        : null)
-      : input.mediaRef
-      ? {
-          id: input.mediaRef,
-          contentKey: input.contentKey ?? 'key',
-          nonce: input.nonce ?? 'nonce',
-          mediaType: input.mediaType ?? 'photo',
-        }
-      : null;
-    const captionMeta = typeof input.captionMeta === 'object' && input.captionMeta !== null
-      ? serializeCaptionMeta(input.captionMeta)
-      : (input.captionMeta ?? null);
-    const story: StoredStoryItem = {
-      id,
-      authorUserId: input.authorUserId ?? 'user_peer',
-      sentAt,
-      content: input.content ?? '',
-      attachment,
-      captionMeta,
-      undelivered: false,
-    };
-
-    if (!this.tombstones.has(id) && !this.stories.has(id)) {
-      this.stories.set(id, story);
-    }
-
-    const stored = this.stories.get(id) ?? story;
-    this.__emit({ type: 'messageReceived', model: 'story' });
-    return {
-      ...stripUndelivered(stored),
-      attachment: stored.attachment ? { ...stored.attachment } : null,
-    };
-  }
-
-  /** Deliver an incoming profile update (`REPLACE` by `(updatedAt, authorDeviceId)`) and emit `messageReceived`. */
-  __deliverProfile(input: {
-    userId: string;
-    authorDeviceId?: string;
-    updatedAt?: number;
-    displayName: string;
-    bio?: string;
-  }): ProfileItem {
-    const updatedAt = input.updatedAt ?? this.nextTimestamp();
-    const authorDeviceId = input.authorDeviceId ?? 'device_peer';
-    const incoming: StoredProfileItem = {
-      userId: input.userId,
-      authorDeviceId,
-      updatedAt,
-      displayName: input.displayName,
-      bio: input.bio ?? '',
-      undelivered: false,
-    };
-
-    const existing = this.profiles.get(input.userId);
-    const wins = !existing || (
-      incoming.updatedAt !== existing.updatedAt
-        ? incoming.updatedAt > existing.updatedAt
-        : incoming.authorDeviceId > existing.authorDeviceId
-    );
-    if (wins) {
-      this.profiles.set(input.userId, incoming);
-    }
-
-    const stored = this.profiles.get(input.userId)!;
-    this.__emit({ type: 'messageReceived', model: 'profile' });
-    return stripUndelivered(stored);
-  }
-
-  /** An authenticated session; without one, `getUserId()` is null. */
-  __authenticate(opts: FakeBridgeOptions = {}): void {
-    if (opts.userId !== undefined) this.userId = opts.userId;
-    if (opts.username !== undefined) this.username = opts.username;
-    if (opts.deviceId !== undefined) this.deviceId = opts.deviceId;
-    this.__setAuthState('authenticated');
-  }
-
-  /** Set the friend graph and emit its payload-free wake event. */
-  __setFriends(friends: Friend[]): void {
-    this.friends = friends;
-    this.__emit({ type: 'friendsChanged' });
-  }
-
-  /** Flip auth state and emit, as login/logout does. */
-  __setAuthState(state: AuthState): void {
-    this.authState = state;
-    this.__emit({ type: 'authStateChanged', state });
-  }
-
-  /** What the next `login` calls resolve to. Only `existingDevice` authenticates, as in the kits. */
-  __setLoginScenario(scenario: LoginScenario): void {
-    this.loginScenario = scenario;
-  }
-
-  /** Whether this device is the account's primary. */
-  __setPrimary(primary: boolean): void {
-    this.primary = primary;
-  }
-
-  /** The account's devices as `getDevices` reports them. */
-  __setDevices(devices: DeviceInfo[]): void {
-    this.devices = devices;
-  }
-
-  /** The primary approves the pending link: `completeLink` provisions this device and resolves. */
-  __approvePendingLink(): void {
-    this.settleLink(null);
-  }
-
-  /** The pending link session expires: `completeLink` rejects `LINK_FAILED`. */
-  __expirePendingLink(): void {
-    this.settleLink(rejection('LINK_FAILED', 'Link session expired'));
-  }
-
-  /** Flip connection state and emit. */
-  __setConnectionState(state: ConnectionState): void {
-    this.connectionState = state;
-    this.__emit({ type: 'connectionChanged', state });
-  }
-
-  /** Clear all state in place: `ObscuraModule` holds this instance from import time. */
-  __reset(): void {
-    this.messages.clear();
-    this.stories.clear();
-    this.profiles.clear();
-    this.tombstones.clear();
-    this.pendingReceipts.clear();
-    this.undeliveredReceipts.clear();
-    this.__sent.length = 0;
-    this.__purged.length = 0;
-    this.friends = [];
-    this.listeners.clear();
-    this.debugLog.length = 0;
-    this.failures.clear();
-    this.unreachable.clear();
-    this.__calls.length = 0;
-    this.pushToken = null;
-    this.loginScenario = 'existingDevice';
-    this.primary = true;
-    this.devices = [];
-    this.linkCode = null;
-    this.linkWait = null;
-    this.__approved.length = 0;
-    this.userId = 'user_self';
-    this.username = 'self';
-    this.deviceId = 'device_self';
-    this.authState = 'loggedOut';
-    this.connectionState = 'disconnected';
-    this.clock = 1_700_000_000_000;
-  }
-
-  /** How many handlers are subscribed. */
-  __listenerCount(): number {
-    return this.listeners.size;
-  }
-
-  /** Make the next call to `method` reject with `code`, as a native failure would. */
-  private failures = new Map<string, { code: string; message: string }>();
-  __failNext(method: string, code: string, message = 'fake failure'): void {
-    this.failures.set(method, { code, message });
-  }
-
-  private checkFailure(method: string): void {
-    const f = this.failures.get(method);
-    if (!f) return;
-    this.failures.delete(method);
-    throw rejection(f.code, f.message);
-  }
-
-  /** Throw before storing unless the injected failure is `SEND_FAILED` (which happens after storing). */
-  private checkPreStoreFailure(method: string): void {
-    const f = this.failures.get(method);
-    if (!f || f.code === 'SEND_FAILED') return;
+    if (!f || (ignoreSendFailed && f.code === 'SEND_FAILED')) return;
     this.failures.delete(method);
     throw rejection(f.code, f.message);
   }
@@ -834,306 +84,325 @@ export class FakeObscuraBridge implements ObscuraBridge {
     if (!this.primary) throw rejection('NOT_PRIMARY', 'Only the primary device can do this');
   }
 
-  // ─── Event subscription (what `NativeEventEmitter` drives) ───
+  private acceptedFriendIds(): string[] {
+    return this.friends.filter((f) => f.status === 'accepted' && f.userId !== this.userId).map((f) => f.userId);
+  }
+
+  private sendOutgoing(
+    method: string, recipientUserIds: string[], modelKey: SentRecord['modelKey'],
+    entryId: string, sentAt: number, payload: Record<string, unknown>,
+  ): void {
+    this.checkFailure(method);
+    if (recipientUserIds.length > 0 && recipientUserIds.every((id) => this.unreachable.has(id))) {
+      throw rejection('SEND_FAILED', `${modelKey} reached none of its recipients`);
+    }
+    this.__sent.push({ recipientUserIds, modelKey, entryId, sentAt, payload });
+  }
 
   addListener(_eventName: string, handler?: (event: any) => void): { remove: () => void } {
     if (handler) this.listeners.add(handler);
-    return {
-      remove: () => {
-        if (handler) this.listeners.delete(handler);
-      },
-    };
+    return { remove: () => { if (handler) this.listeners.delete(handler); } };
   }
 
-  removeListeners(_count: number): void {
-    // RN calls this on teardown; the per-subscription `remove()` above does the real work.
+  removeListeners(_count: number): void {}
+
+  getMessages(): Promise<RawConversationItem[]> { return this.step('getMessages', () => [...this.messages]); }
+  getStories(): Promise<RawStoryItem[]> { return this.step('getStories', () => [...this.stories]); }
+  getProfiles(): Promise<ProfileItem[]> { return this.step('getProfiles', () => [...this.profiles]); }
+  flushOutbox(): Promise<number> { return this.step('flushOutbox', () => 0); }
+  sweepExpired(): Promise<string[]> { return this.step('sweepExpired', () => [...this.sweepResult]); }
+
+  async sendMessage(peerUserId: string, content: string): Promise<string> {
+    this.__calls.push('sendMessage'); this.checkFailure('sendMessage', true);
+    if (peerUserId.trim() === '') throw rejection('INVALID_ARGUMENT', 'peerUserId is required');
+    const sentAt = ++this.seq, id = `dm_${sentAt}`;
+    this.messages.push({ kind: 'message', id, peerUserId, authorUserId: this.userId, sentAt, viewedAt: null, content });
+    this.sendOutgoing('sendMessage', [peerUserId], 'directMessage', id, sentAt, { peerUserId, content });
+    return id;
   }
 
-  // ─── Auth ──────────────────────────────────────────────
-
-  async registerUser(username: string, _password: string): Promise<void> {
-    this.record('registerUser');
-    this.checkFailure('registerUser');
-    this.username = username;
-    this.__setAuthState('authenticated');
+  async sendPix(
+    peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
+    mediaType: string, caption: string, captionMeta: string | null, displayDuration: number,
+  ): Promise<string> {
+    this.__calls.push('sendPix'); this.checkFailure('sendPix', true);
+    if (peerUserId.trim() === '') throw rejection('INVALID_ARGUMENT', 'peerUserId is required');
+    const sentAt = ++this.seq, id = `pix_${sentAt}`;
+    this.messages.push({
+      kind: 'pix', id, peerUserId, authorUserId: this.userId, sentAt, viewedAt: null,
+      attachment: { id: mediaRef, contentKey, nonce, mediaType }, caption, captionMeta, displayDuration,
+    });
+    this.sendOutgoing('sendPix', [peerUserId], 'pix', id, sentAt, { peerUserId, mediaRef, contentKey, nonce, mediaType, caption, captionMeta, displayDuration });
+    return id;
   }
 
-  async login(username: string, _password: string): Promise<LoginScenario> {
-    this.record('login');
-    this.checkFailure('login');
-    if (this.loginScenario === 'existingDevice') {
-      this.username = username;
-      this.__setAuthState('authenticated');
-    }
-    return this.loginScenario;
+  markSeen(entryId: string): Promise<void> {
+    return this.step('markSeen', () => {
+      const item = this.messages.find((m) => m.id === entryId);
+      if (!item || item.authorUserId === this.userId || item.viewedAt !== null) return;
+      const viewedAt = (item.viewedAt = ++this.seq);
+      const receiptId = `seen_${item.kind === 'pix' ? 'pix' : 'directMessage'}_${entryId}`;
+      this.__sent.push({ recipientUserIds: [item.peerUserId], modelKey: 'seen', entryId: receiptId, sentAt: viewedAt, payload: { entryId, viewedAt } });
+    });
   }
 
-  async resetAccount(username: string, _password: string): Promise<void> {
-    this.record('resetAccount');
-    this.checkFailure('resetAccount');
-    this.clearLocalState();
-    this.username = username;
-    this.primary = true;
-    this.__setAuthState('authenticated');
+  async postStory(
+    content: string, mediaRef: string | null, contentKey: string | null,
+    nonce: string | null, mediaType: string | null, captionMeta: string | null,
+  ): Promise<string> {
+    this.__calls.push('postStory'); this.checkFailure('postStory', true);
+    const sentAt = ++this.seq, id = `story_${sentAt}`;
+    const attachment: RawAttachment | null = mediaRef && contentKey && nonce
+      ? { id: mediaRef, contentKey, nonce, mediaType: mediaType ?? 'photo' } : null;
+    this.stories.push({ id, authorUserId: this.userId, sentAt, content, attachment, captionMeta });
+    this.sendOutgoing('postStory', this.acceptedFriendIds(), 'story', id, sentAt, { content, mediaRef, contentKey, nonce, mediaType, captionMeta });
+    return id;
   }
 
-  async beginLink(username: string, _password: string): Promise<string> {
-    this.record('beginLink');
-    this.checkFailure('beginLink');
-    this.username = username;
-    this.linkCode = `link_${this.nextTimestamp()}`;
-    return this.linkCode;
+  async updateProfile(displayName: string, bio: string): Promise<void> {
+    this.__calls.push('updateProfile'); this.checkFailure('updateProfile', true);
+    const updatedAt = ++this.seq;
+    const profile: ProfileItem = { userId: this.userId, authorDeviceId: this.deviceId, updatedAt, displayName, bio };
+    this.profiles = [...this.profiles.filter((p) => p.userId !== this.userId), profile];
+    this.sendOutgoing('updateProfile', this.acceptedFriendIds(), 'profile', `profile_${this.userId}`, updatedAt, { displayName, bio });
+  }
+
+  registerUser(username: string, _password: string): Promise<void> {
+    return this.step('registerUser', () => { this.username = username; this.__setAuthState('authenticated'); });
+  }
+
+  login(username: string, _password: string): Promise<LoginScenario> {
+    return this.step('login', () => {
+      if (this.loginScenario === 'existingDevice') { this.username = username; this.__setAuthState('authenticated'); }
+      return this.loginScenario;
+    });
+  }
+
+  resetAccount(username: string, _password: string): Promise<void> {
+    return this.step('resetAccount', () => {
+      this.clearLocalState(); this.username = username; this.primary = true; this.__setAuthState('authenticated');
+    });
+  }
+
+  beginLink(username: string, _password: string): Promise<string> {
+    return this.step('beginLink', () => { this.username = username; return (this.linkCode = `link_${++this.seq}`); });
   }
 
   async completeLink(): Promise<void> {
-    this.record('completeLink');
-    this.checkFailure('completeLink');
+    this.__calls.push('completeLink'); this.checkFailure('completeLink');
     if (this.linkCode === null) throw rejection('INVALID_ARGUMENT', 'No link in progress');
     this.linkCode = null;
     await new Promise<void>((resolve, reject) => { this.linkWait = { resolve, reject }; });
-    this.primary = false;
-    this.__setAuthState('authenticated');
-    this.__setConnectionState('connected');
+    this.primary = false; this.__setAuthState('authenticated'); this.__setConnectionState('connected');
   }
 
-  async cancelLink(): Promise<void> {
-    this.record('cancelLink');
-    this.linkCode = null;
-    this.settleLink(rejection('CANCELLED', 'Link cancelled'));
+  cancelLink(): Promise<void> {
+    return this.step('cancelLink', () => { this.linkCode = null; this.settleLink(rejection('CANCELLED', 'Link cancelled')); });
   }
 
   private settleLink(error: Error | null): void {
-    const wait = this.linkWait;
-    this.linkWait = null;
-    if (error === null) wait?.resolve();
-    else wait?.reject(error);
+    const wait = this.linkWait; this.linkWait = null;
+    if (error === null) wait?.resolve(); else wait?.reject(error);
   }
 
-  async connect(): Promise<void> {
-    this.record('connect');
-    this.checkFailure('connect');
-    this.__setConnectionState('connected');
-  }
-
-  async logout(): Promise<void> {
-    this.record('logout');
-    this.checkFailure('logout');
-    this.clearLocalState();
-  }
-
-  async wipeDevice(): Promise<void> {
-    this.record('wipeDevice');
-    this.checkFailure('wipeDevice');
-    this.clearLocalState();
-  }
+  connect(): Promise<void> { return this.step('connect', () => this.__setConnectionState('connected')); }
+  logout(): Promise<void> { return this.step('logout', () => this.clearLocalState()); }
+  wipeDevice(): Promise<void> { return this.step('wipeDevice', () => this.clearLocalState()); }
 
   private clearLocalState(): void {
-    this.messages.clear();
-    this.stories.clear();
-    this.profiles.clear();
-    this.tombstones.clear();
-    this.pendingReceipts.clear();
-    this.undeliveredReceipts.clear();
-    this.__sent.length = 0;
-    this.friends = [];
-    this.__setConnectionState('disconnected');
-    this.__setAuthState('loggedOut');
+    this.messages = []; this.stories = []; this.profiles = []; this.__sent.length = 0; this.friends = [];
+    this.__setConnectionState('disconnected'); this.__setAuthState('loggedOut');
   }
 
-  // ─── State ─────────────────────────────────────────────
+  getConnectionState(): Promise<ConnectionState> { return this.step('getConnectionState', () => this.connectionState); }
+  getAuthState(): Promise<AuthState> { return this.step('getAuthState', () => this.authState); }
+  getUserId(): Promise<string | null> { return this.step('getUserId', () => (this.authState === 'authenticated' ? this.userId : null)); }
+  getUsername(): Promise<string | null> { return this.step('getUsername', () => (this.authState === 'authenticated' ? this.username : null)); }
+  getDeviceId(): Promise<string | null> { return this.step('getDeviceId', () => (this.authState === 'authenticated' ? this.deviceId : null)); }
+  isPrimary(): Promise<boolean> { return this.step('isPrimary', () => this.authState === 'authenticated' && this.primary); }
 
-  async getConnectionState(): Promise<ConnectionState> {
-    this.record('getConnectionState');
-    return this.connectionState;
-  }
-  async getAuthState(): Promise<AuthState> {
-    this.record('getAuthState');
-    return this.authState;
-  }
-  async getUserId(): Promise<string | null> {
-    this.record('getUserId');
-    return this.authState === 'authenticated' ? this.userId : null;
-  }
-  async getUsername(): Promise<string | null> {
-    this.record('getUsername');
-    return this.authState === 'authenticated' ? this.username : null;
-  }
-  async getDeviceId(): Promise<string | null> {
-    this.record('getDeviceId');
-    return this.authState === 'authenticated' ? this.deviceId : null;
-  }
-  async isPrimary(): Promise<boolean> {
-    this.record('isPrimary');
-    return this.authState === 'authenticated' && this.primary;
+  linkCodeDeviceName(code: string): Promise<string> {
+    return this.step('linkCodeDeviceName', () => {
+      if (!code.startsWith('link_')) throw rejection('INVALID_ARGUMENT', 'Invalid link code');
+      return FAKE_LINK_DEVICE_NAME;
+    });
   }
 
-  // ─── Devices ───────────────────────────────────────────
-
-  /** Accepts the codes `beginLink` issues, named after `FAKE_LINK_DEVICE_NAME`. */
-  async linkCodeDeviceName(code: string): Promise<string> {
-    this.record('linkCodeDeviceName');
-    this.checkFailure('linkCodeDeviceName');
-    if (!code.startsWith('link_')) throw rejection('INVALID_ARGUMENT', 'Invalid link code');
-    return FAKE_LINK_DEVICE_NAME;
+  approveLink(code: string): Promise<void> {
+    return this.step('approveLink', () => { this.requirePrimary(); this.__approved.push(code); });
   }
 
-  async approveLink(code: string): Promise<void> {
-    this.record('approveLink');
-    this.checkFailure('approveLink');
-    this.requirePrimary();
-    this.__approved.push(code);
+  getDevices(): Promise<DeviceInfo[]> { return this.step('getDevices', () => this.devices.map((d) => ({ ...d }))); }
+
+  unlinkDevice(deviceId: string): Promise<void> {
+    return this.step('unlinkDevice', () => {
+      if (deviceId === this.deviceId) {
+        if (this.primary) throw rejection('INVALID_ARGUMENT', 'The primary device cannot unlink itself');
+        this.clearLocalState();
+        return;
+      }
+      this.requirePrimary();
+      this.devices = this.devices.filter((d) => d.deviceId !== deviceId);
+    });
   }
 
-  async getDevices(): Promise<DeviceInfo[]> {
-    this.record('getDevices');
-    this.checkFailure('getDevices');
-    return this.devices.map((d) => ({ ...d }));
+  removeFriend(userId: string): Promise<void> {
+    return this.step('removeFriend', () => { this.requirePrimary(); this.__setFriends(this.friends.filter((f) => f.userId !== userId)); });
   }
 
-  async unlinkDevice(deviceId: string): Promise<void> {
-    this.record('unlinkDevice');
-    this.checkFailure('unlinkDevice');
-    if (deviceId === this.deviceId) {
-      if (this.primary) throw rejection('INVALID_ARGUMENT', 'The primary device cannot unlink itself');
-      this.clearLocalState();
-      return;
-    }
-    this.requirePrimary();
-    this.devices = this.devices.filter((d) => d.deviceId !== deviceId);
+  acceptFriend(userId: string): Promise<void> {
+    return this.step('acceptFriend', () => {
+      this.requirePrimary();
+      const existing = this.friends.find((f) => f.userId === userId);
+      if (!existing) throw new Error(`Unknown friend ${userId}`);
+      this.__setFriends([...this.friends.filter((f) => f.userId !== userId), { ...existing, status: 'accepted' }]);
+    });
   }
 
-  // ─── Friends ───────────────────────────────────────────
+  getFriendCode(): Promise<string> { return this.step('getFriendCode', () => `${this.userId}:${this.username}`); }
 
-  async removeFriend(userId: string): Promise<void> {
-    this.record('removeFriend');
-    this.checkFailure('removeFriend');
-    this.requirePrimary();
-    this.__setFriends(this.friends.filter((f) => f.userId !== userId));
+  addFriendByCode(code: string): Promise<void> {
+    return this.step('addFriendByCode', () => {
+      this.requirePrimary();
+      const [userId, username] = code.split(':');
+      this.__setFriends([...this.friends, { userId, username: username ?? userId, status: 'pending_sent' }]);
+    });
   }
 
-  async acceptFriend(userId: string): Promise<void> {
-    this.record('acceptFriend');
-    this.checkFailure('acceptFriend');
-    this.requirePrimary();
-    const existing = this.friends.find((f) => f.userId === userId);
-    if (!existing) throw new Error(`Unknown friend ${userId}`);
-    const rest = this.friends.filter((f) => f.userId !== userId);
-    this.__setFriends([...rest, { ...existing, status: 'accepted' }]);
+  getFriends(): Promise<Friend[]> { return this.step('getFriends', () => [...this.friends]); }
+  sendTyping(_peerUserId: string): Promise<void> { return this.step('sendTyping', () => {}); }
+  stopTyping(_peerUserId: string): Promise<void> { return this.step('stopTyping', () => {}); }
+  observeTyping(_peerUserId: string): Promise<void> { return this.step('observeTyping', () => {}); }
+  stopObservingTyping(_peerUserId: string): Promise<void> { return this.step('stopObservingTyping', () => {}); }
+
+  uploadAttachment(filePath: string): Promise<{ id: string; contentKey: string; nonce: string }> {
+    return this.step('uploadAttachment', () => ({ id: `att_${++this.seq}`, contentKey: 'key_' + filePath.length, nonce: 'nonce' }));
   }
 
-  async getFriendCode(): Promise<string> {
-    this.record('getFriendCode');
-    return `${this.userId}:${this.username}`;
+  downloadAttachment(id: string, _contentKey: string, _nonce: string): Promise<string> {
+    return this.step('downloadAttachment', () => `/fake/cache/${id}`);
   }
 
-  async addFriendByCode(code: string): Promise<void> {
-    this.record('addFriendByCode');
-    this.checkFailure('addFriendByCode');
-    this.requirePrimary();
-    const [userId, username] = code.split(':');
-    this.__setFriends([
-      ...this.friends,
-      { userId, username: username ?? userId, status: 'pending_sent' },
-    ]);
+  resizeImage(srcPath: string, maxDim: number, _quality: number): Promise<{ path: string; width: number; height: number }> {
+    return this.step('resizeImage', () => ({ path: srcPath, width: maxDim, height: maxDim }));
   }
 
-  async getFriends(): Promise<Friend[]> {
-    this.record('getFriends');
-    return [...this.friends];
+  writeTestImage(width: number, height: number): Promise<{ path: string; width: number; height: number }> {
+    return this.step('writeTestImage', () => ({ path: '/fake/test.jpg', width, height }));
   }
 
-  // ─── Signals ───────────────────────────────────────────
+  requestPushPermission(): Promise<boolean> { return this.step('requestPushPermission', () => true); }
+  registerPushToken(token: string): Promise<void> { return this.step('registerPushToken', () => { this.pushToken = token; }); }
+  __registeredPushToken(): string | null { return this.pushToken; }
+  getDebugLog(): Promise<string[]> { return this.step('getDebugLog', () => [...this.debugLog]); }
+  prewarmAudioSession(): Promise<void> { return this.step('prewarmAudioSession', () => {}); }
+  deleteFile(path: string): Promise<void> { return this.step('deleteFile', () => { this.deletedFiles.push(path); }); }
+  setClipboard(text: string): Promise<void> { return this.step('setClipboard', () => { this.clipboard = text; }); }
+  getLaunchIntent(): Promise<LaunchIntent | null> { return this.step('getLaunchIntent', () => this.launchIntent); }
 
-  async sendTyping(_peerUserId: string): Promise<void> {
-    this.record('sendTyping');
-  }
-  async stopTyping(_peerUserId: string): Promise<void> {
-    this.record('stopTyping');
-  }
-  async observeTyping(_peerUserId: string): Promise<void> {
-    this.record('observeTyping');
-  }
-  async stopObservingTyping(_peerUserId: string): Promise<void> {
-    this.record('stopObservingTyping');
-  }
+  __emit(event: Record<string, unknown>): void { for (const l of [...this.listeners]) l(event); }
+  __listenerCount(): number { return this.listeners.size; }
+  __failNext(method: string, code: string, message = 'fake failure'): void { this.failures.set(method, { code, message }); }
+  __setUnreachable(userIds: string[]): void { this.unreachable = new Set(userIds); }
+  __setSweepResult(models: string[]): void { this.sweepResult = models; }
 
-  // ─── Attachments and media ─────────────────────────────
-
-  async uploadAttachment(filePath: string): Promise<{ id: string; contentKey: string; nonce: string }> {
-    this.record('uploadAttachment');
-    this.checkFailure('uploadAttachment');
-    return { id: `att_${this.nextTimestamp()}`, contentKey: 'key_' + filePath.length, nonce: 'nonce' };
-  }
-
-  async downloadAttachment(id: string, _contentKey: string, _nonce: string): Promise<string> {
-    this.record('downloadAttachment');
-    this.checkFailure('downloadAttachment');
-    return `/fake/cache/${id}`;
-  }
-
-  /** Attachment ids purged by `sweepExpired`, in order. */
-  __purged: string[] = [];
-
-  async resizeImage(srcPath: string, maxDim: number, _quality: number): Promise<{ path: string; width: number; height: number }> {
-    this.record('resizeImage');
-    return { path: srcPath, width: maxDim, height: maxDim };
+  __deliverMessage(input: Partial<RawDirectMessageItem> = {}): RawDirectMessageItem {
+    const sentAt = input.sentAt ?? ++this.seq;
+    const authorUserId = input.authorUserId ?? input.peerUserId ?? 'user_peer';
+    const item: RawDirectMessageItem = {
+      kind: 'message', id: input.id ?? `dm_${sentAt}`,
+      peerUserId: input.peerUserId ?? (authorUserId === this.userId ? 'user_peer' : authorUserId),
+      authorUserId, sentAt, viewedAt: input.viewedAt ?? null, content: input.content ?? 'hello',
+    };
+    this.messages.push(item);
+    this.__emit({ type: 'messageReceived', model: 'directMessage' });
+    return item;
   }
 
-  async writeTestImage(width: number, height: number): Promise<{ path: string; width: number; height: number }> {
-    this.record('writeTestImage');
-    return { path: '/fake/test.jpg', width, height };
+  __deliverPix(input: {
+    id?: string; peerUserId?: string; authorUserId?: string; sentAt?: number; viewedAt?: number | null;
+    attachment?: RawAttachment | null; mediaRef?: string; contentKey?: string; nonce?: string;
+    mediaType?: string | null; caption?: string | null; captionMeta?: CaptionMeta | string | null; displayDuration?: number;
+  } = {}): RawPixItem {
+    const sentAt = input.sentAt ?? ++this.seq;
+    const authorUserId = input.authorUserId ?? input.peerUserId ?? 'user_peer';
+    const item: RawPixItem = {
+      kind: 'pix', id: input.id ?? `pix_${sentAt}`,
+      peerUserId: input.peerUserId ?? (authorUserId === this.userId ? 'user_peer' : authorUserId),
+      authorUserId, sentAt, viewedAt: input.viewedAt ?? null,
+      attachment: input.attachment !== undefined
+        ? input.attachment
+        : { id: input.mediaRef ?? 'att_1', contentKey: input.contentKey ?? 'key', nonce: input.nonce ?? 'nonce', mediaType: input.mediaType ?? 'photo' },
+      mediaRef: input.mediaRef, contentKey: input.contentKey, nonce: input.nonce, mediaType: input.mediaType,
+      caption: input.caption ?? null,
+      captionMeta: typeof input.captionMeta === 'object' && input.captionMeta !== null ? serializeCaptionMeta(input.captionMeta) : (input.captionMeta ?? null),
+      displayDuration: input.displayDuration ?? 5,
+    };
+    this.messages.push(item);
+    this.__emit({ type: 'messageReceived', model: 'pix' });
+    return item;
   }
 
-  // ─── Push ──────────────────────────────────────────────
-
-  async requestPushPermission(): Promise<boolean> {
-    this.record('requestPushPermission');
-    this.checkFailure('requestPushPermission');
-    return true;
+  __deliverSeen(input: string | { entryId: string; senderUserId?: string; viewedAt?: number; sentAt?: number }, viewedAtArg?: number): void {
+    const opts = typeof input === 'string' ? { entryId: input, viewedAt: viewedAtArg } : input;
+    const item = this.messages.find((m) => m.id === opts.entryId);
+    if (item && item.viewedAt === null) item.viewedAt = opts.viewedAt ?? opts.sentAt ?? ++this.seq;
+    this.__emit({ type: 'messageReceived', model: 'seen' });
   }
 
-  async registerPushToken(token: string): Promise<void> {
-    this.record('registerPushToken');
-    this.checkFailure('registerPushToken');
-    this.pushToken = token;
+  __deliverStory(input: {
+    id?: string; authorUserId?: string; sentAt?: number; content?: string; attachment?: RawAttachment | null;
+    mediaRef?: string | null; contentKey?: string | null; nonce?: string | null; mediaType?: string | null; captionMeta?: CaptionMeta | string | null;
+  } = {}): RawStoryItem {
+    const sentAt = input.sentAt ?? ++this.seq;
+    const story: RawStoryItem = {
+      id: input.id ?? `story_${sentAt}`, authorUserId: input.authorUserId ?? 'user_peer',
+      sentAt, content: input.content ?? '', attachment: input.attachment,
+      mediaRef: input.mediaRef, contentKey: input.contentKey, nonce: input.nonce, mediaType: input.mediaType,
+      captionMeta: typeof input.captionMeta === 'object' && input.captionMeta !== null ? serializeCaptionMeta(input.captionMeta) : (input.captionMeta ?? null),
+    };
+    this.stories.push(story);
+    this.__emit({ type: 'messageReceived', model: 'story' });
+    return story;
   }
 
-  /** The token the app last registered, or null. */
-  __registeredPushToken(): string | null {
-    return this.pushToken;
+  __deliverProfile(input: { userId: string; authorDeviceId?: string; updatedAt?: number; displayName: string; bio?: string }): ProfileItem {
+    const profile: ProfileItem = {
+      userId: input.userId, authorDeviceId: input.authorDeviceId ?? 'device_peer',
+      updatedAt: input.updatedAt ?? ++this.seq, displayName: input.displayName, bio: input.bio ?? '',
+    };
+    this.profiles = [...this.profiles.filter((p) => p.userId !== input.userId), profile];
+    this.__emit({ type: 'messageReceived', model: 'profile' });
+    return profile;
   }
 
-  // ─── Misc ──────────────────────────────────────────────
+  __authenticate(opts: FakeBridgeOptions = {}): void {
+    if (opts.userId !== undefined) this.userId = opts.userId;
+    if (opts.username !== undefined) this.username = opts.username;
+    if (opts.deviceId !== undefined) this.deviceId = opts.deviceId;
+    this.__setAuthState('authenticated');
+  }
 
-  async getDebugLog(): Promise<string[]> {
-    this.record('getDebugLog');
-    return [...this.debugLog];
-  }
-  async prewarmAudioSession(): Promise<void> {
-    this.record('prewarmAudioSession');
-  }
-  async deleteFile(_path: string): Promise<void> {
-    this.record('deleteFile');
-  }
-  async setClipboard(_text: string): Promise<void> {
-    this.record('setClipboard');
-  }
-  async getLaunchIntent(): Promise<{ screen: string } | null> {
-    this.record('getLaunchIntent');
-    return null;
-  }
-}
+  __setFriends(friends: Friend[]): void { this.friends = friends; this.__emit({ type: 'friendsChanged' }); }
+  __setAuthState(state: AuthState): void { this.authState = state; this.__emit({ type: 'authStateChanged', state }); }
+  __setConnectionState(state: ConnectionState): void { this.connectionState = state; this.__emit({ type: 'connectionChanged', state }); }
+  __setLoginScenario(scenario: LoginScenario): void { this.loginScenario = scenario; }
+  __setPrimary(primary: boolean): void { this.primary = primary; }
+  __setDevices(devices: DeviceInfo[]): void { this.devices = devices; }
+  __approvePendingLink(): void { this.settleLink(null); }
+  __expirePendingLink(): void { this.settleLink(rejection('LINK_FAILED', 'Link session expired')); }
 
-export const FAKE_LINK_DEVICE_NAME = 'Test phone';
-
-function stripUndelivered<T extends { undelivered: boolean }>({
-  undelivered: _undelivered,
-  ...rest
-}: T): Omit<T, 'undelivered'> {
-  return rest;
-}
-
-/** A rejection as the native side delivers it: an `Error` with a `code`. */
-function rejection(code: string, message: string): Error & { code: string } {
-  return Object.assign(new Error(message), { code });
+  __reset(): void {
+    this.messages = []; this.stories = []; this.profiles = []; this.friends = []; this.devices = [];
+    this.__sent.length = 0; this.__calls.length = 0; this.__approved.length = 0;
+    this.listeners.clear(); this.failures.clear(); this.unreachable.clear();
+    this.sweepResult = ['directMessage', 'pix', 'story'];
+    this.debugLog = []; this.deletedFiles = [];
+    this.pushToken = null; this.clipboard = null; this.launchIntent = null;
+    this.loginScenario = 'existingDevice'; this.primary = true;
+    this.linkCode = null; this.linkWait = null;
+    this.userId = 'user_self'; this.username = 'self'; this.deviceId = 'device_self';
+    this.authState = 'loggedOut'; this.connectionState = 'disconnected';
+    this.seq = 1_700_000_000_000;
+  }
 }

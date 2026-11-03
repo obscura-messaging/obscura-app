@@ -1,5 +1,6 @@
 import {
-  MIN_PASSWORD_LENGTH, cancelLink, credentialsProblem, linkThisDevice, logIn, register, resetAccount,
+  MIN_PASSWORD_LENGTH, cancelLink, cancelPendingLinkOnUnmount,
+  credentialsProblem, linkThisDevice, logIn, register, resetAccount,
 } from '../login';
 import { resetSession, useStore } from '../store';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
@@ -118,10 +119,14 @@ describe('linkThisDevice', () => {
     const codes: string[] = [];
     const linking = linkThisDevice('alice', 'password-1234', (code) => codes.push(code));
 
-    await cancelLink();
+    await cancelPendingLinkOnUnmount();
 
     await expect(linking).rejects.toMatchObject({ code: 'CANCELLED' });
     expect(codes).toEqual([]);
+    expect(bridge.__calls).toEqual(['beginLink', 'cancelLink', 'cancelLink']);
+
+    useStore.setState({ authed: true });
+    await cancelPendingLinkOnUnmount();
     expect(bridge.__calls).toEqual(['beginLink', 'cancelLink', 'cancelLink']);
   });
 });

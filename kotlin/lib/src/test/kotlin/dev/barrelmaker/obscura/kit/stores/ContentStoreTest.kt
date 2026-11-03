@@ -223,6 +223,9 @@ class ContentStoreTest {
             runBlocking { c.postStory("text", "att", null, "n", "photo", null) }
         }
         assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.markSeen(" ") } }
+        assertThrows(ObscuraError.InvalidArgument::class.java) {
+            runBlocking { c.downloadAttachmentToCache("att", "k", "n") }
+        }
         Unit
     }
 

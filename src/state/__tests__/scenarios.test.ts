@@ -6,8 +6,7 @@ import { notifyTyping, sendChatMessage } from '../chat';
 import { logIn, linkThisDevice } from '../login';
 import { sendCapture, type Capture } from '../sendMedia';
 import { activityPreview, chatTimeline, friendActivities } from '../../domain/chats';
-import { Obscura, type Friend } from '../../native/ObscuraModule';
-import { EXPIRE_AFTER_MS } from '../../native/__fixtures__/FakeObscuraBridge';
+import { type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
 const bridge = getFakeBridge();
@@ -24,6 +23,10 @@ async function flush(): Promise<void> {
 beforeEach(() => {
   resetSession();
   bridge.__authenticate({ userId: ALICE, username: 'alice', deviceId: DEVICE });
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 describe('Scenario 1: device relink + friend handshake', () => {
@@ -73,8 +76,8 @@ describe('Scenario 1: device relink + friend handshake', () => {
   });
 });
 
-describe('Scenario 2: offline capture -> outbox flush -> view-once receipt -> 15m expiry & replay block', () => {
-  it('queues an offline capture, flushes on reconnect, tracks seen state, and sweeps after 15m', async () => {
+describe('Scenario 2: offline capture -> reconnect sync -> peer seen receipt -> expiry sweep refresh', () => {
+  it('reports undelivered capture targets, deletes temp files, updates activity on seen receipt, and refreshes slices touched by sweepExpired', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__setFriends([BOB]);
     await loadSession();
@@ -85,7 +88,7 @@ describe('Scenario 2: offline capture -> outbox flush -> view-once receipt -> 15
     const undelivered = await sendCapture(capture, [BOB], true);
 
     expect(undelivered).toEqual(['bob', 'My story']);
-    expect(bridge.__calls).toContain('deleteFile');
+    expect(bridge.deletedFiles).toContain('/fake/shot.jpg');
     expect(useStore.getState().messages).toHaveLength(1);
     expect(useStore.getState().stories).toHaveLength(1);
 
@@ -94,13 +97,14 @@ describe('Scenario 2: offline capture -> outbox flush -> view-once receipt -> 15
     let [bobActivity] = friendActivities(useStore.getState().friends, ALICE, useStore.getState().messages);
     expect(activityPreview(bobActivity, ALICE)).toEqual({ text: 'Pix delivered', highlight: false });
 
-    // 2. Network reconnects: outbox flushes both the pix and the story to Bob.
+    // 2. Network reconnects: store triggers flushOutbox and sweepExpired.
     bridge.__setUnreachable([]);
+    bridge.__calls.length = 0;
     applyObscuraEvent({ type: 'connectionChanged', state: 'connected' });
     await flush();
 
-    expect(bridge.__sent.filter((s) => s.modelKey === 'pix' && s.recipientUserIds.includes(BOB.userId))).toHaveLength(1);
-    expect(bridge.__sent.filter((s) => s.modelKey === 'story' && s.recipientUserIds.includes(BOB.userId))).toHaveLength(1);
+    expect(bridge.__calls).toContain('flushOutbox');
+    expect(bridge.__calls).toContain('sweepExpired');
 
     // 3. Bob opens the pix and his seen receipt arrives for Alice.
     const viewedAt = pixEntry.sentAt + 5_000;
@@ -117,26 +121,12 @@ describe('Scenario 2: offline capture -> outbox flush -> view-once receipt -> 15
     [bobActivity] = friendActivities(useStore.getState().friends, ALICE, useStore.getState().messages);
     expect(activityPreview(bobActivity, ALICE)).toEqual({ text: 'Pix opened', highlight: false });
 
-    // 4. 15 minutes pass after viewing: the sweep erases the pix and its decrypted media,
-    //    and records a tombstone that blocks any replayed copy.
-    bridge.__advanceTime(EXPIRE_AFTER_MS + 10_000);
+    // 4. Native sweep erases the expired pix and reports 'pix' as touched; sweepAndRefresh reloads the slice.
+    bridge.messages = [];
+    bridge.__setSweepResult(['pix']);
     await sweepAndRefresh();
 
     expect(useStore.getState().messages).toEqual([]);
-    expect(bridge.__purged).toContain(pixEntry.attachment.id);
-
-    // 5. A replayed delivery for the erased pix is ignored and never resurrected.
-    bridge.__deliverPix({
-      id: pixEntry.id,
-      peerUserId: BOB.userId,
-      authorUserId: ALICE,
-      sentAt: pixEntry.sentAt,
-      attachment: pixEntry.attachment,
-    });
-    applyObscuraEvent({ type: 'messageReceived', model: 'pix' });
-    await flush();
-    expect(useStore.getState().messages).toEqual([]);
-
     warn.mockRestore();
   });
 });
@@ -206,24 +196,20 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
   });
 
   it('coalesces concurrent flushOutboxFromStore triggers and gates foreground outbox flush on connected state', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__setFriends([BOB]);
     await loadSession();
 
-    bridge.__failNext('postStory', 'SEND_FAILED', 'offline');
-    await expect(Obscura.postStory('once', null, null, null, null, null)).rejects.toThrow('offline');
-    expect(bridge.__sent).toHaveLength(0);
-
     // Foregrounding while disconnected refreshes/sweeps, but does NOT flush the outbox yet.
     useStore.setState({ connState: 'disconnected' });
+    bridge.__calls.length = 0;
     applyObscuraEvent({ type: 'appStateChanged', state: 'active' });
     await flush();
-    expect(bridge.__sent).toHaveLength(0);
+    expect(bridge.__calls).not.toContain('flushOutbox');
 
-    // Concurrent outbox flushes coalesce so the entry is sent once, not duplicated.
+    // Concurrent outbox flushes coalesce into at most one in-flight + one trailing call.
+    bridge.__calls.length = 0;
     await Promise.all([flushOutboxFromStore(), flushOutboxFromStore(), flushOutboxFromStore()]);
-    expect(bridge.__sent.filter((s) => s.modelKey === 'story')).toHaveLength(1);
-    warn.mockRestore();
+    expect(bridge.__calls.filter((c) => c === 'flushOutbox')).toHaveLength(2);
   });
 
   it('sends sendTyping on non-empty input and stopTyping when cleared to empty', async () => {
@@ -236,3 +222,4 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
     expect(bridge.__calls.filter((c) => c === 'stopTyping')).toHaveLength(1);
   });
 });
+

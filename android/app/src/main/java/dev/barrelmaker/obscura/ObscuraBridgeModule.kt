@@ -567,128 +567,32 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     // ─── Image processing (native, path-in/path-out) ────────────────────────
 
-    /**
-     * Resize the image at [srcPath] so its largest side is at most [maxDim] px,
-     * re-encoded as JPEG at [quality] (1-100). Honors the JPEG's EXIF
-     * `Orientation` tag — the output pixels are already in display orientation
-     * (front-camera selfies don't render rotated). Returns the new file path
-     * plus its post-rotation dimensions. The original file is left untouched.
-     *
-     * Memory: uses `inSampleSize` two-pass decoding so a 12 MP source doesn't
-     * allocate a 48 MB intermediate bitmap on low-memory devices.
-     */
     @ReactMethod
     fun resizeImage(srcPath: String, maxDim: Int, quality: Int, promise: Promise) {
         scope.launch {
             try {
-                require(maxDim > 0) { "maxDim must be positive (got $maxDim)" }
-
-                // Pass 1: read bounds only.
-                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                android.graphics.BitmapFactory.decodeFile(srcPath, bounds)
-                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-                    throw IllegalArgumentException("Could not decode image at $srcPath")
-                }
-
-                // Pass 2: sub-sampled decode keeps peak memory bounded.
-                val srcLargest = maxOf(bounds.outWidth, bounds.outHeight)
-                var sample = 1
-                while (sample * 2 <= srcLargest / maxDim) sample *= 2
-                val decoded = android.graphics.BitmapFactory.decodeFile(
-                    srcPath,
-                    android.graphics.BitmapFactory.Options().apply { inSampleSize = sample },
-                ) ?: throw IllegalArgumentException("Could not decode image at $srcPath")
-
-                // EXIF orientation — both the rotation and the flip variants used by
-                // Android front cameras. We bake the transform into the bitmap so the
-                // output JPEG has display-orientation pixels and no orientation tag.
-                val orientation = try {
-                    android.media.ExifInterface(srcPath).getAttributeInt(
-                        android.media.ExifInterface.TAG_ORIENTATION,
-                        android.media.ExifInterface.ORIENTATION_NORMAL,
-                    )
-                } catch (_: Throwable) { android.media.ExifInterface.ORIENTATION_NORMAL }
-
-                val matrix = android.graphics.Matrix()
-                when (orientation) {
-                    android.media.ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
-                    android.media.ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
-                    android.media.ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
-                    android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
-                    android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
-                    android.media.ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.postRotate(90f); matrix.postScale(-1f, 1f) }
-                    android.media.ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.postRotate(-90f); matrix.postScale(-1f, 1f) }
-                }
-
-                // 90°/270° orientations swap apparent width/height for the scale check.
-                val swap = orientation == android.media.ExifInterface.ORIENTATION_ROTATE_90 ||
-                           orientation == android.media.ExifInterface.ORIENTATION_ROTATE_270 ||
-                           orientation == android.media.ExifInterface.ORIENTATION_TRANSPOSE ||
-                           orientation == android.media.ExifInterface.ORIENTATION_TRANSVERSE
-                val rotW = if (swap) decoded.height else decoded.width
-                val rotH = if (swap) decoded.width else decoded.height
-                val rotLargest = maxOf(rotW, rotH)
-                val scale = if (rotLargest <= maxDim) 1.0 else maxDim.toDouble() / rotLargest
-                if (scale != 1.0) matrix.postScale(scale.toFloat(), scale.toFloat())
-
-                val output = android.graphics.Bitmap.createBitmap(
-                    decoded, 0, 0, decoded.width, decoded.height, matrix, true,
-                )
-                if (output !== decoded) decoded.recycle()
-
-                val dir = java.io.File(reactApplicationContext.cacheDir, "resized").apply { mkdirs() }
-                val dest = java.io.File(dir, "img_${System.currentTimeMillis()}.jpg")
-                java.io.FileOutputStream(dest).use { out ->
-                    output.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality.coerceIn(1, 100), out)
-                }
-                val outW = output.width
-                val outH = output.height
-                output.recycle()
-
+                val res = ImageProcessor.resize(reactApplicationContext.cacheDir, srcPath, maxDim, quality)
                 promise.resolve(Arguments.createMap().apply {
-                    putString("path", dest.absolutePath)
-                    putInt("width", outW)
-                    putInt("height", outH)
+                    putString("path", res.path)
+                    putInt("width", res.width)
+                    putInt("height", res.height)
                 })
             } catch (t: Throwable) {
-                // Catch Throwable, not Exception — Bitmap allocations can throw OOM
-                // (an Error, not an Exception); silently dropping that would leave
-                // the JS promise hanging forever.
                 Log.e(TAG, "resizeImage failed: ${t.message}")
                 promise.rejectKit("RESIZE_ERROR", t)
             }
         }
     }
 
-    /**
-     * Write a solid-color JPEG of the requested size to the cache and return
-     * the path. Replaces the JS-side BMP/base64 dance used by CameraScreen on
-     * emulators with no camera.
-     */
     @ReactMethod
     fun writeTestImage(width: Int, height: Int, promise: Promise) {
         scope.launch {
             try {
-                require(width in 1..8192 && height in 1..8192) {
-                    "dimensions out of range (got ${width}x${height})"
-                }
-                val color = android.graphics.Color.argb(
-                    255,
-                    (Math.random() * 256).toInt(),
-                    (Math.random() * 256).toInt(),
-                    (Math.random() * 256).toInt(),
-                )
-                val bmp = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
-                bmp.eraseColor(color)
-                val dest = java.io.File(reactApplicationContext.cacheDir, "test_${System.currentTimeMillis()}.jpg")
-                java.io.FileOutputStream(dest).use { out ->
-                    bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
-                }
-                bmp.recycle()
+                val res = ImageProcessor.writeTestImage(reactApplicationContext.cacheDir, width, height)
                 promise.resolve(Arguments.createMap().apply {
-                    putString("path", dest.absolutePath)
-                    putInt("width", width)
-                    putInt("height", height)
+                    putString("path", res.path)
+                    putInt("width", res.width)
+                    putInt("height", res.height)
                 })
             } catch (t: Throwable) {
                 promise.rejectKit("TEST_IMAGE_ERROR", t)

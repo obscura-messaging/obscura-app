@@ -1,8 +1,12 @@
 import {
   activityPreview, chatTimeline, conversationItems, friendActivities,
-  pixBadgeFor, pixStatus, type ConversationItem, type DirectMessageItem, type PixItem,
+  pixBadgeFor, pixStatus, unseenVisibleMessageIds,
+  type ConversationItem, type DirectMessageItem, type PixItem,
 } from '../chats';
-import { friendProfileEntries, type Friend, type ProfileItem } from '../friends';
+import {
+  acceptedFriends, friendProfileEntries, pendingFriends,
+  type Friend, type ProfileItem,
+} from '../friends';
 import { displayMs, storyGroups, type StoryItem } from '../viewer';
 import { isBackSwipeGesture, shouldCompleteBackSwipe } from '../../utils/gesture';
 
@@ -201,6 +205,43 @@ describe('friendActivities', () => {
     );
     expect(activityPreview(msgActivity, ME)).toEqual({ text: 'You: yo', highlight: false });
     expect(pixBadgeFor(0, 'sent_opened')).toEqual({ kind: 'opened' });
+
+    const [emptyActivity] = friendActivities([BOB], ME, []);
+    expect(activityPreview(emptyActivity, ME)).toEqual({ text: 'Tap to chat', highlight: false });
+
+    const [msgOnlyActivity] = friendActivities([BOB], ME, [msg('m2', 10, BOB.userId, BOB.userId, 'hey there')]);
+    expect(activityPreview({ ...msgOnlyActivity, latestAt: 99 }, ME)).toEqual({
+      text: 'hey there',
+      highlight: false,
+    });
+  });
+});
+
+describe('unseenVisibleMessageIds', () => {
+  it('returns only visible, unviewed incoming messages that are not already marked in flight', () => {
+    const items: ConversationItem[] = [
+      msg('m_visible_unseen', 10, BOB.userId, BOB.userId, 'read me', null),
+      msg('m_own', 20, ME, BOB.userId, 'my own', null),
+      msg('m_already_viewed', 30, BOB.userId, BOB.userId, 'seen', 35),
+      msg('m_offscreen', 40, BOB.userId, BOB.userId, 'below fold', null),
+      msg('m_in_flight', 50, BOB.userId, BOB.userId, 'marking', null),
+      pixItem('p_visible', 60, BOB.userId, BOB.userId, null, 'pix'),
+    ];
+    const visible = new Set(['m_visible_unseen', 'm_own', 'm_already_viewed', 'm_in_flight', 'p_visible']);
+    const marked = new Set(['m_in_flight']);
+
+    expect(unseenVisibleMessageIds(items, visible, ME, marked)).toEqual(['m_visible_unseen']);
+    expect(unseenVisibleMessageIds(items, visible, ME)).toEqual(['m_visible_unseen', 'm_in_flight']);
+  });
+});
+
+describe('acceptedFriends & pendingFriends', () => {
+  const SENT: Friend = { userId: 'uEve', username: 'eve', status: 'pending_sent' };
+
+  it('partitions the friend list into accepted vs pending relationships', () => {
+    const all = [BOB, DAVE, CAROL, SENT];
+    expect(acceptedFriends(all)).toEqual([BOB, CAROL]);
+    expect(pendingFriends(all)).toEqual([DAVE, SENT]);
   });
 });
 

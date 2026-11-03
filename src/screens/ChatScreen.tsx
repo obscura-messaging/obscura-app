@@ -8,7 +8,7 @@ import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  chatTimeline, conversationItems, pixStatus, type ChatTimelineItem,
+  chatTimeline, conversationItems, pixStatus, unseenVisibleMessageIds, type ChatTimelineItem,
 } from '../domain/chats';
 import { useSession, useMessages, useAcceptedFriends, markSeen } from '../state/store';
 import { usePeerTyping, notifyTyping, sendChatMessage } from '../state/chat';
@@ -102,13 +102,11 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const marked = useRef(new Set<string>());
   useEffect(() => {
     if (!isFocused || !appActive) return;
-    for (const m of messages) {
-      if (!visibleIds.has(m.id) || m.viewedAt !== null || m.authorUserId === myUserId) continue;
-      if (marked.current.has(m.id)) continue;
-      marked.current.add(m.id);
-      markSeen(m.id).catch((e) => {
-        marked.current.delete(m.id);
-        logError('seen.message:' + m.id, e);
+    for (const id of unseenVisibleMessageIds(messages, visibleIds, myUserId, marked.current)) {
+      marked.current.add(id);
+      markSeen(id).catch((e) => {
+        marked.current.delete(id);
+        logError('seen.message:' + id, e);
       });
     }
   }, [isFocused, appActive, visibleIds, messages, myUserId]);

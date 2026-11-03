@@ -1,4 +1,6 @@
-import { loadAttachmentUri, sendCapture, type Capture } from '../sendMedia';
+import {
+  createTestCapture, discardCapture, loadAttachmentUri, prewarmAudio, sendCapture, type Capture,
+} from '../sendMedia';
 import { resetSession, useStore } from '../store';
 import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
@@ -80,5 +82,21 @@ describe('sendCapture', () => {
     const uri2 = await loadAttachmentUri(msg.attachment, cache);
     expect(uri1).toBe(uri2);
     expect(bridge.__calls.filter((c) => c === 'downloadAttachment')).toHaveLength(1);
+  });
+
+  it('falls back to the original path if resizeImage fails, and supports capture helpers', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    bridge.__failNext('resizeImage', 'STORAGE_ERROR');
+
+    expect(await sendCapture(CAPTURE, [BOB], false)).toEqual([]);
+    expect(bridge.__calls).toContain('uploadAttachment');
+
+    const testPath = await createTestCapture();
+    expect(testPath).toBe('/fake/test.jpg');
+    prewarmAudio();
+    discardCapture(testPath);
+    expect(bridge.__calls).toContain('prewarmAudioSession');
+    expect(bridge.deletedFiles).toContain('/fake/test.jpg');
+    warn.mockRestore();
   });
 });

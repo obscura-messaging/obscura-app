@@ -71,6 +71,26 @@ export function conversationItems<T extends { peerUserId: string; sentAt: number
 }
 
 /**
+ * IDs of received text messages that are currently visible on screen, have not been viewed yet,
+ * and do not already have an in-flight `markSeen` call.
+ */
+export function unseenVisibleMessageIds(
+  messages: readonly ConversationItem[],
+  visibleIds: ReadonlySet<string>,
+  myUserId: string,
+  alreadyMarked?: ReadonlySet<string>,
+): string[] {
+  const result: string[] = [];
+  for (const m of messages) {
+    if (m.kind !== 'message') continue;
+    if (!visibleIds.has(m.id) || m.viewedAt !== null || m.authorUserId === myUserId) continue;
+    if (alreadyMarked?.has(m.id)) continue;
+    result.push(m.id);
+  }
+  return result;
+}
+
+/**
  * Chronological chat timeline for one conversation, oldest first.
  *
  * - Received pix that have been seen (`received_viewed`) are omitted so they never appear in chat.
