@@ -189,8 +189,8 @@ kover {
         // transport paths remain covered by `integrationTest`, not this unit metric.
         verify {
             rule("Unit-suite coverage floor") {
-                minBound(48, coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.LINE)
-                minBound(40, coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.INSTRUCTION)
+                minBound(85, coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.LINE)
+                minBound(80, coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.INSTRUCTION)
             }
         }
     }

@@ -2,6 +2,8 @@ name: CI / iOS
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 concurrency:
   group: ios-ci-${{ github.ref }}
@@ -10,12 +12,179 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  LIBSIGNAL_REF: 7ef4efdb85d8b2ebd77f3cf1e2b542a2115033c5
+
 jobs:
+  swift-unit:
+    name: Swift Kit (unit tests)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: extractions/setup-just@v4
+
+      - name: Select latest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)"
+
+      - name: Resolve Swift toolchain cache key
+        id: swift-toolchain
+        run: echo "version=$(xcrun swift --version | shasum -a 256 | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache libsignal (source + built FFI)
+        id: libsignal
+        uses: actions/cache@v6
+        with:
+          path: swift/vendored/libsignal
+          key: libsignal-${{ env.LIBSIGNAL_REF }}-host-macos26
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v6
+        with:
+          path: swift/.build
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-toolchain.outputs.version }}-${{ env.LIBSIGNAL_REF }}-${{ hashFiles('swift/Package.swift', 'swift/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-toolchain.outputs.version }}-${{ env.LIBSIGNAL_REF }}-${{ hashFiles('swift/Package.swift', 'swift/Package.resolved') }}-
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.libsignal.outputs.cache-hit != 'true'
+
+      - name: Install protobuf when building libsignal
+        if: steps.libsignal.outputs.cache-hit != 'true'
+        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
+
+      - name: Unit tests
+        run: just swift-unit
+
+  swift-integration:
+    name: Swift Kit (integration, native server)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: extractions/setup-just@v4
+
+      - name: Select latest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)"
+
+      - name: Resolve Swift toolchain cache key
+        id: swift-toolchain
+        run: echo "version=$(xcrun swift --version | shasum -a 256 | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache libsignal (source + built FFI)
+        id: libsignal
+        uses: actions/cache@v6
+        with:
+          path: swift/vendored/libsignal
+          key: libsignal-${{ env.LIBSIGNAL_REF }}-host-macos26
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v6
+        with:
+          path: swift/.build
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-toolchain.outputs.version }}-${{ env.LIBSIGNAL_REF }}-${{ hashFiles('swift/Package.swift', 'swift/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-toolchain.outputs.version }}-${{ env.LIBSIGNAL_REF }}-${{ hashFiles('swift/Package.swift', 'swift/Package.resolved') }}-
+
+      - name: Resolve latest obscura-server commit
+        id: server-ref
+        run: |
+          for i in 1 2 3; do
+            sha=$(git ls-remote https://github.com/obscura-messaging/obscura-server.git HEAD | cut -f1) && break
+            sleep 15
+          done
+          [ -n "$sha" ] || { echo "could not resolve server HEAD" >&2; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Cache obscura-server binary
+        id: server-bin
+        uses: actions/cache@v6
+        with:
+          path: ~/obscura-server-bin
+          key: obscura-server-${{ steps.server-ref.outputs.sha }}-macos26
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.libsignal.outputs.cache-hit != 'true' || steps.server-bin.outputs.cache-hit != 'true'
+
+      - name: Install protobuf when building Rust dependencies
+        if: steps.libsignal.outputs.cache-hit != 'true' || steps.server-bin.outputs.cache-hit != 'true'
+        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
+
+      - name: Build obscura-server natively (only when upstream changed)
+        if: steps.server-bin.outputs.cache-hit != 'true'
+        run: |
+          for i in 1 2 3; do
+            git clone --depth 1 --recurse-submodules \
+              https://github.com/obscura-messaging/obscura-server /tmp/obscura-server && break
+            rm -rf /tmp/obscura-server; sleep 15
+          done
+          cd /tmp/obscura-server
+          cargo build --release
+          mkdir -p ~/obscura-server-bin
+          cp target/release/obscura-server ~/obscura-server-bin/
+
+      - name: Start backing services (native, no containers)
+        run: |
+          brew install postgresql@18 minio valkey
+
+          PGBIN="$(brew --prefix postgresql@18)/bin"
+          "$PGBIN/initdb" -D /tmp/pgdata -U user --auth=trust
+          "$PGBIN/pg_ctl" -D /tmp/pgdata -l /tmp/pg.log start
+          "$PGBIN/createdb" -U user signal_server
+
+          valkey-server --daemonize yes --port 6379
+
+          MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
+            minio server /tmp/minio-data > /tmp/minio.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break; sleep 1
+          done
+
+          command -v aws >/dev/null || brew install awscli
+          AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin \
+            aws --endpoint-url http://localhost:9000 --region us-east-1 \
+            s3api create-bucket --bucket test-bucket
+
+      - name: Start obscura-server
+        env:
+          OBSCURA_DATABASE_URL: ******localhost:5432/signal_server
+          OBSCURA_PUBSUB_URL: redis://localhost:6379
+          OBSCURA_AUTH_JWT_SECRET: test_secret
+          OBSCURA_STORAGE_BUCKET: test-bucket
+          OBSCURA_STORAGE_ENDPOINT: http://localhost:9000
+          OBSCURA_STORAGE_ACCESS_KEY: minioadmin
+          OBSCURA_STORAGE_SECRET_KEY: minioadmin
+          OBSCURA_STORAGE_FORCE_PATH_STYLE: "true"
+          OBSCURA_RATE_LIMIT_PER_SECOND: 1000
+          OBSCURA_RATE_LIMIT_BURST: 2000
+          OBSCURA_RATE_LIMIT_AUTH_PER_SECOND: 1000
+          OBSCURA_RATE_LIMIT_AUTH_BURST: 2000
+          RUST_LOG: info
+        run: |
+          ~/obscura-server-bin/obscura-server > /tmp/obscura-server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null http://localhost:3000/; then echo "server up"; exit 0; fi
+            sleep 2
+          done
+          echo "server did not become ready" >&2
+          tail -100 /tmp/obscura-server.log
+          exit 1
+
+      - name: Integration tests
+        env:
+          OBSCURA_TEST_API: http://localhost:3000
+        run: just swift-integration http://localhost:3000
+
+      - name: Server log on failure
+        if: failure()
+        run: tail -200 /tmp/obscura-server.log 2>/dev/null || true
+
   ios:
     name: iOS Debug Build
+    if: github.event_name == 'pull_request'
     runs-on: macos-26
-    env:
-      LIBSIGNAL_REF: 7ef4efdb85d8b2ebd77f3cf1e2b542a2115033c5
     steps:
       - name: Checkout app and native dependencies
         uses: actions/checkout@v7

@@ -55,6 +55,10 @@ lint:
 # Run every JavaScript CI gate.
 check: test typecheck lint
 
+# Lint the client-to-client protocol.
+protocol-lint:
+    buf lint protocol
+
 # Validate protocol conformance fixtures.
 protocol-vectors:
     python3 protocol/conformance/validate.py
