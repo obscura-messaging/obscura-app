@@ -149,7 +149,7 @@ jobs:
 
       - name: Start obscura-server
         env:
-          OBSCURA_DATABASE_URL: ******localhost:5432/signal_server
+          OBSCURA_DATABASE_URL: "postgres://user:password@localhost:5432/signal_server"
           OBSCURA_PUBSUB_URL: redis://localhost:6379
           OBSCURA_AUTH_JWT_SECRET: test_secret
           OBSCURA_STORAGE_BUCKET: test-bucket
