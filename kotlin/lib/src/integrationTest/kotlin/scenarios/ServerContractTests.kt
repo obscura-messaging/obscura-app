@@ -301,6 +301,23 @@ class ServerContractTests {
         } finally { alice.logout(); bob.logout(); driver.close() }
     }
 
+    private suspend fun sendRatchetPrimer(sender: ObscuraClient, receiver: ObscuraClient, text: String) {
+        val id = "primer_${System.currentTimeMillis()}"
+        sender.sender.sendOrThrow(
+            receiver.userId!!,
+            ClientMessage.newBuilder()
+                .setTimestamp(System.currentTimeMillis())
+                .setDirectMessage(
+                    obscura.client.v1.Client.DirectMessage.newBuilder()
+                        .setId(id)
+                        .setPeerUserId(receiver.userId!!)
+                        .setContent(text),
+                )
+                .build(),
+        )
+        assertEquals(sender.userId, receiver.awaitContent(text).authorUserId)
+    }
+
     @Test
     fun `failed local friend request persistence recovers on real server redelivery`(): Unit = runBlocking {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
@@ -310,8 +327,8 @@ class ServerContractTests {
         bob.register(uniqueName("durable_friend_receiver"), TEST_PASSWORD)
         bob.connect()
         try {
-            sendAndVerify(alice, bob, "establish friendship ratchet")
-            sendAndVerify(bob, alice, "acknowledge friendship ratchet")
+            sendRatchetPrimer(alice, bob, "establish friendship ratchet")
+            sendRatchetPrimer(bob, alice, "acknowledge friendship ratchet")
             driver.execute(null,
                 "CREATE TRIGGER fail_contract_friend BEFORE INSERT ON Friend BEGIN SELECT RAISE(FAIL, 'contract friend disk failure'); END", 0)
             alice.addFriendByCode(bob.friendCode())
