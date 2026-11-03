@@ -137,7 +137,8 @@ jobs:
           valkey-server --daemonize yes --port 6379
 
           MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
-            minio server /tmp/minio-data > /tmp/minio.log 2>&1 &
+            minio server /tmp/minio-data < /dev/null > /tmp/minio.log 2>&1 &
+          echo $! > /tmp/minio.pid
           for i in $(seq 1 30); do
             curl -sf http://localhost:9000/minio/health/live && break; sleep 1
           done
@@ -163,7 +164,8 @@ jobs:
           OBSCURA_RATE_LIMIT_AUTH_BURST: 2000
           RUST_LOG: info
         run: |
-          ~/obscura-server-bin/obscura-server > /tmp/obscura-server.log 2>&1 &
+          ~/obscura-server-bin/obscura-server < /dev/null > /tmp/obscura-server.log 2>&1 &
+          echo $! > /tmp/obscura-server.pid
           for i in $(seq 1 30); do
             if curl -s -o /dev/null http://localhost:3000/; then echo "server up"; exit 0; fi
             sleep 2
@@ -180,6 +182,14 @@ jobs:
       - name: Server log on failure
         if: failure()
         run: tail -200 /tmp/obscura-server.log 2>/dev/null || true
+
+      - name: Stop backing services
+        if: always()
+        run: |
+          [ ! -f /tmp/obscura-server.pid ] || kill -9 "$(cat /tmp/obscura-server.pid)" 2>/dev/null || true
+          [ ! -f /tmp/minio.pid ] || kill -9 "$(cat /tmp/minio.pid)" 2>/dev/null || true
+          valkey-cli shutdown nosave 2>/dev/null || true
+          "$(brew --prefix postgresql@18)/bin/pg_ctl" -D /tmp/pgdata -m immediate stop 2>/dev/null || true
 
   ios:
     name: iOS Debug Build
