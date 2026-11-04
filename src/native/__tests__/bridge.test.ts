@@ -223,19 +223,12 @@ describe('Obscura.sendPix & Obscura.postStory', () => {
     await Obscura.postStory('story', 'att_1', 'k', 'n', 'photo', meta);
     await Obscura.postStory('preencoded', null, null, null, null, '{"style":"bar","y":0.2}');
 
-    expect(bridge.__sent).toEqual([
-      expect.objectContaining({
-        modelKey: 'pix',
-        payload: expect.objectContaining({ captionMeta: JSON.stringify(meta) }),
-      }),
-      expect.objectContaining({
-        modelKey: 'story',
-        payload: expect.objectContaining({ captionMeta: JSON.stringify(meta) }),
-      }),
-      expect.objectContaining({
-        modelKey: 'story',
-        payload: expect.objectContaining({ captionMeta: '{"style":"bar","y":0.2}' }),
-      }),
+    expect(bridge.messages).toEqual([
+      expect.objectContaining({ kind: 'pix', captionMeta: JSON.stringify(meta) }),
+    ]);
+    expect(bridge.stories).toEqual([
+      expect.objectContaining({ content: 'story', captionMeta: JSON.stringify(meta) }),
+      expect.objectContaining({ content: 'preencoded', captionMeta: '{"style":"bar","y":0.2}' }),
     ]);
   });
 });

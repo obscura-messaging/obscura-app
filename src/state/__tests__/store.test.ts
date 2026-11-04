@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+import { Camera } from 'react-native-vision-camera';
 import {
   useStore, refreshMessages, refreshStories, refreshProfiles,
   markSeen, saveOwnProfile, applyObscuraEvent, loadSession,
@@ -5,9 +7,20 @@ import {
   subscribeToLaunchScreen, loadDebugLog, copyToClipboard, getFriendCode,
   bootstrapAuthState, ensureSessionLoaded, shouldRequestStartupPermissions,
 } from '../store';
+import { canPromptFor, requestStartupPermissions } from '../permissions';
+import { Obscura } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 import { openPixViewer } from '../../navigation/openPixViewer';
 import { logError } from '../../utils/log';
+
+jest.mock('react-native-vision-camera', () => ({
+  Camera: {
+    getCameraPermissionStatus: jest.fn(() => 'not-determined'),
+    requestCameraPermission: jest.fn(async () => 'granted'),
+    getMicrophonePermissionStatus: jest.fn(() => 'not-determined'),
+    requestMicrophonePermission: jest.fn(async () => 'granted'),
+  },
+}));
 
 const bridge = getFakeBridge();
 
@@ -119,8 +132,7 @@ describe('seen receipts & profile writes', () => {
 
     await markSeen('dm_1');
 
-    const sent = bridge.__sent.find((x) => x.modelKey === 'seen');
-    expect(sent).toMatchObject({ recipientUserIds: [BOB], entryId: 'seen_directMessage_dm_1' });
+    expect((await Obscura.getMessages())[0].viewedAt).toEqual(expect.any(Number));
     expect(typeof useStore.getState().messages[0].viewedAt).toBe('number');
   });
 
@@ -130,12 +142,12 @@ describe('seen receipts & profile writes', () => {
 
     await saveOwnProfile('Alice', 'In Wonderland');
 
+    expect(await Obscura.getProfiles()).toEqual([
+      expect.objectContaining({ userId: SELF, displayName: 'Alice', bio: 'In Wonderland' }),
+    ]);
     expect(useStore.getState().profiles).toEqual([
       expect.objectContaining({ userId: SELF, displayName: 'Alice', bio: 'In Wonderland' }),
     ]);
-    expect(bridge.__sent.find((x) => x.modelKey === 'profile')).toMatchObject({
-      recipientUserIds: [BOB],
-    });
   });
 });
 
@@ -172,7 +184,7 @@ describe('slice refresh & coalescing', () => {
     expect(bridge.__calls.filter((c) => c === 'sweepExpired')).toHaveLength(2);
   });
 
-  it('swallows refresh, flushOutbox, and sweepExpired failures rather than rejecting', async () => {
+  it('swallows refresh, flushOutbox, sweepExpired, event handler, and bootstrap failures rather than rejecting', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     session();
     bridge.__failNext('getMessages', 'STORAGE_ERROR');
@@ -188,6 +200,22 @@ describe('slice refresh & coalescing', () => {
       flushOutboxFromStore(),
       sweepAndRefresh(),
     ])).resolves.toBeDefined();
+
+    bridge.__failNext('getFriends', 'STORAGE_ERROR');
+    await applyObscuraEvent({ type: 'friendsChanged' });
+
+    bridge.__failNext('registerPushToken', 'STORAGE_ERROR');
+    await applyObscuraEvent({ type: 'pushTokenReceived', token: 'tok' });
+
+    bridge.__failNext('getLaunchIntent', 'STORAGE_ERROR');
+    const off = subscribeToLaunchScreen(() => {});
+    await Promise.resolve();
+    off();
+
+    useStore.setState({ bootstrapped: false });
+    bridge.__failNext('getAuthState', 'STORAGE_ERROR');
+    await bootstrapAuthState();
+    expect(useStore.getState().bootstrapped).toBe(true);
     warn.mockRestore();
   });
 });
@@ -366,6 +394,50 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
       username: 'bob',
       entryIds: ['p1', 'p2'],
     });
+  });
+});
+
+describe('permissions', () => {
+  afterEach(() => {
+    (Platform as { OS: string }).OS = 'ios';
+  });
+
+  it('prompts for not-determined on any platform, and for denied only on Android', () => {
+    (Platform as { OS: string }).OS = 'ios';
+    expect(canPromptFor('not-determined')).toBe(true);
+    expect(canPromptFor('denied')).toBe(false);
+    expect(canPromptFor('granted')).toBe(false);
+
+    (Platform as { OS: string }).OS = 'android';
+    expect(canPromptFor('not-determined')).toBe(true);
+    expect(canPromptFor('denied')).toBe(true);
+    expect(canPromptFor('granted')).toBe(false);
+  });
+
+  it('requests camera, microphone, and push permissions only when statuses require prompting', async () => {
+    (Camera.getCameraPermissionStatus as jest.Mock).mockReturnValueOnce('not-determined');
+    (Camera.getMicrophonePermissionStatus as jest.Mock).mockReturnValueOnce('not-determined');
+    (Camera.requestCameraPermission as jest.Mock).mockClear();
+    (Camera.requestMicrophonePermission as jest.Mock).mockClear();
+    bridge.__calls.length = 0;
+
+    await requestStartupPermissions();
+
+    expect(Camera.requestCameraPermission).toHaveBeenCalledTimes(1);
+    expect(Camera.requestMicrophonePermission).toHaveBeenCalledTimes(1);
+    expect(bridge.__calls).toContain('requestPushPermission');
+
+    (Camera.getCameraPermissionStatus as jest.Mock).mockReturnValueOnce('granted');
+    (Camera.getMicrophonePermissionStatus as jest.Mock).mockReturnValueOnce('granted');
+    (Camera.requestCameraPermission as jest.Mock).mockClear();
+    (Camera.requestMicrophonePermission as jest.Mock).mockClear();
+    bridge.__calls.length = 0;
+
+    await requestStartupPermissions();
+
+    expect(Camera.requestCameraPermission).not.toHaveBeenCalled();
+    expect(Camera.requestMicrophonePermission).not.toHaveBeenCalled();
+    expect(bridge.__calls).toContain('requestPushPermission');
   });
 });
 

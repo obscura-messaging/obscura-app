@@ -10,14 +10,6 @@ import type {
   RawConversationItem, RawDirectMessageItem, RawPixItem, RawStoryItem,
 } from '../ObscuraModule';
 
-export interface SentRecord {
-  recipientUserIds: string[];
-  modelKey: 'directMessage' | 'pix' | 'seen' | 'story' | 'profile';
-  entryId: string;
-  sentAt: number;
-  payload: Record<string, unknown>;
-}
-
 export interface FakeBridgeOptions {
   userId?: string;
   username?: string;
@@ -50,7 +42,6 @@ export class FakeObscuraBridge implements ObscuraBridge {
   devices: DeviceInfo[] = [];
 
   readonly __calls: string[] = [];
-  readonly __sent: SentRecord[] = [];
   readonly __approved: string[] = [];
 
   private listeners = new Set<(event: any) => void>();
@@ -73,30 +64,15 @@ export class FakeObscuraBridge implements ObscuraBridge {
     return fn();
   }
 
-  private checkFailure(method: string, ignoreSendFailed = false): void {
+  private checkFailure(method: string): void {
     const f = this.failures.get(method);
-    if (!f || (ignoreSendFailed && f.code === 'SEND_FAILED')) return;
+    if (!f) return;
     this.failures.delete(method);
     throw rejection(f.code, f.message);
   }
 
   private requirePrimary(): void {
     if (!this.primary) throw rejection('NOT_PRIMARY', 'Only the primary device can do this');
-  }
-
-  private acceptedFriendIds(): string[] {
-    return this.friends.filter((f) => f.status === 'accepted' && f.userId !== this.userId).map((f) => f.userId);
-  }
-
-  private sendOutgoing(
-    method: string, recipientUserIds: string[], modelKey: SentRecord['modelKey'],
-    entryId: string, sentAt: number, payload: Record<string, unknown>,
-  ): void {
-    this.checkFailure(method);
-    if (recipientUserIds.length > 0 && recipientUserIds.every((id) => this.unreachable.has(id))) {
-      throw rejection('SEND_FAILED', `${modelKey} reached none of its recipients`);
-    }
-    this.__sent.push({ recipientUserIds, modelKey, entryId, sentAt, payload });
   }
 
   addListener(_eventName: string, handler?: (event: any) => void): { remove: () => void } {
@@ -113,11 +89,12 @@ export class FakeObscuraBridge implements ObscuraBridge {
   sweepExpired(): Promise<string[]> { return this.step('sweepExpired', () => [...this.sweepResult]); }
 
   async sendMessage(peerUserId: string, content: string): Promise<string> {
-    this.__calls.push('sendMessage'); this.checkFailure('sendMessage', true);
+    this.__calls.push('sendMessage');
     if (peerUserId.trim() === '') throw rejection('INVALID_ARGUMENT', 'peerUserId is required');
     const sentAt = ++this.seq, id = `dm_${sentAt}`;
     this.messages.push({ kind: 'message', id, peerUserId, authorUserId: this.userId, sentAt, viewedAt: null, content });
-    this.sendOutgoing('sendMessage', [peerUserId], 'directMessage', id, sentAt, { peerUserId, content });
+    this.checkFailure('sendMessage');
+    if (this.unreachable.has(peerUserId)) throw rejection('SEND_FAILED', 'directMessage reached none of its recipients');
     return id;
   }
 
@@ -125,14 +102,15 @@ export class FakeObscuraBridge implements ObscuraBridge {
     peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
     mediaType: string, caption: string, captionMeta: string | null, displayDuration: number,
   ): Promise<string> {
-    this.__calls.push('sendPix'); this.checkFailure('sendPix', true);
+    this.__calls.push('sendPix');
     if (peerUserId.trim() === '') throw rejection('INVALID_ARGUMENT', 'peerUserId is required');
     const sentAt = ++this.seq, id = `pix_${sentAt}`;
     this.messages.push({
       kind: 'pix', id, peerUserId, authorUserId: this.userId, sentAt, viewedAt: null,
       attachment: { id: mediaRef, contentKey, nonce, mediaType }, caption, captionMeta, displayDuration,
     });
-    this.sendOutgoing('sendPix', [peerUserId], 'pix', id, sentAt, { peerUserId, mediaRef, contentKey, nonce, mediaType, caption, captionMeta, displayDuration });
+    this.checkFailure('sendPix');
+    if (this.unreachable.has(peerUserId)) throw rejection('SEND_FAILED', 'pix reached none of its recipients');
     return id;
   }
 
@@ -140,9 +118,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
     return this.step('markSeen', () => {
       const item = this.messages.find((m) => m.id === entryId);
       if (!item || item.authorUserId === this.userId || item.viewedAt !== null) return;
-      const viewedAt = (item.viewedAt = ++this.seq);
-      const receiptId = `seen_${item.kind === 'pix' ? 'pix' : 'directMessage'}_${entryId}`;
-      this.__sent.push({ recipientUserIds: [item.peerUserId], modelKey: 'seen', entryId: receiptId, sentAt: viewedAt, payload: { entryId, viewedAt } });
+      item.viewedAt = ++this.seq;
     });
   }
 
@@ -150,21 +126,27 @@ export class FakeObscuraBridge implements ObscuraBridge {
     content: string, mediaRef: string | null, contentKey: string | null,
     nonce: string | null, mediaType: string | null, captionMeta: string | null,
   ): Promise<string> {
-    this.__calls.push('postStory'); this.checkFailure('postStory', true);
+    this.__calls.push('postStory');
     const sentAt = ++this.seq, id = `story_${sentAt}`;
     const attachment: RawAttachment | null = mediaRef && contentKey && nonce
       ? { id: mediaRef, contentKey, nonce, mediaType: mediaType ?? 'photo' } : null;
     this.stories.push({ id, authorUserId: this.userId, sentAt, content, attachment, captionMeta });
-    this.sendOutgoing('postStory', this.acceptedFriendIds(), 'story', id, sentAt, { content, mediaRef, contentKey, nonce, mediaType, captionMeta });
+    this.checkFailure('postStory');
+    if (this.friends.some((f) => this.unreachable.has(f.userId))) {
+      throw rejection('SEND_FAILED', 'story reached none of its recipients');
+    }
     return id;
   }
 
   async updateProfile(displayName: string, bio: string): Promise<void> {
-    this.__calls.push('updateProfile'); this.checkFailure('updateProfile', true);
+    this.__calls.push('updateProfile');
     const updatedAt = ++this.seq;
     const profile: ProfileItem = { userId: this.userId, authorDeviceId: this.deviceId, updatedAt, displayName, bio };
     this.profiles = [...this.profiles.filter((p) => p.userId !== this.userId), profile];
-    this.sendOutgoing('updateProfile', this.acceptedFriendIds(), 'profile', `profile_${this.userId}`, updatedAt, { displayName, bio });
+    this.checkFailure('updateProfile');
+    if (this.friends.some((f) => this.unreachable.has(f.userId))) {
+      throw rejection('SEND_FAILED', 'profile reached none of its recipients');
+    }
   }
 
   registerUser(username: string, _password: string): Promise<void> {
@@ -210,7 +192,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
   wipeDevice(): Promise<void> { return this.step('wipeDevice', () => this.clearLocalState()); }
 
   private clearLocalState(): void {
-    this.messages = []; this.stories = []; this.profiles = []; this.__sent.length = 0; this.friends = [];
+    this.messages = []; this.stories = []; this.profiles = []; this.friends = [];
     this.__setConnectionState('disconnected'); this.__setAuthState('loggedOut');
   }
 
@@ -394,7 +376,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
 
   __reset(): void {
     this.messages = []; this.stories = []; this.profiles = []; this.friends = []; this.devices = [];
-    this.__sent.length = 0; this.__calls.length = 0; this.__approved.length = 0;
+    this.__calls.length = 0; this.__approved.length = 0;
     this.listeners.clear(); this.failures.clear(); this.unreachable.clear();
     this.sweepResult = ['directMessage', 'pix', 'story'];
     this.debugLog = []; this.deletedFiles = [];

@@ -27,4 +27,22 @@ module.exports = {
   ],
   testMatch: ['**/__tests__/**/*.test.ts'],
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
+  collectCoverageFrom: [
+    'src/domain/**/*.ts',
+    'src/native/ObscuraModule.ts',
+    'src/state/**/*.ts',
+    'src/utils/**/*.ts',
+    'src/navigation/openPixViewer.ts',
+    'src/components/confirm.ts',
+    '!src/**/__tests__/**',
+    '!src/**/__fixtures__/**',
+  ],
+  coverageThreshold: {
+    global: {
+      lines: 92,
+      statements: 90,
+      branches: 82,
+      functions: 80,
+    },
+  },
 };

@@ -1,6 +1,7 @@
 import {
   createTestCapture, discardCapture, loadAttachmentUri, prewarmAudio, sendCapture, type Capture,
 } from '../sendMedia';
+import { toPath } from '../../utils/files';
 import { resetSession, useStore } from '../store';
 import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
@@ -24,19 +25,30 @@ describe('sendCapture', () => {
     expect(await sendCapture(CAPTURE, [BOB, CAROL], true)).toEqual([]);
 
     expect(bridge.__calls.filter((c) => c === 'uploadAttachment')).toHaveLength(1);
-    const pix = bridge.__sent.filter((x) => x.modelKey === 'pix');
-    expect(pix.map((x) => x.recipientUserIds)).toEqual([[BOB.userId], [CAROL.userId]]);
-    expect(pix[0].payload).toMatchObject({
-      peerUserId: BOB.userId,
-      caption: 'hi',
-      displayDuration: 3,
-      mediaType: 'photo',
-      captionMeta: null,
-    });
-    expect(bridge.__sent.find((x) => x.modelKey === 'story')?.payload.content).toBe('hi');
+    expect(await Obscura.getMessages()).toEqual([
+      expect.objectContaining({
+        kind: 'pix',
+        peerUserId: BOB.userId,
+        caption: 'hi',
+        displayDuration: 3,
+        captionMeta: null,
+        attachment: expect.objectContaining({ mediaType: 'photo' }),
+      }),
+      expect.objectContaining({
+        kind: 'pix',
+        peerUserId: CAROL.userId,
+        caption: 'hi',
+        displayDuration: 3,
+        captionMeta: null,
+        attachment: expect.objectContaining({ mediaType: 'photo' }),
+      }),
+    ]);
+    expect(await Obscura.getStories()).toEqual([
+      expect.objectContaining({ content: 'hi' }),
+    ]);
     expect(useStore.getState().messages).toHaveLength(2);
     expect(useStore.getState().stories).toHaveLength(1);
-    expect(bridge.__calls).toContain('deleteFile');
+    expect(bridge.deletedFiles).toContain(CAPTURE.path);
   });
 
   it('reports recipients it could not reach and keeps their pix', async () => {
@@ -89,16 +101,25 @@ describe('sendCapture', () => {
   it('falls back to the original path if resizeImage fails, and supports capture helpers', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__failNext('resizeImage', 'STORAGE_ERROR');
+    bridge.__failNext('deleteFile', 'STORAGE_ERROR');
 
     expect(await sendCapture(CAPTURE, [BOB], false)).toEqual([]);
     expect(bridge.__calls).toContain('uploadAttachment');
 
     const testPath = await createTestCapture();
     expect(testPath).toBe('/fake/test.jpg');
+    expect(toPath('file:///fake/test.jpg')).toBe('/fake/test.jpg');
+    expect(toPath('/fake/test.jpg')).toBe('/fake/test.jpg');
     prewarmAudio();
     discardCapture(testPath);
     expect(bridge.__calls).toContain('prewarmAudioSession');
     expect(bridge.deletedFiles).toContain('/fake/test.jpg');
+
+    bridge.__failNext('prewarmAudioSession', 'STORAGE_ERROR');
+    bridge.__failNext('deleteFile', 'STORAGE_ERROR');
+    prewarmAudio();
+    discardCapture(testPath);
+    await Promise.resolve();
     warn.mockRestore();
   });
 });
