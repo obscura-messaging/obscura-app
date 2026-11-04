@@ -3,8 +3,10 @@ import {
   markSeen, saveOwnProfile, applyObscuraEvent, loadSession,
   refreshFriends, resetSession, logout, flushOutboxFromStore, sweepAndRefresh,
   subscribeToLaunchScreen, loadDebugLog, copyToClipboard, getFriendCode,
+  bootstrapAuthState, ensureSessionLoaded, shouldRequestStartupPermissions,
 } from '../store';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
+import { openPixViewer } from '../../navigation/openPixViewer';
 import { logError } from '../../utils/log';
 
 const bridge = getFakeBridge();
@@ -338,6 +340,48 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
 
     expect(await getFriendCode()).toBe(`${SELF}:me`);
     warn.mockRestore();
+  });
+
+  it('bootstraps auth state, ensures session is loaded once, and gates startup permission requests', async () => {
+    useStore.setState({ bootstrapped: false, authed: false, myUserId: '' });
+    await bootstrapAuthState();
+    expect(useStore.getState()).toMatchObject({ bootstrapped: true, authed: true, myUserId: SELF });
+
+    resetSession();
+    useStore.setState({ bootstrapped: false });
+    await bridge.logout();
+    bridge.__calls.length = 0;
+    await bootstrapAuthState();
+    expect(useStore.getState()).toMatchObject({ bootstrapped: true, authed: false, myUserId: '' });
+    expect(bridge.__calls).not.toContain('getUserId');
+
+    bridge.__authenticate({ userId: SELF, username: 'me', deviceId: DEVICE });
+    await ensureSessionLoaded();
+    expect(useStore.getState().myUserId).toBe(SELF);
+
+    bridge.__calls.length = 0;
+    await ensureSessionLoaded();
+    expect(bridge.__calls).not.toContain('getUserId');
+
+    expect(shouldRequestStartupPermissions(true, 'connected', false)).toBe(true);
+    expect(shouldRequestStartupPermissions(false, 'connected', false)).toBe(false);
+    expect(shouldRequestStartupPermissions(true, 'disconnected', false)).toBe(false);
+    expect(shouldRequestStartupPermissions(true, 'connected', true)).toBe(false);
+
+    const navigate = jest.fn();
+    openPixViewer({ navigate } as any, { userId: BOB, username: 'bob' }, []);
+    expect(navigate).not.toHaveBeenCalled();
+    openPixViewer(
+      { navigate } as any,
+      { userId: BOB, username: 'bob' },
+      [{ id: 'p2', sentAt: 200 }, { id: 'p1', sentAt: 100 }],
+    );
+    expect(navigate).toHaveBeenCalledWith('StoryViewer', {
+      mode: 'pix',
+      userId: BOB,
+      username: 'bob',
+      entryIds: ['p1', 'p2'],
+    });
   });
 });
 

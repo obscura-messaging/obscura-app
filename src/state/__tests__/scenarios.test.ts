@@ -2,7 +2,7 @@ import {
   useStore, loadSession, refreshMessages, flushOutboxFromStore, sweepAndRefresh,
   applyObscuraEvent, addFriend, acceptFriend, removeFriend, markSeen, resetSession,
 } from '../store';
-import { notifyTyping, sendChatMessage } from '../chat';
+import { nextPeerTypingState, notifyTyping, sendChatMessage } from '../chat';
 import { logIn, linkThisDevice } from '../login';
 import { sendCapture, type Capture } from '../sendMedia';
 import { activityPreview, chatTimeline, friendActivities } from '../../domain/chats';
@@ -213,6 +213,7 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
   });
 
   it('sends sendTyping on non-empty input and stopTyping when cleared to empty', async () => {
+    notifyTyping(BOB.userId, '', '');
     notifyTyping(BOB.userId, '', 'h');
     notifyTyping(BOB.userId, 'h', 'hi');
     notifyTyping(BOB.userId, 'hi', '');
@@ -220,6 +221,25 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
 
     expect(bridge.__calls.filter((c) => c === 'sendTyping')).toHaveLength(2);
     expect(bridge.__calls.filter((c) => c === 'stopTyping')).toHaveLength(1);
+
+    expect(nextPeerTypingState(false, BOB.userId, {
+      type: 'typingChanged', peerUserId: BOB.userId, typing: true,
+    })).toBe(true);
+    expect(nextPeerTypingState(true, BOB.userId, {
+      type: 'typingChanged', peerUserId: 'other-peer', typing: false,
+    })).toBe(true);
+    expect(nextPeerTypingState(false, BOB.userId, {
+      type: 'typingChanged', peerUserId: 'other-peer', typing: true,
+    })).toBe(false);
+    expect(nextPeerTypingState(true, BOB.userId, {
+      type: 'messageReceived', model: 'story',
+    })).toBe(true);
+    expect(nextPeerTypingState(true, BOB.userId, {
+      type: 'messageReceived', model: 'directMessage',
+    })).toBe(false);
+    expect(nextPeerTypingState(true, BOB.userId, {
+      type: 'friendsChanged',
+    })).toBe(true);
   });
 });
 

@@ -148,7 +148,7 @@ export function stepViewer(
   lockRewind = false,
 ): ViewerStep {
   const currentGroupLen = groupLengths[cursor.groupIdx] ?? 0;
-  if (currentGroupLen === 0 || cursor.storyIdx >= currentGroupLen) {
+  if (cursor.storyIdx >= currentGroupLen) {
     return { kind: 'close' };
   }
 
@@ -156,7 +156,7 @@ export function stepViewer(
     if (cursor.storyIdx < currentGroupLen - 1) {
       return { kind: 'step', cursor: { groupIdx: cursor.groupIdx, storyIdx: cursor.storyIdx + 1 } };
     }
-    if (cursor.groupIdx < groupLengths.length - 1 && (groupLengths[cursor.groupIdx + 1] ?? 0) > 0) {
+    if ((groupLengths[cursor.groupIdx + 1] ?? 0) > 0) {
       return {
         kind: 'turnCube',
         cursor: { groupIdx: cursor.groupIdx + 1, storyIdx: 0 },
@@ -172,7 +172,7 @@ export function stepViewer(
   if (cursor.storyIdx > 0) {
     return { kind: 'step', cursor: { groupIdx: cursor.groupIdx, storyIdx: cursor.storyIdx - 1 } };
   }
-  if (cursor.groupIdx > 0 && (groupLengths[cursor.groupIdx - 1] ?? 0) > 0) {
+  if ((groupLengths[cursor.groupIdx - 1] ?? 0) > 0) {
     return {
       kind: 'turnCube',
       cursor: { groupIdx: cursor.groupIdx - 1, storyIdx: 0 },

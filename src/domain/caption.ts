@@ -66,7 +66,7 @@ export function parseCaptionMeta(raw?: string | null): CaptionMeta | null {
     const rot = typeof m.rot === 'number' && Number.isFinite(m.rot) ? m.rot : 0;
     const scale = typeof m.scale === 'number' && Number.isFinite(m.scale) && m.scale > 0 ? m.scale : 1;
     const color = typeof m.color === 'string' && m.color !== '' ? m.color : CAPTION_COLORS[0];
-    const font = typeof m.font === 'number' && Number.isInteger(m.font) && m.font >= 0 && m.font < CAPTION_FONT_LABELS.length
+    const font = typeof m.font === 'number' && (CAPTION_FONT_LABELS as readonly string[])[m.font] !== undefined
       ? m.font
       : 0;
     return { style: 'bold', x, y, rot, scale, color, font };

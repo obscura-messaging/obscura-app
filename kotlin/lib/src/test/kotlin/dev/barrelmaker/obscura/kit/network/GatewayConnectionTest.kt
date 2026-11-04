@@ -134,17 +134,64 @@ class GatewayConnectionTest {
     }
 
     @Test
-    fun `empty and textual frames are logged and reconnect rather than silently dropped`() = runBlocking {
-        for (textual in listOf(false, true)) {
+    fun `empty, unexpected ack, and textual frames are logged and reconnect rather than silently dropped`() = runBlocking {
+        val unexpectedAck = xyz.obscura.server.contracts.ObscuraProtocol.WebSocketFrame.newBuilder()
+            .setAck(xyz.obscura.server.contracts.ObscuraProtocol.AckMessage.getDefaultInstance())
+            .build()
+            .toByteArray()
+            .toByteString()
+        for (payload in listOf<Any>(byteArrayOf().toByteString(), unexpectedAck, "not protobuf")) {
             val previousRequests = server.requestCount
-            enqueueGateway { if (textual) it.send("not protobuf") else it.send(byteArrayOf().toByteString()) }
+            enqueueGateway {
+                when (payload) {
+                    is String -> it.send(payload)
+                    is okio.ByteString -> it.send(payload)
+                }
+            }
             enqueueGateway()
             gateway.connect()
             withTimeout(5_000) {
                 while (server.requestCount < previousRequests + 4 || gateway.state.value != ConnectionState.CONNECTED) delay(10)
             }
-            assertTrue(logs.any { it.contains(if (textual) "invalid text frame" else "invalid server frame") })
+            assertTrue(logs.any { it.contains(if (payload is String) "invalid text frame" else "invalid server frame") })
             gateway.disconnect()
         }
+    }
+
+    @Test
+    fun `envelope batch and prekey status frames are delivered, ack sends while connected, and disconnect drains channels`() = runBlocking {
+        val env = xyz.obscura.server.contracts.ObscuraProtocol.Envelope.newBuilder()
+            .setId(com.google.protobuf.ByteString.copyFromUtf8("env-1"))
+            .build()
+        val batchFrame = xyz.obscura.server.contracts.ObscuraProtocol.WebSocketFrame.newBuilder()
+            .setEnvelopeBatch(xyz.obscura.server.contracts.ObscuraProtocol.EnvelopeBatch.newBuilder().addEnvelopes(env))
+            .build()
+            .toByteArray()
+            .toByteString()
+        val statusFrame = xyz.obscura.server.contracts.ObscuraProtocol.WebSocketFrame.newBuilder()
+            .setPreKeyStatus(xyz.obscura.server.contracts.ObscuraProtocol.PreKeyStatus.newBuilder().setOneTimePreKeyCount(5).setMinThreshold(10))
+            .build()
+            .toByteArray()
+            .toByteString()
+
+        enqueueGateway { ws ->
+            ws.send(batchFrame)
+            ws.send(statusFrame)
+        }
+        gateway.connect()
+        gateway.ack(com.google.protobuf.ByteString.copyFromUtf8("env-1"))
+
+        withTimeout(5_000) {
+            while (gateway.envelopes.isEmpty || gateway.preKeyStatus.isEmpty) delay(10)
+        }
+        gateway.disconnect()
+        assertTrue(gateway.envelopes.isEmpty)
+        assertTrue(gateway.preKeyStatus.isEmpty)
+
+        // Failed WebSocket upgrade after ticket fetch fails connect without reconnecting
+        server.enqueue(MockResponse.Builder().body("""{"ticket":"t"}""").build())
+        server.enqueue(MockResponse.Builder().code(403).body("forbidden").build())
+        assertTrue(runCatching { gateway.connect() }.isFailure)
+        assertEquals(ConnectionState.DISCONNECTED, gateway.state.value)
     }
 }

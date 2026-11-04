@@ -45,13 +45,38 @@ describe('parseCaptionMeta', () => {
       color: CAPTION_COLORS[0],
       font: 0,
     });
+
+    expect(parseCaptionMeta(JSON.stringify({
+      style: 'bold', x: 'bad', y: 0.5, rot: 'bad', scale: 0, font: CAPTION_FONT_LABELS.length,
+    }))).toEqual({
+      style: 'bold',
+      x: 0.5,
+      y: 0.5,
+      rot: 0,
+      scale: 1,
+      color: CAPTION_COLORS[0],
+      font: 0,
+    });
+
+    expect(parseCaptionMeta('{"style":"bold","y":0.5,"x":1e309,"rot":1e309,"scale":1e309,"font":0}')).toEqual({
+      style: 'bold',
+      x: 0.5,
+      y: 0.5,
+      rot: 0,
+      scale: 1,
+      color: CAPTION_COLORS[0],
+      font: 0,
+    });
   });
 
   it('returns null on empty, malformed, or unknown style payloads', () => {
     expect(parseCaptionMeta(null)).toBeNull();
     expect(parseCaptionMeta('')).toBeNull();
+    expect(parseCaptionMeta('null')).toBeNull();
+    expect(parseCaptionMeta('123')).toBeNull();
     expect(parseCaptionMeta('not-json')).toBeNull();
     expect(parseCaptionMeta(JSON.stringify({ style: 'neon', y: 0.5 }))).toBeNull();
     expect(parseCaptionMeta(JSON.stringify({ style: 'bar', y: 'nope' }))).toBeNull();
+    expect(parseCaptionMeta('{"style":"bar","y":1e309}')).toBeNull();
   });
 });

@@ -185,11 +185,16 @@ class ReceivePathTest {
         c.receive(directMessage("dm_blank_peer", content = "ignored", peerUserId = ""), envelopeId = "e2", sender = SELF_USER_ID)
         c.receive(directMessage("dm_self_peer", content = "ignored", peerUserId = SELF_USER_ID), envelopeId = "e3", sender = SELF_USER_ID)
         c.receive(directMessage("dm_spoof", content = "spoofed", peerUserId = thirdParty), envelopeId = "e4", sender = peer)
+        c.receive(directMessage("dm_blank_sender", content = "ignored", peerUserId = peer), envelopeId = "e5", sender = " ")
+        c.receive(directMessage("dm_peer_self", content = "to-self", peerUserId = SELF_USER_ID), envelopeId = "e6", sender = peer)
+        c.receive(directMessage("dm_peer_echo", content = "echo-peer", peerUserId = peer), envelopeId = "e7", sender = peer)
 
-        val stored = c.getMessages().single()
-        assertEquals("dm_self", stored.id)
-        assertEquals(peer, stored.peerUserId)
-        assertEquals(SELF_USER_ID, stored.authorUserId)
+        val stored = c.getMessages().associateBy { it.id }
+        assertEquals(setOf("dm_self", "dm_peer_self", "dm_peer_echo"), stored.keys)
+        assertEquals(peer, stored.getValue("dm_self").peerUserId)
+        assertEquals(SELF_USER_ID, stored.getValue("dm_self").authorUserId)
+        assertEquals(peer, stored.getValue("dm_peer_self").peerUserId)
+        assertEquals(peer, stored.getValue("dm_peer_echo").peerUserId)
     }
 
     @Test
@@ -200,13 +205,32 @@ class ReceivePathTest {
         c.receive(pixMessage("pix_1", contentKey = key, nonce = nonce, timestamp = 1_000L), envelopeId = "e1")
         assertEquals("pix", c.messageReceived.tryReceive().getOrNull())
 
+        // Duplicate pix id in a new envelope and invalid pix payloads are ignored
+        c.receive(pixMessage("pix_1", contentKey = key, nonce = nonce, timestamp = 1_000L), envelopeId = "e1_dup")
+        c.receive(pixMessage(" ", contentKey = key, nonce = nonce), envelopeId = "e_blank_id")
+        c.receive(pixMessage("pix_bad_peer", peerUserId = thirdParty, contentKey = key, nonce = nonce), envelopeId = "e_bad_peer")
+        c.receive(
+            ClientMessage.newBuilder().setTimestamp(1_000L).setPix(PixMessage.newBuilder().setId("pix_no_att")).build(),
+            envelopeId = "e_no_att",
+        )
+        c.receive(pixMessage("pix_blank_att", mediaRef = " ", contentKey = key, nonce = nonce), envelopeId = "e_blank_att")
+        c.receive(pixMessage("pix_empty_key", contentKey = ByteArray(0), nonce = nonce), envelopeId = "e_empty_key")
+        c.receive(pixMessage("pix_empty_nonce", contentKey = key, nonce = ByteArray(0)), envelopeId = "e_empty_nonce")
+        assertNull(c.messageReceived.tryReceive().getOrNull())
+
         val beforeSeen = c.getMessages().single()
+        val expectedAtt = MediaAttachment("att_1", key, nonce, "photo")
+        assertTrue(expectedAtt.equals(expectedAtt))
+        assertEquals(expectedAtt, beforeSeen.attachment)
         assertEquals("pix", beforeSeen.kind)
-        assertEquals(MediaAttachment("att_1", key, nonce, "photo"), beforeSeen.attachment)
         assertNull(beforeSeen.viewedAt)
         assertEquals(1_000L + MAX_EPHEMERAL_AGE_MS, beforeSeen.expiresAt)
 
-        // Author cannot mark their own pix as seen
+        // Invalid seen receipts (blank entryId, spoofed peer, missing row, wrong peer, authored by sender) are ignored
+        c.receive(seenReceipt(" ", viewedAt = 1_500L, timestamp = 1_600L), envelopeId = "e_sr_blank")
+        c.receive(seenReceipt("pix_1", viewedAt = 1_500L, peerUserId = thirdParty, timestamp = 1_600L), envelopeId = "e_sr_spoof")
+        c.receive(seenReceipt("no_such_entry", viewedAt = 1_500L, timestamp = 1_600L), envelopeId = "e_sr_missing")
+        c.receive(seenReceipt("pix_1", viewedAt = 1_500L, timestamp = 1_600L), envelopeId = "e_sr_wrong_peer", sender = thirdParty)
         c.receive(seenReceipt("pix_1", viewedAt = 1_500L, timestamp = 1_600L), envelopeId = "e2", sender = peer)
         assertNull(c.getMessages().single().viewedAt)
 
@@ -220,15 +244,44 @@ class ReceivePathTest {
         val afterSeen = c.getMessages().single()
         assertEquals(2_000L, afterSeen.viewedAt)
         assertEquals(2_000L + EXPIRE_AFTER_VIEW_MS, afterSeen.expiresAt)
+
+        // Subsequent seen receipt for an already-viewed message is ignored
+        c.receive(
+            seenReceipt("pix_1", viewedAt = 3_000L, peerUserId = peer, timestamp = 3_000L),
+            envelopeId = "e4",
+            sender = SELF_USER_ID,
+        )
+        assertNull(c.messageReceived.tryReceive().getOrNull())
+
+        // Pix without caption or captionMeta stores null for both
+        c.receive(pixMessage("pix_bare", caption = "", captionMeta = "", contentKey = key, nonce = nonce), envelopeId = "e5")
+        val bare = c.getMessages().first { it.id == "pix_bare" }
+        assertNull(bare.caption)
+        assertNull(bare.captionMeta)
     }
 
     @Test
     fun `story and profile updates follow expiry and LWW tie-break rules`() = runBlocking {
         val c = authenticatedClient()
         val now = System.currentTimeMillis()
+        c.receive(storyPost(" ", "blank id", timestamp = now), envelopeId = "e0")
+        assertNull(c.messageReceived.tryReceive().getOrNull())
+
         c.receive(storyPost("st_1", "hello story", mediaRef = "att_s", timestamp = now), envelopeId = "e1")
         assertEquals("story", c.messageReceived.tryReceive().getOrNull())
-        assertEquals(1, c.getStories(now = now + 1_000L).size)
+        // Duplicate story id in a new envelope is ignored
+        c.receive(storyPost("st_1", "dup story", timestamp = now), envelopeId = "e1_dup")
+        assertNull(c.messageReceived.tryReceive().getOrNull())
+        // Story without attachment and with captionMeta
+        c.receive(
+            ClientMessage.newBuilder()
+                .setTimestamp(now)
+                .setStory(StoryPost.newBuilder().setId("st_text").setContent("text").setCaptionMeta("""{"y":0.5}"""))
+                .build(),
+            envelopeId = "e1_text",
+        )
+        assertEquals("story", c.messageReceived.tryReceive().getOrNull())
+        assertEquals(2, c.getStories(now = now + 1_000L).size)
         assertTrue(c.getStories(now = now + STORY_MAX_AGE_MS + 1L).isEmpty())
 
         c.receive(profileUpdate("Alice 1", "bio 1", timestamp = 1_000L), envelopeId = "e2", device = "dev_b")
@@ -374,7 +427,16 @@ class ReceivePathTest {
     @Test
     fun `1 to 1 typing methods derive canonical convId and map to boolean`() = runBlocking {
         val c = authenticatedClient()
+        org.junit.jupiter.api.Assertions.assertThrows(ObscuraError.InvalidArgument::class.java) {
+            runBlocking { c.sendTyping(" ", TypingState.STARTED) }
+        }
+        org.junit.jupiter.api.Assertions.assertThrows(ObscuraError.InvalidArgument::class.java) {
+            c.observePeerTyping(" ")
+        }
         c.sendTyping(peer, TypingState.STARTED)
+        val smallerPeer = "00000000-0000-7000-8000-000000000001"
+        c.sendTyping(smallerPeer, TypingState.STARTED)
+        assertEquals(false, c.observePeerTyping(smallerPeer).first())
         val convId = if (SELF_USER_ID <= peer) "${SELF_USER_ID}_$peer" else "${peer}_$SELF_USER_ID"
         assertEquals(false, c.observePeerTyping(peer).first())
         c.receive(typing(convId, Client.TypingState.TYPING_STATE_STARTED))

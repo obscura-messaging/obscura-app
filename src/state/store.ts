@@ -341,18 +341,38 @@ export async function loadSession(): Promise<void> {
   await syncAll();
 }
 
+export async function bootstrapAuthState(): Promise<void> {
+  try {
+    const state = await Obscura.getAuthState();
+    if (state === 'authenticated') {
+      await loadSession();
+      useStore.setState({ authed: true });
+    }
+  } catch (e) {
+    logError('bootstrap.authState', e);
+  } finally {
+    useStore.setState({ bootstrapped: true });
+  }
+}
+
+export async function ensureSessionLoaded(): Promise<void> {
+  if (useStore.getState().myUserId === '') {
+    await loadSession();
+  }
+}
+
+export function shouldRequestStartupPermissions(
+  authed: boolean,
+  connState: ConnectionState,
+  alreadyRequested: boolean,
+): boolean {
+  return authed && connState === 'connected' && !alreadyRequested;
+}
+
 /** Mounted once at the app root: the auth check, the event subscription and the signed-in loops. */
 export function ObscuraBootstrap(): null {
   useEffect(() => {
-    Obscura.getAuthState()
-      .then(async (state) => {
-        if (state === 'authenticated') {
-          await loadSession();
-          useStore.setState({ authed: true });
-        }
-      })
-      .catch((e) => logError('bootstrap.authState', e))
-      .finally(() => useStore.setState({ bootstrapped: true }));
+    bootstrapAuthState();
   }, []);
 
   useEffect(() => onObscuraEvent(applyObscuraEvent), []);
@@ -360,7 +380,7 @@ export function ObscuraBootstrap(): null {
   const authed = useStore((s) => s.authed);
   useEffect(() => {
     if (!authed) return;
-    if (useStore.getState().myUserId === '') loadSession();
+    ensureSessionLoaded();
     const timer = setInterval(() => { sweepAndRefresh(); }, SWEEP_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [authed]);
@@ -370,7 +390,7 @@ export function ObscuraBootstrap(): null {
   const permissionsRequested = useRef(false);
   useEffect(() => {
     if (!authed) { permissionsRequested.current = false; return; }
-    if (connState !== 'connected' || permissionsRequested.current) return;
+    if (!shouldRequestStartupPermissions(authed, connState, permissionsRequested.current)) return;
     permissionsRequested.current = true;
     requestStartupPermissions().catch((e) => logError('permissions.startup', e));
   }, [authed, connState]);

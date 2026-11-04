@@ -177,6 +177,21 @@ kover {
                 // of LOC we neither own nor need to cover.
                 classes(
                     "dev.barrelmaker.obscura.kit.db.*",                  // sqldelight-generated
+                    "dev.barrelmaker.obscura.kit.*Queries*",             // sqldelight-generated queries
+                    "dev.barrelmaker.obscura.kit.ConversationEntry",     // sqldelight-generated rows
+                    "dev.barrelmaker.obscura.kit.StoryEntry",
+                    "dev.barrelmaker.obscura.kit.ProfileEntry",
+                    "dev.barrelmaker.obscura.kit.ErasedEntry",
+                    "dev.barrelmaker.obscura.kit.ProcessedEnvelope",
+                    "dev.barrelmaker.obscura.kit.Friend",
+                    "dev.barrelmaker.obscura.kit.FriendListVersion",
+                    "dev.barrelmaker.obscura.kit.Device",
+                    "dev.barrelmaker.obscura.kit.DeviceIdentity",
+                    "dev.barrelmaker.obscura.kit.SignalIdentity",
+                    "dev.barrelmaker.obscura.kit.SignalPreKey",
+                    "dev.barrelmaker.obscura.kit.SignalSession",
+                    "dev.barrelmaker.obscura.kit.SignalSignedPreKey",
+                    "dev.barrelmaker.obscura.kit.SignalLocalIdentity",
                     "obscura.*",                             // protobuf-generated (obscura.v2.*)
                     "client.*",                              // protobuf-generated
                     "xyz.obscura.server.contracts.*",        // protobuf-generated (server contract types)
@@ -189,8 +204,9 @@ kover {
         // transport paths remain covered by `integrationTest`, not this unit metric.
         verify {
             rule("Unit-suite coverage floor") {
-                minBound(85, coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.LINE)
-                minBound(80, coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.INSTRUCTION)
+                minBound(90, coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.LINE)
+                minBound(85, coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.INSTRUCTION)
+                minBound(75, coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.BRANCH)
             }
         }
     }

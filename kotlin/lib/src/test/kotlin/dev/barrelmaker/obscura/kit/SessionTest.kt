@@ -60,6 +60,39 @@ class SessionTest {
     }
 
     @Test
+    fun `Credentials from rejects each missing or malformed field`() {
+        val valid = dev.barrelmaker.obscura.kit.managers.Credentials(
+            token = "tok",
+            refreshToken = "ref",
+            expiresAt = 1_000L,
+            userId = SELF_USER_ID,
+            deviceId = SELF_DEVICE_ID,
+            username = "self",
+        ).toMap()
+        assertEquals("tok", dev.barrelmaker.obscura.kit.managers.Credentials.from(valid)?.token)
+
+        val invalidMaps = listOf(
+            valid - "token",
+            valid + ("token" to " "),
+            valid - "refreshToken",
+            valid + ("refreshToken" to " "),
+            valid - "expiresAt",
+            valid + ("expiresAt" to "not-a-number"),
+            valid + ("expiresAt" to "0"),
+            valid + ("expiresAt" to "-10"),
+            valid - "userId",
+            valid + ("userId" to "not-a-uuid"),
+            valid - "deviceId",
+            valid + ("deviceId" to "not-a-uuid"),
+            valid - "username",
+            valid + ("username" to " "),
+        )
+        for (map in invalidMaps) {
+            assertNull(dev.barrelmaker.obscura.kit.managers.Credentials.from(map), "expected null for $map")
+        }
+    }
+
+    @Test
     fun `an unavailable server keeps the expired session, authenticated and disconnected`() = runBlocking {
         val storage = expiredSession()
         val c = sessionClient(url, storage)

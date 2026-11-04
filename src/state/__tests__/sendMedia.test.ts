@@ -53,9 +53,11 @@ describe('sendCapture', () => {
   it('reports an undelivered story, keeps it in the outbox, and still deletes temp files', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__setUnreachable([BOB.userId, CAROL.userId]);
+    bridge.__calls.length = 0;
 
     expect(await sendCapture(CAPTURE, [], true)).toEqual(['My story']);
 
+    expect(bridge.__calls).not.toContain('getMessages');
     expect(await Obscura.getStories()).toHaveLength(1);
     expect(useStore.getState().stories).toHaveLength(1);
     expect(bridge.__calls).toContain('deleteFile');

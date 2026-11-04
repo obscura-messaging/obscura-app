@@ -8,7 +8,8 @@ import {
   type Friend, type ProfileItem,
 } from '../friends';
 import { displayMs, storyGroups, type StoryItem } from '../viewer';
-import { isBackSwipeGesture, shouldCompleteBackSwipe } from '../../utils/gesture';
+import { timeAgo } from '../../utils/format';
+import { isBackSwipeGesture, shouldCompleteBackSwipe, touchDist } from '../../utils/gesture';
 
 const ME = 'uMe';
 const BOB: Friend = { userId: 'uBob', username: 'bob', status: 'accepted' };
@@ -140,9 +141,17 @@ describe('chatTimeline', () => {
   });
 });
 
-describe('back swipe gesture helpers', () => {
+describe('back swipe & touch gesture helpers', () => {
+  it('computes Euclidean distance between two touches', () => {
+    expect(touchDist([{ pageX: 10, pageY: 20 }, { pageX: 40, pageY: 60 }])).toBe(50);
+  });
+
   it('recognizes a deliberate horizontal right swipe and ignores vertical scrolling or left swipes', () => {
     expect(isBackSwipeGesture(24, 4)).toBe(true);
+    expect(isBackSwipeGesture(17, 8)).toBe(true);
+    expect(isBackSwipeGesture(16, 0)).toBe(false);
+    expect(isBackSwipeGesture(16, 8)).toBe(false);
+    expect(isBackSwipeGesture(20, 10)).toBe(false);
     expect(isBackSwipeGesture(10, 2)).toBe(false);
     expect(isBackSwipeGesture(-30, 2)).toBe(false);
     expect(isBackSwipeGesture(24, 15)).toBe(false);
@@ -150,9 +159,28 @@ describe('back swipe gesture helpers', () => {
 
   it('completes a back swipe on sufficient distance or velocity', () => {
     expect(shouldCompleteBackSwipe(80, 0.1)).toBe(true);
+    expect(shouldCompleteBackSwipe(73, 0)).toBe(true);
+    expect(shouldCompleteBackSwipe(72, 0)).toBe(false);
     expect(shouldCompleteBackSwipe(40, 0.7)).toBe(true);
+    expect(shouldCompleteBackSwipe(33, 0.51)).toBe(true);
+    expect(shouldCompleteBackSwipe(33, 0.5)).toBe(false);
+    expect(shouldCompleteBackSwipe(32, 0.6)).toBe(false);
     expect(shouldCompleteBackSwipe(40, 0.2)).toBe(false);
     expect(shouldCompleteBackSwipe(20, 0.9)).toBe(false);
+  });
+});
+
+describe('timeAgo', () => {
+  it('formats compact relative timestamps across seconds, minutes, hours, and days', () => {
+    const now = 1_700_000_000_000;
+    const spy = jest.spyOn(Date, 'now').mockReturnValue(now);
+    expect(timeAgo(now - 59_000)).toBe('now');
+    expect(timeAgo(now - 60_000)).toBe('1m');
+    expect(timeAgo(now - 3_599_000)).toBe('59m');
+    expect(timeAgo(now - 3_600_000)).toBe('1h');
+    expect(timeAgo(now - 86_399_000)).toBe('23h');
+    expect(timeAgo(now - 86_400_000)).toBe('1d');
+    spy.mockRestore();
   });
 });
 
@@ -212,6 +240,12 @@ describe('friendActivities', () => {
     const [msgOnlyActivity] = friendActivities([BOB], ME, [msg('m2', 10, BOB.userId, BOB.userId, 'hey there')]);
     expect(activityPreview({ ...msgOnlyActivity, latestAt: 99 }, ME)).toEqual({
       text: 'hey there',
+      highlight: false,
+    });
+
+    const [blankMsgActivity] = friendActivities([BOB], ME, [msg('m3', 10, BOB.userId, BOB.userId, '')]);
+    expect(activityPreview(blankMsgActivity, ME)).toEqual({
+      text: 'Tap to chat',
       highlight: false,
     });
   });

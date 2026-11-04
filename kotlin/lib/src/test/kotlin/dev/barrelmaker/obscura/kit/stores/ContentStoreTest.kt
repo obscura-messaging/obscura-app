@@ -1,6 +1,7 @@
 package dev.barrelmaker.obscura.kit.stores
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import dev.barrelmaker.obscura.kit.AttachmentUpload
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraConfig
 import dev.barrelmaker.obscura.kit.ObscuraError
@@ -10,15 +11,23 @@ import dev.barrelmaker.obscura.kit.authenticatedClient
 import dev.barrelmaker.obscura.kit.crypto.toBase64
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import dev.barrelmaker.obscura.kit.generateIdentity
+import dev.barrelmaker.obscura.kit.linking.HistorySync
 import dev.barrelmaker.obscura.kit.managers.FakeObscuraServer
 import dev.barrelmaker.obscura.kit.sessionClient
 import dev.barrelmaker.obscura.kit.storeLocalDevice
 import dev.barrelmaker.obscura.kit.storedSession
+import com.google.protobuf.ByteString
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
+import obscura.client.v1.Client.AttachmentPointer
+import obscura.client.v1.Client.EntrySnapshot
+import obscura.client.v1.Client.HistorySnapshot
+import obscura.client.v1.Client.StoredMessageRecord
+import obscura.client.v1.Client.StoredProfileRecord
+import obscura.client.v1.Client.StoredStoryRecord
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.jupiter.api.Assertions.*
@@ -107,9 +116,105 @@ class ContentStoreTest {
         val a = MediaAttachment("att_1", byteArrayOf(1, 2, 3), byteArrayOf(4, 5), "photo")
         val b = MediaAttachment("att_1", byteArrayOf(1, 2, 3), byteArrayOf(4, 5), "photo")
         val c = MediaAttachment("att_1", byteArrayOf(9, 2, 3), byteArrayOf(4, 5), "photo")
+        assertTrue(a.equals(a))
+        assertFalse(a.equals("not-an-attachment"))
+        assertFalse(a.equals(null))
         assertEquals(a, b)
         assertEquals(a.hashCode(), b.hashCode())
         assertNotEquals(a, c)
+        assertNotEquals(a, a.copy(id = "att_2"))
+        assertNotEquals(a, a.copy(nonce = byteArrayOf(9, 5)))
+        assertNotEquals(a, a.copy(mediaType = "video"))
+    }
+
+    @Test
+    fun `HistorySync exports null when empty and round-trips messages pix stories and profiles while skipping invalid records`() = runBlocking {
+        assertNull(HistorySync.exportSnapshot(store))
+        assertNull(HistorySync.uploadHistorySnapshot(store) { error("should not upload empty snapshot") })
+
+        // Export when only profiles is non-empty
+        val profile = ProfileItem(peer, "dev_1", 500L, "Bob", "Hello")
+        store.putProfile(profile)
+        assertNotNull(HistorySync.exportSnapshot(store))
+
+        // Export when only stories is non-empty
+        val storyOnlyDriver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).also(ObscuraDatabase.Schema::create)
+        val storyOnlyStore = ContentStore(ObscuraDatabase(storyOnlyDriver), storyOnlyDriver)
+        storyOnlyStore.putStory(StoryItem("st_only", peer, 100L, 100L + STORY_MAX_AGE_MS, "only story"))
+        assertNotNull(HistorySync.exportSnapshot(storyOnlyStore))
+
+        // Populate messages (plain message, pix with caption/meta/viewedAt, pix without caption/meta/viewedAt) and stories (with and without attachment/meta)
+        val att1 = MediaAttachment("att_pix_1", byteArrayOf(1, 2), byteArrayOf(3, 4), "photo")
+        val att2 = MediaAttachment("att_pix_2", byteArrayOf(5, 6), byteArrayOf(7, 8), "video")
+        val attStory = MediaAttachment("att_st_1", byteArrayOf(9, 10), byteArrayOf(11, 12), "photo")
+        val msgPlain = ConversationItem("dm_1", peer, "message", SELF_USER_ID, 100L, null, expiresAt(100L, null), "hello")
+        val pixFull = ConversationItem(
+            "pix_1", peer, "pix", peer, 200L, 250L, expiresAt(200L, 250L), "",
+            attachment = att1, caption = "cap", captionMeta = """{"y":0.5}""", displayDuration = 7,
+        )
+        val pixBare = ConversationItem(
+            "pix_2", peer, "pix", peer, 300L, null, expiresAt(300L, null), "",
+            attachment = att2, caption = null, captionMeta = null, displayDuration = 5,
+        )
+        val storyFull = StoryItem(
+            "st_1", peer, 400L, 400L + STORY_MAX_AGE_MS, "caption",
+            attachment = attStory, captionMeta = """{"y":0.25}""",
+        )
+        val storyBare = StoryItem("st_2", peer, 450L, 450L + STORY_MAX_AGE_MS, "bare story", attachment = null, captionMeta = null)
+
+        store.putConversation(msgPlain)
+        store.putConversation(pixFull)
+        store.putConversation(pixBare)
+        store.putStory(storyFull)
+        store.putStory(storyBare)
+
+        var uploadedBytes = byteArrayOf()
+        val pointer = HistorySync.uploadHistorySnapshot(store) { bytes ->
+            uploadedBytes = bytes
+            AttachmentUpload("att_hist", byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        }
+        assertNotNull(pointer)
+
+        // Append invalid records to the snapshot and import into a fresh store
+        val exported = EntrySnapshot.parseFrom(uploadedBytes).toBuilder()
+            .addMessages(StoredMessageRecord.newBuilder().setId(" ").setPeerUserId(peer).setKind("message"))
+            .addMessages(
+                StoredMessageRecord.newBuilder()
+                    .setId("pix_bad_att")
+                    .setPeerUserId(peer)
+                    .setKind("pix")
+                    .setAuthorUserId(peer)
+                    .setSentAt(350L)
+                    .setAttachment(AttachmentPointer.newBuilder().setId(" ")),
+            )
+            .addStories(StoredStoryRecord.newBuilder().setId("").setAuthorUserId(peer))
+            .addProfiles(StoredProfileRecord.newBuilder().setUserId(" ").setAuthorDeviceId("dev"))
+            .build()
+
+        val targetDriver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).also(ObscuraDatabase.Schema::create)
+        val targetStore = ContentStore(ObscuraDatabase(targetDriver), targetDriver)
+        HistorySync.importSnapshot(exported, targetStore)
+        // Re-importing is idempotent and exercises existing-ID skips in ContentStore.importSnapshot
+        HistorySync.importSnapshot(exported, targetStore)
+
+        val importedMsgs = targetStore.getMessages().associateBy { it.id }
+        assertEquals(msgPlain, importedMsgs["dm_1"])
+        assertEquals(pixFull, importedMsgs["pix_1"])
+        assertEquals(pixBare, importedMsgs["pix_2"])
+        assertNull(importedMsgs["pix_bad_att"]?.attachment)
+        assertFalse(importedMsgs.containsKey(" "))
+
+        val importedStories = targetStore.getAllStories().associateBy { it.id }
+        assertEquals(listOf(storyFull, storyBare), listOf(importedStories["st_1"], importedStories["st_2"]))
+        assertEquals(listOf(profile), targetStore.getProfiles())
+
+        // Corrupt snapshot bytes throw ProtocolViolation on restoreHistorySnapshot
+        assertThrows(ObscuraError.ProtocolViolation::class.java) {
+            runBlocking {
+                HistorySync.restoreHistorySnapshot(pointer!!, targetStore) { _, _, _ -> byteArrayOf(-1, -1, -1) }
+            }
+        }
+        Unit
     }
 
     @Test
@@ -170,28 +275,41 @@ class ContentStoreTest {
                 val nonceB64 = ByteArray(12) { 2 }.toBase64()
                 assertTrue(
                     runCatching {
-                        c.sendPix(peer, "att_1", keyB64, nonceB64, "photo", "cap", null, 5)
+                        c.sendPix(peer, "att_1", keyB64, nonceB64, "photo", "", """{"y":0.5}""", 5)
                     }.exceptionOrNull() is ObscuraError.SendFailed,
                 )
                 assertTrue(
                     runCatching {
-                        c.postStory("story 1", "att_2", keyB64, nonceB64, "photo", null)
+                        c.postStory("story 1", "att_2", keyB64, nonceB64, null, """{"y":0.2}""")
+                    }.exceptionOrNull() is ObscuraError.SendFailed,
+                )
+                assertTrue(
+                    runCatching {
+                        c.postStory("story text only", null, null, null, null, "")
                     }.exceptionOrNull() is ObscuraError.SendFailed,
                 )
                 assertTrue(runCatching { c.updateProfile("Alice", "Bio") }.exceptionOrNull() is ObscuraError.SendFailed)
+                assertTrue(runCatching { c.updateProfile("Alice 2", "Bio 2") }.exceptionOrNull() is ObscuraError.SendFailed)
 
-                assertEquals(2, c.content.getUndeliveredMessages().size)
-                assertEquals(1, c.content.getUndeliveredStories().size)
+                // Also put an undelivered message to a non-friend so flushOutbox skips it
+                c.content.putConversation(
+                    ConversationItem("stranger_dm", "019f025a-0000-7de6-84b6-000000000099", "message", SELF_USER_ID, 50, null, expiresAt(50, null), "skip", undelivered = true),
+                )
+
+                assertEquals(3, c.content.getUndeliveredMessages().size)
+                assertEquals(2, c.content.getUndeliveredStories().size)
                 assertEquals(1, c.content.getUndeliveredProfiles().size)
 
-                // Now server accepts messages; flushOutbox delivers all 4
+                // Now server accepts messages; flushOutbox delivers the 5 items addressed to accepted friends
                 allowSend = true
-                assertEquals(4, c.flushOutbox())
-                assertTrue(c.content.getUndeliveredMessages().isEmpty())
+                assertEquals(5, c.flushOutbox())
+                assertEquals(listOf("stranger_dm"), c.content.getUndeliveredMessages().map { it.id })
                 assertTrue(c.content.getUndeliveredStories().isEmpty())
                 assertTrue(c.content.getUndeliveredProfiles().isEmpty())
 
-                // Incoming message from peer can be marked seen once
+                // Incoming message from peer can be marked seen once; missing or own messages are ignored
+                c.markSeen("non_existent_id")
+                c.markSeen(c.getMessages().first { it.authorUserId == SELF_USER_ID }.id)
                 c.content.putConversation(
                     ConversationItemData("in_1", peer, "message", peer, 500, null, expiresAt(500, null), "from peer"),
                 )
@@ -199,6 +317,7 @@ class ContentStoreTest {
                 val seenRow = c.getMessages().first { it.id == "in_1" }
                 assertNotNull(seenRow.viewedAt)
                 assertEquals(expiresAt(500, seenRow.viewedAt), seenRow.expiresAt)
+                c.markSeen("in_1")
 
                 c.auth.end()
                 Unit
@@ -209,22 +328,41 @@ class ContentStoreTest {
     @Test
     fun `invalid arguments to sendMessage sendPix postStory and markSeen fail before network`() = runBlocking {
         val c = authenticatedClient()
+        val validB64 = ByteArray(16) { 1 }.toBase64()
         assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.sendMessage(" ", "hi") } }
         assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.sendPix(" ", "att", "k", "n", "photo", "", null, 5) }
+            runBlocking { c.sendPix(" ", "att", validB64, validB64, "photo", "", null, 5) }
         }
         assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.sendPix(peer, "", "k", "n", "photo", "", null, 5) }
+            runBlocking { c.sendPix(peer, "", validB64, validB64, "photo", "", null, 5) }
         }
         assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.sendPix(peer, "att", "not-base64!", "n", "photo", "", null, 5) }
+            runBlocking { c.sendPix(peer, "att", " ", validB64, "photo", "", null, 5) }
         }
         assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.postStory("text", "att", null, "n", "photo", null) }
+            runBlocking { c.sendPix(peer, "att", validB64, " ", "photo", "", null, 5) }
+        }
+        assertThrows(ObscuraError.InvalidArgument::class.java) {
+            runBlocking { c.sendPix(peer, "att", "not-base64!", validB64, "photo", "", null, 5) }
+        }
+        assertThrows(ObscuraError.InvalidArgument::class.java) {
+            runBlocking { c.sendPix(peer, "att", validB64, "not-base64!", "photo", "", null, 5) }
+        }
+        assertThrows(ObscuraError.InvalidArgument::class.java) {
+            runBlocking { c.postStory("text", "att", null, validB64, "photo", null) }
+        }
+        assertThrows(ObscuraError.InvalidArgument::class.java) {
+            runBlocking { c.postStory("text", "att", "not-base64!", validB64, "photo", null) }
+        }
+        assertThrows(ObscuraError.InvalidArgument::class.java) {
+            runBlocking { c.postStory("text", "att", validB64, null, "photo", null) }
+        }
+        assertThrows(ObscuraError.InvalidArgument::class.java) {
+            runBlocking { c.postStory("text", "att", validB64, "not-base64!", "photo", null) }
         }
         assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.markSeen(" ") } }
         assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.downloadAttachmentToCache("att", "k", "n") }
+            runBlocking { c.downloadAttachmentToCache("att", validB64, validB64) }
         }
         Unit
     }
@@ -269,6 +407,13 @@ class ContentStoreTest {
 
             val uploaded = c.uploadAttachmentFile(srcFile)
             assertEquals("att_cached_1", uploaded.id)
+
+            assertThrows(ObscuraError.InvalidArgument::class.java) {
+                runBlocking { c.downloadAttachmentToCache("uncached", "not-base64!", uploaded.nonce.toBase64()) }
+            }
+            assertThrows(ObscuraError.InvalidArgument::class.java) {
+                runBlocking { c.downloadAttachmentToCache("uncached", uploaded.contentKey.toBase64(), "not-base64!") }
+            }
 
             val downloaded1 = c.downloadAttachmentToCache(
                 uploaded.id,
