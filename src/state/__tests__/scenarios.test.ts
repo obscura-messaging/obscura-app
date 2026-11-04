@@ -15,11 +15,6 @@ const ALICE = '11111111-1111-4111-8111-111111111111';
 const DEVICE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const BOB: Friend = { userId: '22222222-2222-4222-8222-222222222222', username: 'bob', status: 'accepted' };
 
-async function flush(): Promise<void> {
-  for (let i = 0; i < 8; i += 1) await Promise.resolve();
-  await new Promise((r) => setImmediate(r));
-}
-
 beforeEach(() => {
   resetSession();
   bridge.__authenticate({ userId: ALICE, username: 'alice', deviceId: DEVICE });
@@ -43,7 +38,7 @@ describe('Scenario 1: device relink + friend handshake', () => {
 
     const codes: string[] = [];
     const linking = linkThisDevice('alice', 'password-1234', (code) => codes.push(code));
-    await flush();
+    await Promise.resolve();
     expect(codes).toHaveLength(1);
     bridge.__approvePendingLink();
     await linking;
@@ -100,8 +95,7 @@ describe('Scenario 2: offline capture -> reconnect sync -> peer seen receipt -> 
     // 2. Network reconnects: store triggers flushOutbox and sweepExpired.
     bridge.__setUnreachable([]);
     bridge.__calls.length = 0;
-    applyObscuraEvent({ type: 'connectionChanged', state: 'connected' });
-    await flush();
+    await applyObscuraEvent({ type: 'connectionChanged', state: 'connected' });
 
     expect(bridge.__calls).toContain('flushOutbox');
     expect(bridge.__calls).toContain('sweepExpired');
@@ -114,8 +108,7 @@ describe('Scenario 2: offline capture -> reconnect sync -> peer seen receipt -> 
       viewedAt,
       sentAt: viewedAt,
     });
-    applyObscuraEvent({ type: 'messageReceived', model: 'seen' });
-    await flush();
+    await applyObscuraEvent({ type: 'messageReceived', model: 'seen' });
 
     expect(useStore.getState().messages[0].viewedAt).toBe(viewedAt);
     [bobActivity] = friendActivities(useStore.getState().friends, ALICE, useStore.getState().messages);
@@ -163,8 +156,7 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
       caption: 'look!',
       displayDuration: 5,
     });
-    applyObscuraEvent({ type: 'messageReceived', model: 'pix' });
-    await flush();
+    await applyObscuraEvent({ type: 'messageReceived', model: 'pix' });
 
     let [activity] = friendActivities(useStore.getState().friends, ALICE, useStore.getState().messages);
     expect(activity.unopenedPix).toHaveLength(1);
@@ -202,8 +194,7 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
     // Foregrounding while disconnected refreshes/sweeps, but does NOT flush the outbox yet.
     useStore.setState({ connState: 'disconnected' });
     bridge.__calls.length = 0;
-    applyObscuraEvent({ type: 'appStateChanged', state: 'active' });
-    await flush();
+    await applyObscuraEvent({ type: 'appStateChanged', state: 'active' });
     expect(bridge.__calls).not.toContain('flushOutbox');
 
     // Concurrent outbox flushes coalesce into at most one in-flight + one trailing call.
@@ -213,11 +204,10 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
   });
 
   it('sends sendTyping on non-empty input and stopTyping when cleared to empty', async () => {
-    notifyTyping(BOB.userId, '', '');
-    notifyTyping(BOB.userId, '', 'h');
-    notifyTyping(BOB.userId, 'h', 'hi');
-    notifyTyping(BOB.userId, 'hi', '');
-    await flush();
+    await notifyTyping(BOB.userId, '', '');
+    await notifyTyping(BOB.userId, '', 'h');
+    await notifyTyping(BOB.userId, 'h', 'hi');
+    await notifyTyping(BOB.userId, 'hi', '');
 
     expect(bridge.__calls.filter((c) => c === 'sendTyping')).toHaveLength(2);
     expect(bridge.__calls.filter((c) => c === 'stopTyping')).toHaveLength(1);

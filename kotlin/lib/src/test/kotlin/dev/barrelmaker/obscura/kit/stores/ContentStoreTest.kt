@@ -269,6 +269,13 @@ class ContentStoreTest {
                 assertTrue(runCatching { c.sendMessage(peer, "hello") }.exceptionOrNull() is ObscuraError.SendFailed)
                 assertTrue(c.getMessages().single().undelivered)
 
+                // When there are no accepted friends, postStory and updateProfile succeed locally and flushOutbox marks them delivered
+                val stNoPeers = c.postStory("solo story", null, null, null, null, null)
+                c.content.setStoryUndelivered(stNoPeers, true)
+                c.updateProfile("Solo", "Bio")
+                c.content.setProfileUndelivered(SELF_USER_ID, c.getProfiles().single().updatedAt, true)
+                assertEquals(2, c.flushOutbox())
+
                 // Become accepted friend, but server is still failing (allowSend = false)
                 c.db.friendQueries.insert(peer, "bob", FriendStatus.ACCEPTED.value)
                 val keyB64 = ByteArray(32) { 1 }.toBase64()
@@ -276,6 +283,11 @@ class ContentStoreTest {
                 assertTrue(
                     runCatching {
                         c.sendPix(peer, "att_1", keyB64, nonceB64, "photo", "", """{"y":0.5}""", 5)
+                    }.exceptionOrNull() is ObscuraError.SendFailed,
+                )
+                assertTrue(
+                    runCatching {
+                        c.sendPix(peer, "att_1b", keyB64, nonceB64, "photo", "caption", "", 5)
                     }.exceptionOrNull() is ObscuraError.SendFailed,
                 )
                 assertTrue(
@@ -296,16 +308,27 @@ class ContentStoreTest {
                     ConversationItem("stranger_dm", "019f025a-0000-7de6-84b6-000000000099", "message", SELF_USER_ID, 50, null, expiresAt(50, null), "skip", undelivered = true),
                 )
 
-                assertEquals(3, c.content.getUndeliveredMessages().size)
+                assertEquals(4, c.content.getUndeliveredMessages().size)
                 assertEquals(2, c.content.getUndeliveredStories().size)
                 assertEquals(1, c.content.getUndeliveredProfiles().size)
 
-                // Now server accepts messages; flushOutbox delivers the 5 items addressed to accepted friends
+                // While server is still failing, flushOutbox delivers 0 items
+                assertEquals(0, c.flushOutbox())
+
+                // Now server accepts messages; flushOutbox delivers the 6 items addressed to accepted friends
                 allowSend = true
-                assertEquals(5, c.flushOutbox())
+                assertEquals(6, c.flushOutbox())
                 assertEquals(listOf("stranger_dm"), c.content.getUndeliveredMessages().map { it.id })
                 assertTrue(c.content.getUndeliveredStories().isEmpty())
                 assertTrue(c.content.getUndeliveredProfiles().isEmpty())
+
+                // Direct sendPix, postStory, updateProfile, and sendTyping when server accepts
+                c.sendPix(peer, "att_ok", keyB64, nonceB64, "photo", "hi", null, 5)
+                c.postStory("story ok", "att_st_ok", keyB64, nonceB64, "photo", null)
+                c.updateProfile("Alice 3", "Bio 3")
+                c.sendTyping(peer, dev.barrelmaker.obscura.kit.TypingState.STARTED)
+                // Second sendTyping within 2s is throttled
+                c.sendTyping(peer, dev.barrelmaker.obscura.kit.TypingState.STARTED)
 
                 // Incoming message from peer can be marked seen once; missing or own messages are ignored
                 c.markSeen("non_existent_id")

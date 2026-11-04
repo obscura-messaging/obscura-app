@@ -15,12 +15,6 @@ const SELF = '11111111-1111-4111-8111-111111111111';
 const DEVICE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const BOB = '22222222-2222-4222-8222-222222222222';
 
-/** Let the fire-and-forget promises inside the event handlers settle. */
-async function flush(): Promise<void> {
-  for (let i = 0; i < 8; i += 1) await Promise.resolve();
-  await new Promise((r) => setImmediate(r));
-}
-
 function session() {
   useStore.setState({
     authed: true, myUserId: SELF, myUsername: 'me', myDeviceId: DEVICE,
@@ -203,8 +197,7 @@ describe('event and lifecycle sync triggers', () => {
     session();
     bridge.__deliverMessage({ id: 'dm_1', peerUserId: BOB, authorUserId: BOB, content: 'hello' });
 
-    applyObscuraEvent({ type: 'connectionChanged', state: 'connected' });
-    await flush();
+    await applyObscuraEvent({ type: 'connectionChanged', state: 'connected' });
 
     expect(useStore.getState().connState).toBe('connected');
     expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_1']);
@@ -216,8 +209,7 @@ describe('event and lifecycle sync triggers', () => {
     session();
     const callsBefore = bridge.__calls.length;
 
-    applyObscuraEvent({ type: 'connectionChanged', state: 'reconnecting' });
-    await flush();
+    await applyObscuraEvent({ type: 'connectionChanged', state: 'reconnecting' });
 
     expect(bridge.__calls.slice(callsBefore)).toEqual([]);
   });
@@ -228,8 +220,7 @@ describe('event and lifecycle sync triggers', () => {
     bridge.__deliverMessage({ id: 'dm_1', peerUserId: BOB, authorUserId: BOB, content: 'hello' });
     bridge.__calls.length = 0;
 
-    applyObscuraEvent({ type: 'appStateChanged', state: 'active' });
-    await flush();
+    await applyObscuraEvent({ type: 'appStateChanged', state: 'active' });
 
     expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_1']);
     expect(bridge.__calls).toContain('flushOutbox');
@@ -240,8 +231,7 @@ describe('event and lifecycle sync triggers', () => {
     session();
     const callsBefore = bridge.__calls.length;
 
-    applyObscuraEvent({ type: 'appStateChanged', state: 'background' });
-    await flush();
+    await applyObscuraEvent({ type: 'appStateChanged', state: 'background' });
 
     expect(bridge.__calls.slice(callsBefore)).toEqual([]);
   });
@@ -249,18 +239,15 @@ describe('event and lifecycle sync triggers', () => {
   it('refreshes only the affected slice on messageReceived', async () => {
     session();
     bridge.__deliverMessage({ id: 'dm_1', peerUserId: BOB, authorUserId: BOB, content: 'hello' });
-    applyObscuraEvent({ type: 'messageReceived', model: 'directMessage' });
-    await flush();
+    await applyObscuraEvent({ type: 'messageReceived', model: 'directMessage' });
     expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_1']);
 
     bridge.__deliverStory({ id: 's_1', authorUserId: BOB, content: 'story' });
-    applyObscuraEvent({ type: 'messageReceived', model: 'story' });
-    await flush();
+    await applyObscuraEvent({ type: 'messageReceived', model: 'story' });
     expect(useStore.getState().stories.map((s) => s.id)).toEqual(['s_1']);
 
     bridge.__deliverProfile({ userId: BOB, displayName: 'Bobby' });
-    applyObscuraEvent({ type: 'messageReceived', model: 'profile' });
-    await flush();
+    await applyObscuraEvent({ type: 'messageReceived', model: 'profile' });
     expect(useStore.getState().profiles.map((p) => p.displayName)).toEqual(['Bobby']);
   });
 
@@ -271,7 +258,6 @@ describe('event and lifecycle sync triggers', () => {
     bridge.__failNext('getFriends', 'STORAGE_ERROR');
 
     await loadSession();
-    await flush();
 
     expect(useStore.getState().myUserId).toBe(SELF);
     expect(useStore.getState().friends).toEqual([]);
@@ -279,14 +265,14 @@ describe('event and lifecycle sync triggers', () => {
     warn.mockRestore();
   });
 
-  it('flips authed on `authStateChanged: authenticated` and clears on `loggedOut`', () => {
+  it('flips authed on `authStateChanged: authenticated` and clears on `loggedOut`', async () => {
     expect(useStore.getState().authed).toBe(false);
 
-    applyObscuraEvent({ type: 'authStateChanged', state: 'authenticated' });
+    await applyObscuraEvent({ type: 'authStateChanged', state: 'authenticated' });
     expect(useStore.getState().authed).toBe(true);
 
     session();
-    applyObscuraEvent({ type: 'authStateChanged', state: 'loggedOut' });
+    await applyObscuraEvent({ type: 'authStateChanged', state: 'loggedOut' });
     expect(useStore.getState().authed).toBe(false);
     expect(useStore.getState().myUserId).toBe('');
   });
@@ -295,15 +281,13 @@ describe('event and lifecycle sync triggers', () => {
     bridge.__setFriends([{ userId: BOB, username: 'bob', status: 'accepted' }]);
     useStore.setState({ friends: [] });
 
-    applyObscuraEvent({ type: 'friendsChanged' });
-    await flush();
+    await applyObscuraEvent({ type: 'friendsChanged' });
 
     expect(useStore.getState().friends.map((f) => f.username)).toEqual(['bob']);
   });
 
   it('registers a push token when one arrives', async () => {
-    applyObscuraEvent({ type: 'pushTokenReceived', token: 'token-abcdefgh' });
-    await flush();
+    await applyObscuraEvent({ type: 'pushTokenReceived', token: 'token-abcdefgh' });
 
     expect(bridge.__registeredPushToken()).toBe('token-abcdefgh');
   });
@@ -315,7 +299,7 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
     const screens: string[] = [];
 
     const off = subscribeToLaunchScreen((s) => screens.push(s));
-    await flush();
+    await Promise.resolve();
     expect(screens).toEqual(['ChatList']);
 
     bridge.__emit({ type: 'launchedFrom', screen: 'Profile' });

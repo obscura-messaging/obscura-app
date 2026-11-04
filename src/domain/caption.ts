@@ -77,3 +77,32 @@ export function parseCaptionMeta(raw?: string | null): CaptionMeta | null {
 export function serializeCaptionMeta(meta: CaptionMeta): string {
   return JSON.stringify(meta);
 }
+
+/**
+ * Build a normalized `CaptionMeta` from preview editor state, or `null` when `text` is blank.
+ */
+export function buildCaptionMeta(input: {
+  text: string;
+  style: CaptionStyle;
+  y: number;
+  x?: number;
+  scale?: number;
+  rot?: number;
+  colorIdx?: number;
+  fontIdx?: number;
+}): CaptionMeta | null {
+  if (input.text.trim().length === 0) return null;
+  const y = clamp01(input.y);
+  if (input.style === 'bar') {
+    return { style: 'bar', y };
+  }
+  const x = clamp01(input.x ?? 0.5);
+  const rot = input.rot ?? 0;
+  const scale = input.scale !== undefined && input.scale > 0 ? input.scale : 1;
+  const color = (CAPTION_COLORS as readonly string[])[input.colorIdx ?? 0] ?? CAPTION_COLORS[0];
+  const font = input.fontIdx !== undefined && (CAPTION_FONT_LABELS as readonly string[])[input.fontIdx] !== undefined
+    ? input.fontIdx
+    : 0;
+  return { style: 'bold', x, y, rot, scale, color, font };
+}
+

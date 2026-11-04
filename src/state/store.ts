@@ -286,15 +286,15 @@ export function subscribeToLaunchScreen(onScreen: (screen: string) => void): () 
   });
 }
 
-export function applyObscuraEvent(event: ObscuraEvent): void {
+export async function applyObscuraEvent(event: ObscuraEvent): Promise<void> {
   switch (event.type) {
     case 'friendsChanged':
-      refreshFriends().catch((e) => logError('friends.refresh', e));
+      await refreshFriends().catch((e) => logError('friends.refresh', e));
       return;
     case 'connectionChanged':
       useStore.setState({ connState: event.state });
       // The server redelivers anything unacknowledged on reconnect.
-      if (event.state === 'connected') syncAll();
+      if (event.state === 'connected') await syncAll();
       return;
     case 'authStateChanged':
       if (event.state === 'loggedOut') resetSession();
@@ -303,16 +303,18 @@ export function applyObscuraEvent(event: ObscuraEvent): void {
     case 'appStateChanged':
       // Native code may have stored rows while JS was suspended; only flush the outbox if connected.
       if (event.state === 'active') {
-        refreshAll();
-        if (useStore.getState().connState === 'connected') flushOutboxFromStore();
-        sweepAndRefresh();
+        await Promise.all([
+          refreshAll(),
+          useStore.getState().connState === 'connected' ? flushOutboxFromStore() : Promise.resolve(),
+          sweepAndRefresh(),
+        ]);
       }
       return;
     case 'pushTokenReceived':
-      Obscura.registerPushToken(event.token).catch((e) => logError('push.register', e));
+      await Obscura.registerPushToken(event.token).catch((e) => logError('push.register', e));
       return;
     case 'messageReceived':
-      refreshSlicesForModels([event.model]);
+      await refreshSlicesForModels([event.model]);
       return;
   }
 }
@@ -375,7 +377,7 @@ export function ObscuraBootstrap(): null {
     bootstrapAuthState();
   }, []);
 
-  useEffect(() => onObscuraEvent(applyObscuraEvent), []);
+  useEffect(() => onObscuraEvent((e) => { applyObscuraEvent(e); }), []);
 
   const authed = useStore((s) => s.authed);
   useEffect(() => {

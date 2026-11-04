@@ -13,8 +13,9 @@ import { colors } from '../styles';
 import { CloseIcon } from '../components/icons';
 import { clamp, touchDist } from '../utils/gesture';
 import {
-  CAPTION_FONTS, CAPTION_FONT_LABELS, CAPTION_COLORS, DEFAULT_BAR, captionStyles, boldTextStyle,
-  type CaptionMeta, type CaptionStyle,
+  CAPTION_FONTS, CAPTION_FONT_LABELS, CAPTION_COLORS, DEFAULT_BAR,
+  buildCaptionMeta, captionStyles, boldTextStyle,
+  type CaptionStyle,
 } from '../components/Caption';
 import { DEFAULT_DISPLAY_SECONDS } from '../domain/viewer';
 import { discardCapture } from '../state/sendMedia';
@@ -193,27 +194,23 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
 
   const cycleFont = () => setFontIdx(i => (i + 1) % CAPTION_FONTS.length);
 
-  const buildMeta = (): CaptionMeta | null => {
-    if (!hasCaption) return null;
-    if (style === 'bar') return { style: 'bar', y: clamp(barYVal.current / H, 0, 1) };
-    return {
-      style: 'bold',
-      x: clamp(0.5 + boldPanVal.current.x / W, 0, 1),
-      y: clamp(0.5 + boldPanVal.current.y / H, 0, 1),
-      rot: boldRotVal.current,
-      scale: boldScaleVal.current,
-      color: CAPTION_COLORS[colorIdx],
-      font: fontIdx,
-    };
-  };
-
   const onChoose = () => {
     forwardedToPicker.current = true;
+    const captionMeta = buildCaptionMeta({
+      text: caption,
+      style,
+      y: style === 'bar' ? barYVal.current / H : 0.5 + boldPanVal.current.y / H,
+      x: 0.5 + boldPanVal.current.x / W,
+      rot: boldRotVal.current,
+      scale: boldScaleVal.current,
+      colorIdx,
+      fontIdx,
+    });
     nav.navigate('RecipientPicker', {
       path,
       mediaType,
       caption: caption.trim(),
-      captionMeta: buildMeta(),
+      captionMeta,
       displayDuration: duration,
     });
   };

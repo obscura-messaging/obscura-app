@@ -5,11 +5,11 @@ import { refreshMessages } from './store';
 
 /** Real-time typing indicator and message sending for a 1:1 conversation. */
 
-export function notifyTyping(friendUserId: string, prevText: string, nextText: string): void {
+export async function notifyTyping(friendUserId: string, prevText: string, nextText: string): Promise<void> {
   if (nextText.length > 0) {
-    Obscura.sendTyping(friendUserId).catch((e) => logError('typing.send', e));
+    await Obscura.sendTyping(friendUserId).catch((e) => logError('typing.send', e));
   } else if (prevText.length > 0) {
-    Obscura.stopTyping(friendUserId).catch((e) => logError('typing.stop', e));
+    await Obscura.stopTyping(friendUserId).catch((e) => logError('typing.stop', e));
   }
 }
 

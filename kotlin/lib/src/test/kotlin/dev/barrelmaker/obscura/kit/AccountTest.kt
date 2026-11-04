@@ -9,6 +9,8 @@ import dev.barrelmaker.obscura.kit.stores.ProfileItemData
 import dev.barrelmaker.obscura.kit.stores.STORY_MAX_AGE_MS
 import dev.barrelmaker.obscura.kit.stores.StoryItemData
 import dev.barrelmaker.obscura.kit.stores.expiresAt
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
@@ -247,17 +249,50 @@ class AccountTest {
         Unit
     }
 
-    @Test fun `a bundle that decrypts but names another account is a protocol violation and stores nothing`() = runBlocking {
+    @Test fun `a bundle that decrypts but has invalid fields is a protocol violation and stores nothing`() = runBlocking {
         val tablet = newClient(url, MemoryStorage())
         val request = tablet.beginLink("self", "password", "Tablet")
-        val bundle = obscura.client.v1.Client.LinkBundle.newBuilder()
-            .setIdentityKeyPair(com.google.protobuf.ByteString.copyFrom(org.signal.libsignal.protocol.IdentityKeyPair.generate().serialize()))
-            .setUserId("019f025a-0000-7de6-84b6-000000000777").setUsername("self").build()
-        account.linkBody = LinkCrypto.seal(bundle.toByteArray(), Curve.decodePoint(LinkCrypto.decodeCode(request.code).ephemeralPublicKey.toByteArray(), 0)).toByteArray()
+        val epk = Curve.decodePoint(LinkCrypto.decodeCode(request.code).ephemeralPublicKey.toByteArray(), 0)
+        val validIdentity = com.google.protobuf.ByteString.copyFrom(org.signal.libsignal.protocol.IdentityKeyPair.generate().serialize())
 
-        assertTrue(runCatching { tablet.completeLink(request) }.exceptionOrNull() is ObscuraError.ProtocolViolation)
-        assertFalse(tablet.signalStore.hasIdentity())
-        assertTrue(requestsTo("/v1/devices").isEmpty())
+        val invalidPayloads = listOf(
+            // Unparseable protobuf bytes
+            byteArrayOf(-1, -1, -1),
+            // Mismatched userId
+            obscura.client.v1.Client.LinkBundle.newBuilder()
+                .setIdentityKeyPair(validIdentity)
+                .setUserId("019f025a-0000-7de6-84b6-000000000777")
+                .setPrimaryDeviceId(SELF_DEVICE_ID)
+                .setUsername("self").build().toByteArray(),
+            // Non-UUID primaryDeviceId
+            obscura.client.v1.Client.LinkBundle.newBuilder()
+                .setIdentityKeyPair(validIdentity)
+                .setUserId(SELF_USER_ID)
+                .setPrimaryDeviceId("not-a-uuid")
+                .setUsername("self").build().toByteArray(),
+            // Invalid identityKeyPair bytes
+            obscura.client.v1.Client.LinkBundle.newBuilder()
+                .setIdentityKeyPair(com.google.protobuf.ByteString.copyFrom(byteArrayOf(1, 2, 3)))
+                .setUserId(SELF_USER_ID)
+                .setPrimaryDeviceId(SELF_DEVICE_ID)
+                .setUsername("self").build().toByteArray(),
+            // Invalid friend record in bundle
+            obscura.client.v1.Client.LinkBundle.newBuilder()
+                .setIdentityKeyPair(validIdentity)
+                .setUserId(SELF_USER_ID)
+                .setPrimaryDeviceId(SELF_DEVICE_ID)
+                .setUsername("self")
+                .addFriends(obscura.client.v1.Client.FriendRecord.newBuilder().setUserId("not-a-uuid").setUsername("bad"))
+                .build().toByteArray(),
+        )
+
+        for (payload in invalidPayloads) {
+            account.linkBody = LinkCrypto.seal(payload, epk).toByteArray()
+            val err = runCatching { tablet.completeLink(request) }.exceptionOrNull()
+            assertTrue(err is ObscuraError.ProtocolViolation, "Expected ProtocolViolation but got $err")
+            assertFalse(tablet.signalStore.hasIdentity())
+            assertTrue(requestsTo("/v1/devices").isEmpty())
+        }
     }
 
     @Test fun `an empty entry store links without a history snapshot`() = runBlocking {
@@ -291,14 +326,30 @@ class AccountTest {
     }
 
     @Test fun `an expired or unknown link session fails the link`() = runBlocking {
-        val tablet = newClient(url, MemoryStorage())
+        val now = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+        val tablet = newClient(url, MemoryStorage(), clock = { now.get() })
         val request = tablet.beginLink("self", "password", "Tablet")
-        account.linkStatus = 404
 
+        // Polling gets 204 once, then clock advances past request.expiresAt -> LinkFailed
+        val expireJob = launch {
+            delay(50)
+            now.set(request.expiresAt * 1000 + 1_000)
+        }
         assertTrue(runCatching { tablet.completeLink(request) }.exceptionOrNull() is ObscuraError.LinkFailed)
+        expireJob.join()
+
+        now.set(System.currentTimeMillis())
+        account.linkStatus = 404
+        assertTrue(runCatching { tablet.completeLink(request) }.exceptionOrNull() is ObscuraError.LinkFailed)
+
         val primary = sessionClient(url, storedSession())
         assertTrue(primary.auth.restore())
         assertTrue(runCatching { primary.approveLink(request.code) }.exceptionOrNull() is ObscuraError.LinkFailed)
+
+        // Non-404 HTTP errors propagate as ObscuraError.Http
+        account.linkStatus = 500
+        assertTrue(runCatching { tablet.completeLink(request) }.exceptionOrNull() is ObscuraError.Http)
+        assertTrue(runCatching { primary.approveLink(request.code) }.exceptionOrNull() is ObscuraError.Http)
         primary.auth.end()
         Unit
     }

@@ -57,9 +57,14 @@ class OwnDevicesTest {
         Unit
     }
 
-    @Test fun `a device list with two primaries is a protocol violation`() = runBlocking {
+    @Test fun `a device list with zero or two primaries is a protocol violation`() = runBlocking {
         val c = sessionClient(url, storedSession())
         assertTrue(c.auth.restore())
+        server.enqueue(MockResponse.Builder().body(
+            """{"devices":[{"deviceId":"$SELF_DEVICE_ID","isPrimary":false},{"deviceId":"$other","isPrimary":false}]}"""
+        ).build())
+        assertTrue(runCatching { c.devices() }.exceptionOrNull() is ObscuraError.ProtocolViolation)
+
         server.enqueue(MockResponse.Builder().body(
             """{"devices":[{"deviceId":"$SELF_DEVICE_ID","isPrimary":true},{"deviceId":"$other","isPrimary":true}]}"""
         ).build())

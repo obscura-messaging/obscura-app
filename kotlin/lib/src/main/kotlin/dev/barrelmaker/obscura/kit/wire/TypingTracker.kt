@@ -13,14 +13,17 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 
 /** Who is typing where, and the send throttle. In memory, per client. */
-internal class TypingTracker(private val scope: CoroutineScope) {
+internal class TypingTracker(
+    private val scope: CoroutineScope,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
     private val lock = Any()
     // contextId -> senderDeviceId -> senderUserId
     private val typing = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
     private val expiries = mutableMapOf<Pair<String, String>, Job>()
     private val lastSent = mutableMapOf<Pair<String, TypingState>, Long>()
 
-    fun shouldSend(contextId: String, state: TypingState, nowMs: Long = System.currentTimeMillis()): Boolean =
+    fun shouldSend(contextId: String, state: TypingState, nowMs: Long = clock()): Boolean =
         synchronized(lock) {
             val last = lastSent[contextId to state]
             if (last != null && nowMs - last < THROTTLE_MS) return false

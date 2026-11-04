@@ -25,8 +25,11 @@ class MemoryStorage(var data: Map<String, String>? = null) : SessionStorage {
     override fun clear() { data = null }
 }
 
-fun newClient(apiUrl: String = "https://obscura.invalid", storage: SessionStorage = MemoryStorage()) =
-    ObscuraClient(ObscuraConfig(apiUrl, deviceName = "Test"), driver = null, sessionStorage = storage)
+fun newClient(
+    apiUrl: String = "https://obscura.invalid",
+    storage: SessionStorage = MemoryStorage(),
+    clock: () -> Long = System::currentTimeMillis,
+) = ObscuraClient(ObscuraConfig(apiUrl, deviceName = "Test"), driver = null, sessionStorage = storage, clock = clock)
 
 const val SELF_USER_ID = "019f025a-0000-7de6-84b6-000000000001"
 const val SELF_DEVICE_ID = "019f025a-0000-7de6-84b6-0000000000d1"
@@ -66,8 +69,13 @@ suspend fun authenticatedClient(storage: MemoryStorage = storedSession(), primar
 }
 
 /** A provisioned device ([SELF_DEVICE_ID] of [SELF_USER_ID]), primary unless [primaryDeviceId] says otherwise. */
-suspend fun sessionClient(apiUrl: String, storage: SessionStorage, primaryDeviceId: String = SELF_DEVICE_ID): ObscuraClient =
-    newClient(apiUrl, storage).also {
+suspend fun sessionClient(
+    apiUrl: String,
+    storage: SessionStorage,
+    primaryDeviceId: String = SELF_DEVICE_ID,
+    clock: () -> Long = System::currentTimeMillis,
+): ObscuraClient =
+    newClient(apiUrl, storage, clock).also {
         it.signalStore.generateIdentity()
         it.storeLocalDevice(primaryDeviceId)
     }

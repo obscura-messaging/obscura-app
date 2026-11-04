@@ -1,7 +1,68 @@
 import {
   CAPTION_COLORS, CAPTION_FONT_LABELS, DEFAULT_BAR,
-  parseCaptionMeta, serializeCaptionMeta,
+  buildCaptionMeta, parseCaptionMeta, serializeCaptionMeta,
 } from '../caption';
+
+describe('buildCaptionMeta', () => {
+  it('returns null when caption text is empty or whitespace-only', () => {
+    expect(buildCaptionMeta({ text: '', style: 'bar', y: 0.5 })).toBeNull();
+    expect(buildCaptionMeta({ text: '   ', style: 'bold', y: 0.5 })).toBeNull();
+  });
+
+  it('builds a bar caption and clamps y to [0, 1]', () => {
+    expect(buildCaptionMeta({ text: 'hello', style: 'bar', y: 0.72 })).toEqual({
+      style: 'bar',
+      y: 0.72,
+    });
+    expect(buildCaptionMeta({ text: 'hello', style: 'bar', y: -0.2 })).toEqual({
+      style: 'bar',
+      y: 0,
+    });
+    expect(buildCaptionMeta({ text: 'hello', style: 'bar', y: 1.4 })).toEqual({
+      style: 'bar',
+      y: 1,
+    });
+  });
+
+  it('builds a bold caption with clamped coordinates, color lookup, and font index fallback', () => {
+    expect(buildCaptionMeta({
+      text: 'boom',
+      style: 'bold',
+      x: 0.25,
+      y: 0.75,
+      rot: 0.5,
+      scale: 1.5,
+      colorIdx: 2,
+      fontIdx: 3,
+    })).toEqual({
+      style: 'bold',
+      x: 0.25,
+      y: 0.75,
+      rot: 0.5,
+      scale: 1.5,
+      color: CAPTION_COLORS[2],
+      font: 3,
+    });
+
+    expect(buildCaptionMeta({
+      text: 'defaults and clamps',
+      style: 'bold',
+      x: 2,
+      y: -1,
+      scale: 0,
+      colorIdx: 99,
+      fontIdx: 99,
+    })).toEqual({
+      style: 'bold',
+      x: 1,
+      y: 0,
+      rot: 0,
+      scale: 1,
+      color: CAPTION_COLORS[0],
+      font: 0,
+    });
+  });
+});
 
 describe('parseCaptionMeta', () => {
   it('round-trips a bar caption and clamps y to [0, 1]', () => {

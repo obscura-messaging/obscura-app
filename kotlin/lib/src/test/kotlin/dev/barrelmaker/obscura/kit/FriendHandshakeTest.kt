@@ -71,4 +71,111 @@ class FriendHandshakeTest {
             }
         }
     }
+
+    @Test fun `friend handshake happy paths, crossed requests, self-sync and validation branches`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            FakeObscuraServer().use { devices ->
+                val remote = devices.register(UUID.randomUUID().toString())
+                val linkedDevice = devices.register(SELF_USER_ID)
+                val client = sessionClient(server.url("/").toString().trimEnd('/'), storedSession())
+                assertTrue(client.auth.restore())
+                client.devices.add(SELF_USER_ID, listOf(linkedDevice.deviceId))
+
+                val sentMessages = java.util.Collections.synchronizedList(mutableListOf<SendMessageRequest>())
+                server.dispatcher = object : Dispatcher() {
+                    override fun dispatch(request: RecordedRequest): MockResponse {
+                        val path = request.url.encodedPath
+                        return when {
+                            path == "/v1/keys/${remote.userId}" ->
+                                MockResponse.Builder().body(org.json.JSONObject().put("bundles", JSONArray().put(remote.consumeBundle())).toString()).build()
+                            path == "/v1/keys/$SELF_USER_ID/devices/${linkedDevice.deviceId}" ->
+                                MockResponse.Builder().body(linkedDevice.consumeBundle().toString()).build()
+                            path == "/v1/messages" -> {
+                                sentMessages.add(SendMessageRequest.parseFrom(request.body!!.toByteArray()))
+                                MockResponse.Builder().body("").build()
+                            }
+                            else -> MockResponse.Builder().code(404).build()
+                        }
+                    }
+                }
+
+                // friendCode() encodes self userId and username
+                assertEquals(FriendCode.encode(SELF_USER_ID, "self"), client.friendCode())
+
+                // Cannot befriend yourself
+                val selfError = runCatching { client.befriend(SELF_USER_ID, "self") }.exceptionOrNull()
+                assertTrue(selfError is ObscuraError.InvalidArgument)
+
+                // acceptFriend on unknown user throws InvalidArgument
+                val unknownAccept = runCatching { client.acceptFriend(remote.userId) }.exceptionOrNull()
+                assertTrue(unknownAccept is ObscuraError.InvalidArgument)
+
+                // removeFriend when friend does not exist does not send sync
+                client.removeFriend(remote.userId)
+                assertTrue(sentMessages.isEmpty())
+
+                // addFriendByCode strips whitespace and soft hyphens, sends FriendRequest to peer and FriendListSync to self
+                val rawCode = FriendCode.encode(remote.userId, "bob")
+                val decoratedCode = " ${rawCode.substring(0, 4)}\u00AD${rawCode.substring(4)}\n"
+                client.addFriendByCode(decoratedCode)
+                assertEquals(FriendStatus.PENDING_SENT, client.getFriends().single().status)
+                assertEquals(2, sentMessages.size)
+
+                // Calling befriend again while PENDING_SENT re-sends FriendRequest without another FriendListSync
+                client.befriend(remote.userId, "bob-renamed")
+                assertEquals(3, sentMessages.size)
+                assertEquals("bob", client.getFriends().single().username)
+
+                // Incoming FRIEND_REQUEST from a PENDING_SENT peer (crossed requests) delegates to acceptFriend
+                client.route(
+                    ClientMessage.newBuilder().setFriendRequest(obscura.client.v1.friendRequest { username = "bob" }).build(),
+                    remote.userId,
+                    remote.deviceId,
+                    "env-crossed",
+                )
+                assertEquals(FriendStatus.ACCEPTED, client.getFriends().single().status)
+                assertEquals(5, sentMessages.size) // FriendAccept + FriendListSync
+
+                // Calling befriend when already ACCEPTED is a no-op
+                client.befriend(remote.userId, "bob")
+                assertEquals(5, sentMessages.size)
+
+                // Calling acceptFriend when already ACCEPTED sends FriendAccept but does not re-sync
+                client.acceptFriend(remote.userId)
+                assertEquals(6, sentMessages.size)
+
+                // Incoming FRIEND_REQUEST from an already ACCEPTED peer replies with FriendAccept
+                client.route(
+                    ClientMessage.newBuilder().setFriendRequest(obscura.client.v1.friendRequest { username = "bob" }).build(),
+                    remote.userId,
+                    remote.deviceId,
+                    "env-accepted-req",
+                )
+                assertEquals(7, sentMessages.size)
+                assertTrue(client.getDebugLog().any { it.contains("acceptance replied") })
+
+                // removeFriend when friend exists removes friend and syncs
+                client.removeFriend(remote.userId)
+                assertTrue(client.getFriends().isEmpty())
+                assertEquals(8, sentMessages.size)
+
+                // befriend when peer is PENDING_RECEIVED delegates to acceptFriend, sends FriendAccept, updates status and syncs
+                client.route(
+                    ClientMessage.newBuilder().setFriendRequest(obscura.client.v1.friendRequest { username = "bob" }).build(),
+                    remote.userId,
+                    remote.deviceId,
+                    "env-pending-recv",
+                )
+                assertEquals(FriendStatus.PENDING_RECEIVED, client.getFriends().single().status)
+                assertEquals(9, sentMessages.size)
+                client.befriend(remote.userId, "bob")
+                assertEquals(FriendStatus.ACCEPTED, client.getFriends().single().status)
+                assertEquals(11, sentMessages.size)
+
+                client.auth.end()
+                Unit
+            }
+        }
+    }
 }

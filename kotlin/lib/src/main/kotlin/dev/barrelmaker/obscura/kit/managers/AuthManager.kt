@@ -80,6 +80,7 @@ internal class AuthManager(
     private val logger: () -> ObscuraLogger,
     /** Ends the session after the server refused the refresh token. */
     private val onRejected: suspend (Credentials, Long) -> Unit,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val _state = MutableStateFlow(AuthState.LOGGED_OUT)
     val state: StateFlow<AuthState> = _state.asStateFlow()
@@ -124,7 +125,7 @@ internal class AuthManager(
     suspend fun takeOrCreateLinkSession(username: String, password: String): LinkSession {
         validateLogin(username, password)
         requireUnprovisioned()
-        val now = System.currentTimeMillis() / 1000
+        val now = clock() / 1000
         synchronized(lock) {
             val cached = pendingLinkSession
             pendingLinkSession = null
@@ -334,7 +335,7 @@ internal class AuthManager(
     }
 
     private fun secondsUntilExpiry(expiresAt: Long): Long =
-        expiresAt - System.currentTimeMillis() / 1000
+        expiresAt - clock() / 1000
 
     private fun validateLogin(username: String, password: String) {
         if (username.isBlank() || password.isBlank()) throw ObscuraError.InvalidArgument("Username and password must not be blank")

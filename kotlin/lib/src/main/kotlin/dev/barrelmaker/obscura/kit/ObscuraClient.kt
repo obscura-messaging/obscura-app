@@ -92,6 +92,7 @@ class ObscuraClient(
     driver: SqlDriver?,
     sessionStorage: SessionStorage,
     val attachmentCacheDir: File? = null,
+    internal val clock: () -> Long = System::currentTimeMillis,
 ) {
     var logger: ObscuraLogger = NoOpLogger
 
@@ -124,7 +125,7 @@ class ObscuraClient(
     private val gateway: GatewayConnection
     private val messenger: Messenger
     internal val sender: MessageSender
-    private val typing = TypingTracker(scope)
+    private val typing = TypingTracker(scope, clock)
 
     init {
         lateinit var authRef: AuthManager
@@ -133,6 +134,7 @@ class ObscuraClient(
             api, signalStore, devices, sessionStorage, config.deviceName, scope,
             logger = { logger },
             onRejected = { credentials, generation -> endSession(revoke = false, expected = credentials, expectedGeneration = generation) },
+            clock = clock,
         )
         authRef = auth
         gateway = GatewayConnection(api, scope, beforeConnect = { requireFreshToken() }, log = ::log)
@@ -226,7 +228,7 @@ class ObscuraClient(
     }
 
     private suspend fun awaitApproval(request: LinkRequest): ByteArray {
-        while (System.currentTimeMillis() / 1000 < request.expiresAt) {
+        while (clock() / 1000 < request.expiresAt) {
             val body = try {
                 api.awaitLinkSession(request.sessionId)
             } catch (e: ObscuraError.Http) {
@@ -412,7 +414,7 @@ class ObscuraClient(
             throw e
         } catch (e: Exception) {
             log("RECV duplicate lookup failed for $envelopeId: ${e.message}")
-            logger.databaseError("content", "containsEnvelope", e.message ?: e.javaClass.simpleName)
+            logger.databaseError("content", "containsEnvelope", e.reason())
             return
         }
         var stage = "directory"
@@ -443,21 +445,24 @@ class ObscuraClient(
         } catch (e: Exception) {
             if (stage == "decrypt" || e is ObscuraError.ProtocolViolation) {
                 log("RECV decrypt failed from $senderUserId: ${e.message}")
-                logger.decryptFailed(senderUserId, e.message ?: e.javaClass.simpleName)
+                logger.decryptFailed(senderUserId, e.reason())
             } else {
                 log("RECV $stage not stored: ${e.message}")
-                logger.databaseError(stage, "receive", e.message ?: e.javaClass.simpleName)
+                logger.databaseError(stage, "receive", e.reason())
             }
             return
         }
-        try {
-            if (stored != null) followUp(stored, senderUserId, senderDeviceId, envelopeId)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            log("RECV ${stored?.message?.payloadCase?.name} not stored: ${e.message}")
-            logger.databaseError("receive", stored?.message?.payloadCase?.name ?: "UNKNOWN", e.message ?: e.javaClass.simpleName)
-            return
+        if (stored != null) {
+            val arm = stored.message.payloadCase.name
+            try {
+                followUp(stored, senderUserId, senderDeviceId, envelopeId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log("RECV $arm not stored: ${e.message}")
+                logger.databaseError("receive", arm, e.reason())
+                return
+            }
         }
         replenishPreKeys { signalStore.getPreKeyCount() < PREKEY_MIN_COUNT }
         acknowledge(envelope.id, envelopeId, ack)
@@ -470,13 +475,13 @@ class ObscuraClient(
             throw e
         } catch (e: Exception) {
             log("RECV ack failed for $envelopeId: ${e.message}")
-            logger.ackFailed(envelopeId, e.message ?: e.javaClass.simpleName)
+            logger.ackFailed(envelopeId, e.reason())
         }
         markProcessed()
     }
 
     private fun markProcessed() {
-        lastProcessedAtMs = System.currentTimeMillis()
+        lastProcessedAtMs = clock()
         processedEnvelopes.value++
     }
 
@@ -554,7 +559,7 @@ class ObscuraClient(
             log("RECV duplicate envelope $envelopeId")
             return Stored(message)
         }
-        val sentAt = clampFutureTimestamp(message.timestamp)
+        val sentAt = clampFutureTimestamp(message.timestamp, clock())
         return when (message.payloadCase) {
             ClientMessage.PayloadCase.DIRECT_MESSAGE -> {
                 val dm = message.directMessage
@@ -745,7 +750,7 @@ class ObscuraClient(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                logger.preKeyReplenishFailed(e.message ?: e.javaClass.simpleName)
+                logger.preKeyReplenishFailed(e.reason())
             }
         }
     }
@@ -758,14 +763,14 @@ class ObscuraClient(
      */
     suspend fun processPendingMessages(timeoutMs: Long): Int = drainMutex.withLock {
         val start = processedEnvelopes.value
-        val deadline = System.currentTimeMillis() + timeoutMs
+        val deadline = clock() + timeoutMs
         val startedConnected = connectionState.value == ConnectionState.CONNECTED
         if (!startedConnected && !tryConnect()) return 0
         awaitIdle(deadline)
         // A push means the server holds something this device has not acked, so an empty drain on a
         // socket that looked connected and has been quiet means the socket is dead.
         if (startedConnected && processedEnvelopes.value == start &&
-            System.currentTimeMillis() - lastProcessedAtMs > PUSH_RECENT_ACTIVITY_MS
+            clock() - lastProcessedAtMs > PUSH_RECENT_ACTIVITY_MS
         ) {
             log("PUSH nothing drained on a connected socket; reconnecting")
             gateway.disconnect()
@@ -787,7 +792,7 @@ class ObscuraClient(
     private suspend fun awaitIdle(deadline: Long) {
         var seen = processedEnvelopes.value
         while (true) {
-            val remaining = deadline - System.currentTimeMillis()
+            val remaining = deadline - clock()
             if (remaining <= 0) return
             seen = withTimeoutOrNull(minOf(PUSH_IDLE_MS, remaining)) { processedEnvelopes.first { it > seen } } ?: return
         }
@@ -803,7 +808,7 @@ class ObscuraClient(
     suspend fun sendMessage(peerUserId: String, content: String): String {
         if (peerUserId.isBlank()) throw ObscuraError.InvalidArgument("peerUserId must not be blank")
         val self = requireFreshToken()
-        val sentAt = System.currentTimeMillis()
+        val sentAt = clock()
         val id = generateEntryId("dm", sentAt)
         this.content.putConversation(
             ConversationItem(
@@ -860,7 +865,7 @@ class ObscuraClient(
             throw ObscuraError.InvalidArgument("Invalid base64 nonce: ${e.message}")
         }
         val self = requireFreshToken()
-        val sentAt = System.currentTimeMillis()
+        val sentAt = clock()
         val id = generateEntryId("pix", sentAt)
         val item = ConversationItem(
             id = id,
@@ -897,7 +902,7 @@ class ObscuraClient(
         val self = requireFreshToken()
         val row = content.getConversation(entryId) ?: return
         if (row.authorUserId == self.userId || row.viewedAt != null) return
-        val now = System.currentTimeMillis()
+        val now = clock()
         content.markConversationViewed(entryId, now, expiresAt(row.sentAt, now))
         val message = ClientMessage.newBuilder()
             .setTimestamp(now)
@@ -912,7 +917,7 @@ class ObscuraClient(
         sendToPeersAndSelf(self.userId, peers, message)
     }
 
-    suspend fun getStories(now: Long = System.currentTimeMillis()): List<StoryItem> = content.getStories(now)
+    suspend fun getStories(now: Long = clock()): List<StoryItem> = content.getStories(now)
 
     suspend fun postStory(
         content: String,
@@ -935,7 +940,7 @@ class ObscuraClient(
             )
         } else null
         val self = requireFreshToken()
-        val sentAt = System.currentTimeMillis()
+        val sentAt = clock()
         val id = generateEntryId("story", sentAt)
         val item = StoryItem(
             id = id,
@@ -962,7 +967,7 @@ class ObscuraClient(
     suspend fun updateProfile(displayName: String, bio: String) {
         val self = requireFreshToken()
         val existing = content.getProfile(self.userId)
-        val sentAt = maxOf(System.currentTimeMillis(), (existing?.updatedAt ?: 0L) + 1L)
+        val sentAt = maxOf(clock(), (existing?.updatedAt ?: 0L) + 1L)
         val item = ProfileItem(
             userId = self.userId,
             authorDeviceId = self.deviceId,
@@ -988,7 +993,6 @@ class ObscuraClient(
             val peers = accepted.intersect(setOf(row.peerUserId)).toList()
             if (peers.isEmpty()) continue
             val message = if (row.kind == "pix") {
-                if (row.attachment == null) continue
                 buildPixClientMessage(row)
             } else {
                 ClientMessage.newBuilder()
@@ -1028,7 +1032,7 @@ class ObscuraClient(
         return delivered
     }
 
-    suspend fun sweepExpired(now: Long = System.currentTimeMillis()): Set<String> {
+    suspend fun sweepExpired(now: Long = clock()): Set<String> {
         val outcome = content.sweepExpired(now)
         attachmentCacheDir?.let { dir ->
             for (mediaRef in outcome.purgedMediaRefs) {
@@ -1058,19 +1062,21 @@ class ObscuraClient(
         return "${prefix}_${now}_$token"
     }
 
-    private fun buildPixClientMessage(item: ConversationItem): ClientMessage =
-        ClientMessage.newBuilder()
+    private fun buildPixClientMessage(item: ConversationItem): ClientMessage {
+        val att = requireNotNull(item.attachment)
+        return ClientMessage.newBuilder()
             .setTimestamp(item.sentAt)
             .setPix(
                 PixMessage.newBuilder()
                     .setId(item.id)
                     .setPeerUserId(item.peerUserId)
-                    .apply { item.attachment?.let { setAttachment(HistorySync.encodeAttachment(it)) } }
+                    .setAttachment(HistorySync.encodeAttachment(att))
                     .setCaption(item.caption ?: "")
                     .setCaptionMeta(item.captionMeta ?: "")
                     .setDisplayDurationSecs(item.displayDuration.coerceAtLeast(0)),
             )
             .build()
+    }
 
     private fun buildStoryClientMessage(item: StoryItem): ClientMessage =
         ClientMessage.newBuilder()
@@ -1252,10 +1258,12 @@ class ObscuraClient(
     }
 
     private fun clientMessage(build: ClientMessage.Builder.() -> Unit): ClientMessage =
-        ClientMessage.newBuilder().setTimestamp(System.currentTimeMillis()).apply(build).build()
+        ClientMessage.newBuilder().setTimestamp(clock()).apply(build).build()
+
+    private fun Throwable.reason(): String = message ?: javaClass.simpleName
 
     private fun log(message: String) {
-        debugLog.addFirst("[${SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())}] $message")
+        debugLog.addFirst("[${SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(clock()))}] $message")
         while (debugLog.size > DEBUG_LOG_SIZE) debugLog.pollLast()
         logger.log(message)
     }
@@ -1279,7 +1287,7 @@ class ObscuraClient(
  * A peer's `sentAt` capped at now + 60 s so it cannot win every later conflict. `ClientMessage.timestamp`
  * is a uint64 that arrives negative above 2^63; that is far future too.
  */
-internal fun clampFutureTimestamp(sentAt: Long, nowMs: Long = System.currentTimeMillis()): Long {
+internal fun clampFutureTimestamp(sentAt: Long, nowMs: Long): Long {
     val cap = nowMs + 60_000L
     return if (sentAt < 0) cap else minOf(sentAt, cap)
 }
