@@ -146,8 +146,10 @@ final class ObscuraSession {
         }
         center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
-                self?.appInForeground = false
-                self?.onAppStateChanged?(false)
+                guard let self else { return }
+                self.appInForeground = false
+                self.onAppStateChanged?(false)
+                await self.client?.disconnect()
             }
         }
     }

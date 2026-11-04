@@ -314,9 +314,12 @@ describe('event and lifecycle sync triggers', () => {
     expect(useStore.getState().friends.map((f) => f.username)).toEqual(['bob']);
   });
 
-  it('registers a push token when one arrives', async () => {
-    await applyObscuraEvent({ type: 'pushTokenReceived', token: 'token-abcdefgh' });
+  it('registers a push token when one arrives while authenticated and ignores it when signed out', async () => {
+    await applyObscuraEvent({ type: 'pushTokenReceived', token: 'token-unauthed' });
+    expect(bridge.__registeredPushToken()).toBeNull();
 
+    session();
+    await applyObscuraEvent({ type: 'pushTokenReceived', token: 'token-abcdefgh' });
     expect(bridge.__registeredPushToken()).toBe('token-abcdefgh');
   });
 });

@@ -311,7 +311,9 @@ export async function applyObscuraEvent(event: ObscuraEvent): Promise<void> {
       }
       return;
     case 'pushTokenReceived':
-      await Obscura.registerPushToken(event.token).catch((e) => logError('push.register', e));
+      if (useStore.getState().authed) {
+        await Obscura.registerPushToken(event.token).catch((e) => logError('push.register', e));
+      }
       return;
     case 'messageReceived':
       await refreshSlicesForModels([event.model]);

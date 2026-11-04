@@ -141,7 +141,7 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
 
   const [groupIdx, setGroupIdx] = useState(initialGroupIdx);
   const [storyIdx, setStoryIdx] = useState(0);
-  const [mediaUri, setMediaUri] = useState<string | null>(null);
+  const [loadedMedia, setLoadedMedia] = useState<{ id: string; uri: string } | null>(null);
   const [mediaLoading, setMediaLoading] = useState(false);
   const [transition, setTransition] = useState<Transition | null>(null);
   const { width: W } = useWindowDimensions();
@@ -151,6 +151,10 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
 
   const group = groups[groupIdx];
   const slide = group?.stories[storyIdx];
+  const attachment = slide?.attachment ?? null;
+  const mediaUri = attachment
+    ? (loadedMedia?.id === attachment.id ? loadedMedia.uri : mediaUris.get(attachment.id) ?? null)
+    : null;
 
   useEffect(() => {
     if (!group || !slide) navigation.goBack();
@@ -201,20 +205,17 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const advance = useCallback(() => applyStep('advance'), [applyStep]);
   const rewind = useCallback(() => applyStep('rewind'), [applyStep]);
 
-  const attachment = slide?.attachment ?? null;
-
   useEffect(() => {
-    setMediaLoading(false);
-    if (!attachment) { setMediaUri(null); return; }
-    const cached = mediaUris.get(attachment.id);
-    if (cached) { setMediaUri(cached); return; }
-    setMediaUri(null);
+    if (!attachment || mediaUris.has(attachment.id)) {
+      setMediaLoading(false);
+      return;
+    }
     let cancelled = false;
+    setMediaLoading(true);
     (async () => {
       try {
-        setMediaLoading(true);
         const uri = await loadAttachmentUri(attachment, mediaUris);
-        if (!cancelled) setMediaUri(uri);
+        if (!cancelled) setLoadedMedia({ id: attachment.id, uri });
       } catch (e) {
         logError('storyMedia.load', e);
       } finally {

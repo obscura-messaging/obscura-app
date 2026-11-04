@@ -94,6 +94,7 @@ object ObscuraSession {
                 override fun onStop(owner: LifecycleOwner) {
                     appInForeground = false
                     sink?.onAppStateChanged(AppState.BACKGROUND)
+                    client?.disconnect()
                 }
             })
         }
@@ -255,7 +256,10 @@ object ObscuraSession {
         try {
             val c = tryRestore() ?: return
             restoreJob?.join()
-            if (c.authState.value == AuthState.AUTHENTICATED) c.processPendingMessages(timeoutMs)
+            if (c.authState.value == AuthState.AUTHENTICATED) {
+                c.processPendingMessages(timeoutMs)
+                if (!appInForeground) c.disconnect()
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
