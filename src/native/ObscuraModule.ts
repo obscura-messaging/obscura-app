@@ -43,11 +43,7 @@ export interface RawPixItem {
   authorUserId: string;
   sentAt: number;
   viewedAt: number | null;
-  attachment?: RawAttachment | null;
-  mediaRef?: string | null;
-  contentKey?: string | null;
-  nonce?: string | null;
-  mediaType?: string | null;
+  attachment: RawAttachment;
   caption: string | null;
   captionMeta: string | null;
   displayDuration: number;
@@ -61,10 +57,6 @@ export interface RawStoryItem {
   sentAt: number;
   content: string;
   attachment?: RawAttachment | null;
-  mediaRef?: string | null;
-  contentKey?: string | null;
-  nonce?: string | null;
-  mediaType?: string | null;
   captionMeta: string | null;
 }
 
@@ -209,12 +201,6 @@ function toConversationItem(raw: RawConversationItem): ConversationItem {
       content: raw.content,
     };
   }
-  const att = raw.attachment ?? {
-    id: raw.mediaRef ?? '',
-    contentKey: raw.contentKey ?? '',
-    nonce: raw.nonce ?? '',
-    mediaType: raw.mediaType ?? 'photo',
-  };
   return {
     kind: 'pix',
     id: raw.id,
@@ -222,7 +208,7 @@ function toConversationItem(raw: RawConversationItem): ConversationItem {
     authorUserId: raw.authorUserId,
     sentAt: raw.sentAt,
     viewedAt: raw.viewedAt,
-    attachment: normalizeAttachment(att),
+    attachment: normalizeAttachment(raw.attachment),
     caption: raw.caption,
     captionMeta: parseCaptionMeta(raw.captionMeta),
     displayDuration: raw.displayDuration,
@@ -230,17 +216,12 @@ function toConversationItem(raw: RawConversationItem): ConversationItem {
 }
 
 function toStoryItem(raw: RawStoryItem): StoryItem {
-  const rawAtt = raw.attachment !== undefined
-    ? raw.attachment
-    : (raw.mediaRef && raw.contentKey && raw.nonce
-      ? { id: raw.mediaRef, contentKey: raw.contentKey, nonce: raw.nonce, mediaType: raw.mediaType ?? 'photo' }
-      : null);
   return {
     id: raw.id,
     authorUserId: raw.authorUserId,
     sentAt: raw.sentAt,
     content: raw.content,
-    attachment: rawAtt ? normalizeAttachment(rawAtt) : null,
+    attachment: raw.attachment ? normalizeAttachment(raw.attachment) : null,
     captionMeta: parseCaptionMeta(raw.captionMeta),
   };
 }

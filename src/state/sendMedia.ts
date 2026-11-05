@@ -7,17 +7,34 @@ import { refreshMessages, refreshStories } from './store';
 
 export type { AttachmentRef, MediaAttachment, MediaType };
 
+const inFlightByCache = new WeakMap<Map<string, string>, Map<string, Promise<string>>>();
+
 /**
- * Decrypt an attachment to the native cache and remember its `file://` URI by `id`. The
- * native side returns the cached file when it already has one, so repeating this is cheap.
+ * Decrypt an attachment to the native cache and remember its `file://` URI by `id`. Concurrent
+ * requests against the same `cache` share one in-flight download.
  */
 export async function loadAttachmentUri(att: AttachmentRef, cache: Map<string, string>): Promise<string> {
   const cached = cache.get(att.id);
   if (cached) return cached;
-  const path = await Obscura.downloadAttachment(att.id, att.contentKey, att.nonce);
-  const uri = fileUri(path);
-  cache.set(att.id, uri);
-  return uri;
+  let inFlight = inFlightByCache.get(cache);
+  if (!inFlight) {
+    inFlight = new Map();
+    inFlightByCache.set(cache, inFlight);
+  }
+  const existing = inFlight.get(att.id);
+  if (existing) return existing;
+  const promise = (async () => {
+    try {
+      const path = await Obscura.downloadAttachment(att.id, att.contentKey, att.nonce);
+      const uri = fileUri(path);
+      cache.set(att.id, uri);
+      return uri;
+    } finally {
+      inFlight.delete(att.id);
+    }
+  })();
+  inFlight.set(att.id, promise);
+  return promise;
 }
 
 export function discardCapture(path: string): void {

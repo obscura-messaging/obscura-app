@@ -670,18 +670,25 @@ extension ObscuraBridge {
     func observeTyping(_ peerUserId: String,
                        resolver resolve: @escaping RCTPromiseResolveBlock,
                        rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
+        typingTasks[peerUserId]?.cancel()
+        typingTasks[peerUserId] = Task { [weak self] in
+            let observation: AsyncStream<Bool>
             do {
-                let observation = try await client.observeTyping(peerUserId: peerUserId)
-                typingTasks[peerUserId]?.cancel()
-                typingTasks[peerUserId] = Task { [weak self] in
-                    for await isTyping in observation {
-                        self?.emit(.typingChanged, ["peerUserId": peerUserId, "typing": isTyping])
-                    }
+                guard let self else { return }
+                observation = try await self.client.observeTyping(peerUserId: peerUserId)
+                guard !Task.isCancelled else {
+                    resolve(nil)
+                    return
                 }
                 resolve(nil)
             } catch {
-                rejectKit(reject, "OBSERVE_TYPING_ERROR", error)
+                self?.typingTasks[peerUserId] = nil
+                self?.rejectKit(reject, "OBSERVE_TYPING_ERROR", error)
+                return
+            }
+            for await isTyping in observation {
+                guard !Task.isCancelled else { break }
+                self?.emit(.typingChanged, ["peerUserId": peerUserId, "typing": isTyping])
             }
         }
     }

@@ -222,7 +222,7 @@ public actor ObscuraClient {
         let response = try await api.resetAccount(keys.accountRequest(username: username, password: password, name: deviceName))
         let newSession = try session(response, username: username)
         try await signOut(revoking: false)
-        try await ObscuraDatabase.wipe(db)
+        try await wipeLocalData()
         try await installPrimary(newSession, keys: keys)
     }
 
@@ -274,7 +274,14 @@ public actor ObscuraClient {
     /// `logout()`, then deletes every piece of local kit data.
     public func wipeDevice() async throws {
         try await logout()
+        try await wipeLocalData()
+    }
+
+    func wipeLocalData() async throws {
         try await ObscuraDatabase.wipe(db)
+        if let cacheDir = attachmentCacheDir {
+            AttachmentCrypto.purgeAllCached(cacheDir: cacheDir)
+        }
     }
 
     /// Without revoking when the server has already deleted this device.

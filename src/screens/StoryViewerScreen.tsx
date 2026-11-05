@@ -151,7 +151,17 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
 
   const group = groups[groupIdx];
   const slide = group?.stories[storyIdx];
-  const attachment = slide?.attachment ?? null;
+  const rawAtt = slide?.attachment ?? null;
+  const attId = rawAtt?.id;
+  const attKey = rawAtt?.contentKey;
+  const attNonce = rawAtt?.nonce;
+  const attMediaType = rawAtt?.mediaType;
+  const attachment = useMemo(
+    () => (attId !== undefined && attKey !== undefined && attNonce !== undefined && attMediaType !== undefined
+      ? { id: attId, contentKey: attKey, nonce: attNonce, mediaType: attMediaType }
+      : null),
+    [attId, attKey, attNonce, attMediaType],
+  );
   const mediaUri = attachment
     ? (loadedMedia?.id === attachment.id ? loadedMedia.uri : mediaUris.get(attachment.id) ?? null)
     : null;

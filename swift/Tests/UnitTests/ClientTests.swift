@@ -56,6 +56,9 @@ final class ClientTests: XCTestCase {
         await assertThrows(.invalidArgument("blank contextId")) {
             try await client.sendTyping(to: ["x"], contextId: " \n", state: .started)
         }
+        await assertThrows(.invalidArgument("entryId must not be blank")) {
+            try await client.markSeen(entryId: " \n")
+        }
     }
 
     func testProvisioningOrLinkingAnExistingLocalDeviceRequiresAnExplicitWipe() async throws {

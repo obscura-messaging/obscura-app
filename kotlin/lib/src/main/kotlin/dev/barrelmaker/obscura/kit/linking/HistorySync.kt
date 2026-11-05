@@ -93,27 +93,30 @@ internal object HistorySync {
 
     suspend fun importSnapshot(snapshot: EntrySnapshot, content: ContentStore) {
         val messages = snapshot.messagesList.mapNotNull { m ->
-            if (m.id.isBlank()) return@mapNotNull null
+            if (m.id.isBlank() || m.peerUserId.isBlank() || m.authorUserId.isBlank()) return@mapNotNull null
+            val kind = m.kind.ifEmpty { "message" }
+            val isPix = kind == "pix"
+            val att = if (isPix && m.hasAttachment()) decodeAttachment(m.attachment) else null
+            if (isPix && att == null) return@mapNotNull null
             val viewedAt = m.viewedAt.takeIf { it > 0L }
-            val att = if (m.hasAttachment()) decodeAttachment(m.attachment) else null
             ConversationItem(
                 id = m.id,
                 peerUserId = m.peerUserId,
-                kind = m.kind,
+                kind = kind,
                 authorUserId = m.authorUserId,
                 sentAt = m.sentAt,
                 viewedAt = viewedAt,
                 expiresAt = expiresAt(m.sentAt, viewedAt),
                 content = m.content,
                 attachment = att,
-                caption = if (m.kind == "pix") m.caption.ifEmpty { null } else null,
-                captionMeta = if (m.kind == "pix") m.captionMeta.ifEmpty { null } else null,
-                displayDuration = if (m.kind == "pix") m.displayDurationSecs else 0,
+                caption = if (isPix) m.caption.ifEmpty { null } else null,
+                captionMeta = if (isPix) m.captionMeta.ifEmpty { null } else null,
+                displayDuration = if (isPix) m.displayDurationSecs else 0,
                 undelivered = false,
             )
         }
         val stories = snapshot.storiesList.mapNotNull { s ->
-            if (s.id.isBlank()) return@mapNotNull null
+            if (s.id.isBlank() || s.authorUserId.isBlank()) return@mapNotNull null
             val att = if (s.hasAttachment()) decodeAttachment(s.attachment) else null
             StoryItem(
                 id = s.id,
@@ -149,12 +152,12 @@ internal object HistorySync {
             .build()
 
     fun decodeAttachment(att: AttachmentPointer): MediaAttachment? =
-        if (att.id.isNotBlank()) {
+        if (att.id.isNotBlank() && !att.contentKey.isEmpty && !att.nonce.isEmpty) {
             MediaAttachment(
                 id = att.id,
                 contentKey = att.contentKey.toByteArray(),
                 nonce = att.nonce.toByteArray(),
-                mediaType = att.mediaType,
+                mediaType = att.mediaType.ifEmpty { "photo" },
             )
         } else null
 }

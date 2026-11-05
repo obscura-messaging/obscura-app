@@ -136,7 +136,9 @@ extension ObscuraClient {
     }
 
     public func markSeen(entryId: String) async throws {
-        guard !entryId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !entryId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ObscuraError.invalidArgument("entryId must not be blank")
+        }
         let (selfUserId, _) = try await sendContext()
         let now = Self.nowMs()
         guard let updated = try await content.markSeenLocal(entryId: entryId, selfUserId: selfUserId, viewedAt: now) else {

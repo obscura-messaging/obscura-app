@@ -109,11 +109,17 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         override fun onConnectionChanged(state: ConnectionState) = emit(BridgeEvent.CONNECTION_CHANGED) {
             putString("state", state.toJsString())
         }
-        override fun onAuthStateChanged(state: AuthState) = emit(BridgeEvent.AUTH_STATE_CHANGED) {
-            putString("state", when (state) {
-                AuthState.LOGGED_OUT -> "loggedOut"
-                AuthState.AUTHENTICATED -> "authenticated"
-            })
+        override fun onAuthStateChanged(state: AuthState) {
+            if (state == AuthState.LOGGED_OUT) {
+                typingJobs.values.forEach { it.cancel() }
+                typingJobs.clear()
+            }
+            emit(BridgeEvent.AUTH_STATE_CHANGED) {
+                putString("state", when (state) {
+                    AuthState.LOGGED_OUT -> "loggedOut"
+                    AuthState.AUTHENTICATED -> "authenticated"
+                })
+            }
         }
         override fun onFriendsChanged() = emit(BridgeEvent.FRIENDS_CHANGED)
         override fun onMessageReceived(model: String) =

@@ -199,7 +199,7 @@ extension ObscuraClient {
             guard deviceId == session.deviceId else { throw ObscuraError.notPrimary }
             try await api.deleteDevice(deviceId)
             try await signOut(revoking: false)
-            try await ObscuraDatabase.wipe(db)
+            try await wipeLocalData()
         }
     }
 }

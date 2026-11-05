@@ -92,9 +92,14 @@ describe('sendCapture', () => {
     expect(useStore.getState().stories[0].captionMeta).toEqual(meta);
 
     const cache = new Map<string, string>();
-    const uri1 = await loadAttachmentUri(msg.attachment, cache);
-    const uri2 = await loadAttachmentUri(msg.attachment, cache);
+    bridge.__calls.length = 0;
+    const [uri1, uri2] = await Promise.all([
+      loadAttachmentUri(msg.attachment, cache),
+      loadAttachmentUri(msg.attachment, cache),
+    ]);
+    const uri3 = await loadAttachmentUri(msg.attachment, cache);
     expect(uri1).toBe(uri2);
+    expect(uri1).toBe(uri3);
     expect(bridge.__calls.filter((c) => c === 'downloadAttachment')).toHaveLength(1);
   });
 

@@ -71,10 +71,15 @@ xcrun devicectl device install app --device <DEVICE_ID> \
 ## Checks
 
 `just check` runs Jest, both typechecks, and ESLint; `just kotlin-check`
-runs protocol conformance and the Kotlin kit unit/coverage suite.
+runs protocol conformance and the Kotlin kit unit/coverage suite; `just swift-unit`
+runs the Swift kit unit suite.
 
 | CI job | Runs | On |
 | --- | --- | --- |
 | `JavaScript` | `just check`, `scripts/test-verify-release-build.py` | PRs, `main` |
+| `Kotlin Kit (unit tests + coverage)` | `just protocol-lint`, `just kotlin-check` | PRs, `main` |
+| `Kotlin Kit (integration, native server)` | `just kotlin-integration` | PRs, `main` |
+| `Swift Kit (unit tests)` | `just swift-unit` | PRs, `main` |
+| `Swift Kit (integration, native server)` | `just swift-integration` | PRs, `main` |
 | `Android Release Build` | `just android-apk arm64-v8a false` | PRs |
 | `iOS Debug Build` | `just ios-build arm64` | PRs |

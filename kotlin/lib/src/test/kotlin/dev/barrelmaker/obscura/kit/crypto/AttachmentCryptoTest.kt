@@ -105,14 +105,19 @@ class AttachmentCryptoTest {
 
             // purgeCached deletes both main and leftover .tmp files across all extensions
             File(cacheDir, "att_mp4.mp4.tmp").writeBytes(byteArrayOf(1))
+            File(cacheDir, "att_mp4.mp4.uuid.tmp").writeBytes(byteArrayOf(1))
             AttachmentCrypto.purgeCached(cacheDir, "att/jpg:1")
             AttachmentCrypto.purgeCached(cacheDir, "att_mp4")
-            AttachmentCrypto.purgeCached(cacheDir, "att_mov")
 
             assertNull(AttachmentCrypto.readCached(cacheDir, "att/jpg:1"))
             assertNull(AttachmentCrypto.readCached(cacheDir, "att_mp4"))
-            assertNull(AttachmentCrypto.readCached(cacheDir, "att_mov"))
             assertFalse(File(cacheDir, "att_mp4.mp4.tmp").exists())
+            assertFalse(File(cacheDir, "att_mp4.mp4.uuid.tmp").exists())
+
+            // purgeAllCached deletes all remaining files in cacheDir
+            assertTrue(movFile.exists())
+            AttachmentCrypto.purgeAllCached(cacheDir)
+            assertNull(AttachmentCrypto.readCached(cacheDir, "att_mov"))
         } finally {
             cacheDir.deleteRecursively()
         }

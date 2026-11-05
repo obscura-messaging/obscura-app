@@ -303,8 +303,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
 
   __deliverPix(input: {
     id?: string; peerUserId?: string; authorUserId?: string; sentAt?: number; viewedAt?: number | null;
-    attachment?: RawAttachment | null; mediaRef?: string; contentKey?: string; nonce?: string;
-    mediaType?: string | null; caption?: string | null; captionMeta?: CaptionMeta | string | null; displayDuration?: number;
+    attachment?: RawAttachment; caption?: string | null; captionMeta?: CaptionMeta | string | null; displayDuration?: number;
   } = {}): RawPixItem {
     const sentAt = input.sentAt ?? ++this.seq;
     const authorUserId = input.authorUserId ?? input.peerUserId ?? 'user_peer';
@@ -312,10 +311,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
       kind: 'pix', id: input.id ?? `pix_${sentAt}`,
       peerUserId: input.peerUserId ?? (authorUserId === this.userId ? 'user_peer' : authorUserId),
       authorUserId, sentAt, viewedAt: input.viewedAt ?? null,
-      attachment: input.attachment !== undefined
-        ? input.attachment
-        : { id: input.mediaRef ?? 'att_1', contentKey: input.contentKey ?? 'key', nonce: input.nonce ?? 'nonce', mediaType: input.mediaType ?? 'photo' },
-      mediaRef: input.mediaRef, contentKey: input.contentKey, nonce: input.nonce, mediaType: input.mediaType,
+      attachment: input.attachment ?? { id: 'att_1', contentKey: 'key', nonce: 'nonce', mediaType: 'photo' },
       caption: input.caption ?? null,
       captionMeta: typeof input.captionMeta === 'object' && input.captionMeta !== null ? serializeCaptionMeta(input.captionMeta) : (input.captionMeta ?? null),
       displayDuration: input.displayDuration ?? 5,
@@ -334,13 +330,12 @@ export class FakeObscuraBridge implements ObscuraBridge {
 
   __deliverStory(input: {
     id?: string; authorUserId?: string; sentAt?: number; content?: string; attachment?: RawAttachment | null;
-    mediaRef?: string | null; contentKey?: string | null; nonce?: string | null; mediaType?: string | null; captionMeta?: CaptionMeta | string | null;
+    captionMeta?: CaptionMeta | string | null;
   } = {}): RawStoryItem {
     const sentAt = input.sentAt ?? ++this.seq;
     const story: RawStoryItem = {
       id: input.id ?? `story_${sentAt}`, authorUserId: input.authorUserId ?? 'user_peer',
       sentAt, content: input.content ?? '', attachment: input.attachment,
-      mediaRef: input.mediaRef, contentKey: input.contentKey, nonce: input.nonce, mediaType: input.mediaType,
       captionMeta: typeof input.captionMeta === 'object' && input.captionMeta !== null ? serializeCaptionMeta(input.captionMeta) : (input.captionMeta ?? null),
     };
     this.stories.push(story);

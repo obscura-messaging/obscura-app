@@ -511,10 +511,16 @@ actor ContentStore {
     func importSnapshot(_ snapshot: Obscura_Client_V1_EntrySnapshot) async throws {
         try await db.write { db in
             for record in snapshot.messages {
-                guard !record.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                guard !record.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !record.peerUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !record.authorUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
                 let kind = record.kind.isEmpty ? "message" : record.kind
                 let isPix = kind == "pix"
-                let hasAtt = isPix && record.hasAttachment && !record.attachment.id.isEmpty
+                let hasAtt = isPix
+                    && record.hasAttachment
+                    && !record.attachment.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && !record.attachment.contentKey.isEmpty
+                    && !record.attachment.nonce.isEmpty
                 if isPix && !hasAtt { continue }
                 let attachment: MediaAttachment? = hasAtt ? MediaAttachment(
                     id: record.attachment.id,
@@ -538,8 +544,12 @@ actor ContentStore {
                 _ = try Self.insertConversationItem(item, undelivered: false, in: db)
             }
             for record in snapshot.stories {
-                guard !record.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-                let hasAtt = record.hasAttachment && !record.attachment.id.isEmpty
+                guard !record.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !record.authorUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                let hasAtt = record.hasAttachment
+                    && !record.attachment.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && !record.attachment.contentKey.isEmpty
+                    && !record.attachment.nonce.isEmpty
                 let attachment: MediaAttachment? = hasAtt ? MediaAttachment(
                     id: record.attachment.id,
                     contentKey: record.attachment.contentKey,

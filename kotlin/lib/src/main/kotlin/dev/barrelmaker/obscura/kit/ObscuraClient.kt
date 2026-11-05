@@ -335,6 +335,7 @@ class ObscuraClient(
                 signalStore.clear()
             }
             sqlDriver.truncateWal()
+            attachmentCacheDir?.let(AttachmentCrypto::purgeAllCached)
         }
     }
 
@@ -609,7 +610,7 @@ class ObscuraClient(
                                 id = att.id,
                                 contentKey = att.contentKey.toByteArray(),
                                 nonce = att.nonce.toByteArray(),
-                                mediaType = att.mediaType,
+                                mediaType = att.mediaType.ifEmpty { "photo" },
                             ),
                             caption = pix.caption.ifEmpty { null },
                             captionMeta = pix.captionMeta.ifEmpty { null },
@@ -808,6 +809,7 @@ class ObscuraClient(
     suspend fun sendMessage(peerUserId: String, content: String): String {
         if (peerUserId.isBlank()) throw ObscuraError.InvalidArgument("peerUserId must not be blank")
         val self = requireFreshToken()
+        if (peerUserId == self.userId) throw ObscuraError.InvalidArgument("Cannot message yourself")
         val sentAt = clock()
         val id = generateEntryId("dm", sentAt)
         this.content.putConversation(
@@ -865,6 +867,7 @@ class ObscuraClient(
             throw ObscuraError.InvalidArgument("Invalid base64 nonce: ${e.message}")
         }
         val self = requireFreshToken()
+        if (peerUserId == self.userId) throw ObscuraError.InvalidArgument("Cannot message yourself")
         val sentAt = clock()
         val id = generateEntryId("pix", sentAt)
         val item = ConversationItem(
@@ -880,7 +883,7 @@ class ObscuraClient(
                 id = mediaRef,
                 contentKey = keyBytes,
                 nonce = nonceBytes,
-                mediaType = mediaType,
+                mediaType = mediaType.ifEmpty { "photo" },
             ),
             caption = caption.ifEmpty { null },
             captionMeta = captionMeta?.ifEmpty { null },
@@ -936,7 +939,7 @@ class ObscuraClient(
                 id = mediaRef,
                 contentKey = keyBytes,
                 nonce = nonceBytes,
-                mediaType = mediaType ?: "",
+                mediaType = if (mediaType.isNullOrEmpty()) "photo" else mediaType,
             )
         } else null
         val self = requireFreshToken()

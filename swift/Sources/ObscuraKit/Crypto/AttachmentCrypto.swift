@@ -64,7 +64,8 @@ public enum AttachmentCrypto {
             ext = brand == "qt  " ? "mov" : "mp4"
         }
         let dest = cacheDir.appendingPathComponent("\(safe).\(ext)")
-        let tmp = cacheDir.appendingPathComponent("\(safe).\(ext).tmp")
+        let tmp = cacheDir.appendingPathComponent("\(safe).\(ext).\(UUID().uuidString).tmp")
+        defer { try? fm.removeItem(at: tmp) }
         try data.write(to: tmp, options: .atomic)
         if fm.fileExists(atPath: dest.path) { try? fm.removeItem(at: dest) }
         try fm.moveItem(at: tmp, to: dest)
@@ -72,10 +73,24 @@ public enum AttachmentCrypto {
     }
 
     public static func purgeCached(cacheDir: URL, id: String) {
+        let fm = FileManager.default
         let stem = safeStem(id)
         for ext in extensions {
-            try? FileManager.default.removeItem(at: cacheDir.appendingPathComponent("\(stem).\(ext)"))
-            try? FileManager.default.removeItem(at: cacheDir.appendingPathComponent("\(stem).\(ext).tmp"))
+            try? fm.removeItem(at: cacheDir.appendingPathComponent("\(stem).\(ext)"))
+            try? fm.removeItem(at: cacheDir.appendingPathComponent("\(stem).\(ext).tmp"))
+        }
+        if let items = try? fm.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: nil) {
+            for item in items where item.lastPathComponent.hasPrefix("\(stem).") && item.lastPathComponent.hasSuffix(".tmp") {
+                try? fm.removeItem(at: item)
+            }
+        }
+    }
+
+    public static func purgeAllCached(cacheDir: URL) {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: nil) else { return }
+        for item in items {
+            try? fm.removeItem(at: item)
         }
     }
 }

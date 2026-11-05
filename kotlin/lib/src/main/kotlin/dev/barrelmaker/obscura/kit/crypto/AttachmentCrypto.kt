@@ -60,7 +60,7 @@ object AttachmentCrypto {
             if (String(data, 8, 4, Charsets.US_ASCII) == "qt  ") "mov" else "mp4"
         } else "jpg"
         val dest = File(cacheDir, "$safe.$ext")
-        val tmp = File(cacheDir, "$safe.$ext.tmp")
+        val tmp = File(cacheDir, "$safe.$ext.${java.util.UUID.randomUUID()}.tmp")
         try {
             tmp.writeBytes(data)
             if (!tmp.renameTo(dest)) {
@@ -79,5 +79,13 @@ object AttachmentCrypto {
             File(cacheDir, "$stem.$ext").delete()
             File(cacheDir, "$stem.$ext.tmp").delete()
         }
+        cacheDir.listFiles()?.forEach { f ->
+            if (f.name.startsWith("$stem.") && f.name.endsWith(".tmp")) f.delete()
+        }
+    }
+
+    /** Delete all cached attachment files in [cacheDir]. */
+    fun purgeAllCached(cacheDir: File) {
+        cacheDir.listFiles()?.forEach { it.delete() }
     }
 }

@@ -22,7 +22,7 @@ kotlin {
 //
 // :lib:test            — pure unit tests. No network. <10s. Runs on every PR.
 // :lib:integrationTest — server-dependent scenario suite (~256 tests against
-//                        a live Obscura server). 4-5 min. Runs on main only.
+//                        a live Obscura server). Runs in its own CI job.
 //
 // The integration suite is gated on a reachable server via assumeTrue() inside
 // the tests themselves, so it skips-not-fails when the server is down. That's

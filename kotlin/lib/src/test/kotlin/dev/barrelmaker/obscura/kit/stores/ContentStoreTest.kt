@@ -177,7 +177,25 @@ class ContentStoreTest {
 
         // Append invalid records to the snapshot and import into a fresh store
         val exported = EntrySnapshot.parseFrom(uploadedBytes).toBuilder()
-            .addMessages(StoredMessageRecord.newBuilder().setId(" ").setPeerUserId(peer).setKind("message"))
+            .addMessages(StoredMessageRecord.newBuilder().setId(" ").setPeerUserId(peer).setAuthorUserId(peer).setKind("message"))
+            .addMessages(StoredMessageRecord.newBuilder().setId("dm_no_peer").setPeerUserId(" ").setAuthorUserId(peer).setKind("message"))
+            .addMessages(StoredMessageRecord.newBuilder().setId("dm_no_author").setPeerUserId(peer).setAuthorUserId(" ").setKind("message"))
+            .addMessages(
+                StoredMessageRecord.newBuilder()
+                    .setId("dm_empty_kind")
+                    .setPeerUserId(peer)
+                    .setAuthorUserId(peer)
+                    .setSentAt(120L)
+                    .setContent("default kind"),
+            )
+            .addMessages(
+                StoredMessageRecord.newBuilder()
+                    .setId("pix_no_att")
+                    .setPeerUserId(peer)
+                    .setKind("pix")
+                    .setAuthorUserId(peer)
+                    .setSentAt(340L),
+            )
             .addMessages(
                 StoredMessageRecord.newBuilder()
                     .setId("pix_bad_att")
@@ -187,7 +205,26 @@ class ContentStoreTest {
                     .setSentAt(350L)
                     .setAttachment(AttachmentPointer.newBuilder().setId(" ")),
             )
+            .addMessages(
+                StoredMessageRecord.newBuilder()
+                    .setId("pix_empty_key")
+                    .setPeerUserId(peer)
+                    .setKind("pix")
+                    .setAuthorUserId(peer)
+                    .setSentAt(360L)
+                    .setAttachment(AttachmentPointer.newBuilder().setId("att_k").setNonce(ByteString.copyFrom(byteArrayOf(1)))),
+            )
+            .addMessages(
+                StoredMessageRecord.newBuilder()
+                    .setId("pix_empty_nonce")
+                    .setPeerUserId(peer)
+                    .setKind("pix")
+                    .setAuthorUserId(peer)
+                    .setSentAt(370L)
+                    .setAttachment(AttachmentPointer.newBuilder().setId("att_n").setContentKey(ByteString.copyFrom(byteArrayOf(1)))),
+            )
             .addStories(StoredStoryRecord.newBuilder().setId("").setAuthorUserId(peer))
+            .addStories(StoredStoryRecord.newBuilder().setId("st_no_author").setAuthorUserId(" "))
             .addProfiles(StoredProfileRecord.newBuilder().setUserId(" ").setAuthorDeviceId("dev"))
             .build()
 
@@ -199,10 +236,16 @@ class ContentStoreTest {
 
         val importedMsgs = targetStore.getMessages().associateBy { it.id }
         assertEquals(msgPlain, importedMsgs["dm_1"])
+        assertEquals("message", importedMsgs["dm_empty_kind"]?.kind)
         assertEquals(pixFull, importedMsgs["pix_1"])
         assertEquals(pixBare, importedMsgs["pix_2"])
-        assertNull(importedMsgs["pix_bad_att"]?.attachment)
+        assertFalse(importedMsgs.containsKey("pix_no_att"))
+        assertFalse(importedMsgs.containsKey("pix_bad_att"))
+        assertFalse(importedMsgs.containsKey("pix_empty_key"))
+        assertFalse(importedMsgs.containsKey("pix_empty_nonce"))
         assertFalse(importedMsgs.containsKey(" "))
+        assertFalse(importedMsgs.containsKey("dm_no_peer"))
+        assertFalse(importedMsgs.containsKey("dm_no_author"))
 
         val importedStories = targetStore.getAllStories().associateBy { it.id }
         assertEquals(listOf(storyFull, storyBare), listOf(importedStories["st_1"], importedStories["st_2"]))
@@ -353,8 +396,12 @@ class ContentStoreTest {
         val c = authenticatedClient()
         val validB64 = ByteArray(16) { 1 }.toBase64()
         assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.sendMessage(" ", "hi") } }
+        assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.sendMessage(SELF_USER_ID, "hi") } }
         assertThrows(ObscuraError.InvalidArgument::class.java) {
             runBlocking { c.sendPix(" ", "att", validB64, validB64, "photo", "", null, 5) }
+        }
+        assertThrows(ObscuraError.InvalidArgument::class.java) {
+            runBlocking { c.sendPix(SELF_USER_ID, "att", validB64, validB64, "photo", "", null, 5) }
         }
         assertThrows(ObscuraError.InvalidArgument::class.java) {
             runBlocking { c.sendPix(peer, "", validB64, validB64, "photo", "", null, 5) }
@@ -468,7 +515,11 @@ class ContentStoreTest {
             assertEquals(setOf("pix"), touched)
             assertFalse(downloaded1.exists(), "sweepExpired must purge cached attachment file")
 
-            c.auth.end()
+            // Write another cached attachment and verify wipeDevice purges attachmentCacheDir
+            val extraCached = dev.barrelmaker.obscura.kit.crypto.AttachmentCrypto.writeCached(cacheDir, "att_wipe", "image-bytes".toByteArray())
+            assertTrue(extraCached.exists())
+            c.wipeDevice()
+            assertFalse(extraCached.exists(), "wipeDevice must purge all cached attachment files")
         }
         dir.deleteRecursively()
         Unit

@@ -63,6 +63,7 @@ object ObscuraSession {
         ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
         private set
     @Volatile private var sink: EventSink? = null
+    private val pushWakeCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     val logger: ObscuraLogger = object : ObscuraLogger {
         override fun log(message: String) { Log.d(TAG, message) }
@@ -84,7 +85,7 @@ object ObscuraSession {
                     val c = client ?: return
                     scope.launch {
                         restoreJob?.join()
-                        if (c.authState.value != AuthState.AUTHENTICATED) return@launch
+                        if (!appInForeground || client !== c || c.authState.value != AuthState.AUTHENTICATED) return@launch
                         try { c.connect() }
                         catch (e: CancellationException) { throw e }
                         catch (e: Exception) { Log.e(TAG, "Foreground reconnect failed", e) }
@@ -94,7 +95,14 @@ object ObscuraSession {
                 override fun onStop(owner: LifecycleOwner) {
                     appInForeground = false
                     sink?.onAppStateChanged(AppState.BACKGROUND)
-                    client?.disconnect()
+                    val c = client ?: return
+                    c.disconnect()
+                    scope.launch {
+                        restoreJob?.join()
+                        if (!appInForeground && client === c && pushWakeCount.get() == 0) {
+                            c.disconnect()
+                        }
+                    }
                 }
             })
         }
@@ -206,7 +214,11 @@ object ObscuraSession {
         val username = saved["username"] ?: return null
         val c = buildClient(username)
         restoreJob = scope.launch {
-            if (!c.restorePersistedSession()) Log.w(TAG, "No usable stored session")
+            if (!c.restorePersistedSession()) {
+                Log.w(TAG, "No usable stored session")
+            } else if (!appInForeground && pushWakeCount.get() == 0) {
+                c.disconnect()
+            }
         }
         return c
     }
@@ -253,17 +265,21 @@ object ObscuraSession {
     }
 
     suspend fun onPushWake(timeoutMs: Long = 25_000L) {
+        pushWakeCount.incrementAndGet()
         try {
             val c = tryRestore() ?: return
             restoreJob?.join()
             if (c.authState.value == AuthState.AUTHENTICATED) {
                 c.processPendingMessages(timeoutMs)
-                if (!appInForeground) c.disconnect()
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Push drain failed", e)
+        } finally {
+            if (pushWakeCount.decrementAndGet() == 0 && !appInForeground) {
+                client?.disconnect()
+            }
         }
     }
 

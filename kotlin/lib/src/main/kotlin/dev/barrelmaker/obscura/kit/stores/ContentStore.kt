@@ -305,7 +305,7 @@ private fun toAttachment(mediaRef: String?, contentKey: ByteArray?, nonce: ByteA
             id = mediaRef,
             contentKey = contentKey,
             nonce = nonce,
-            mediaType = mediaType ?: "",
+            mediaType = if (mediaType.isNullOrEmpty()) "photo" else mediaType,
         )
     } else null
 
