@@ -61,6 +61,20 @@ describe('buildCaptionMeta', () => {
       color: CAPTION_COLORS[0],
       font: 0,
     });
+
+    expect(buildCaptionMeta({
+      text: 'omitted optional fields',
+      style: 'bold',
+      y: 0.5,
+    })).toEqual({
+      style: 'bold',
+      x: 0.5,
+      y: 0.5,
+      rot: 0,
+      scale: 1,
+      color: CAPTION_COLORS[0],
+      font: 0,
+    });
   });
 });
 

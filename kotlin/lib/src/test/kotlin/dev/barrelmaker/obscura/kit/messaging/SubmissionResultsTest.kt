@@ -3,6 +3,7 @@ package dev.barrelmaker.obscura.kit.messaging
 import com.google.protobuf.ByteString
 import com.sun.net.httpserver.HttpServer
 import dev.barrelmaker.obscura.kit.SubmissionStatus
+import dev.barrelmaker.obscura.kit.bundle
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
 import dev.barrelmaker.obscura.kit.crypto.UuidCodec
 import dev.barrelmaker.obscura.kit.newInMemoryDatabase
@@ -87,6 +88,69 @@ class SubmissionResultsTest {
             decodeSubmissionResults("user", listOf(a), SendMessageResponse.newBuilder()
                 .addInvalidDeviceIds(a.deviceId).addInvalidDeviceIds(a.deviceId).build())
         }
+        assertThrows(dev.barrelmaker.obscura.kit.ObscuraError.ProtocolViolation::class.java) {
+            decodeSubmissionResults("user", listOf(a), SendMessageResponse.newBuilder()
+                .addInvalidDeviceIds(ByteString.copyFromUtf8("not-16-bytes")).build())
+        }
+        assertThrows(dev.barrelmaker.obscura.kit.ObscuraError.ProtocolViolation::class.java) {
+            decodeSubmissionResults(userId, listOf(a), SendMessageResponse.newBuilder()
+                .addDeviceMismatches(SendMessageResponse.DeviceMismatch.newBuilder().setUserId(ByteString.copyFromUtf8("bad"))).build())
+        }
+        assertThrows(dev.barrelmaker.obscura.kit.ObscuraError.ProtocolViolation::class.java) {
+            decodeSubmissionResults(userId, listOf(a), SendMessageResponse.newBuilder()
+                .addDeviceMismatches(
+                    SendMessageResponse.DeviceMismatch.newBuilder()
+                        .setUserId(UuidCodec.uuidToBytes(UUID.fromString(userId)))
+                        .addMissingDeviceIds(ByteString.copyFromUtf8("bad-device-id")),
+                ).build())
+        }
+        val malformedSub = SendMessageRequest.Submission.newBuilder()
+            .setDeviceId(ByteString.copyFromUtf8("bad"))
+            .build()
+        assertThrows(IllegalStateException::class.java) {
+            decodeSubmissionResults(userId, listOf(malformedSub), SendMessageResponse.getDefaultInstance())
+        }
+    }
+
+    @Test
+    fun `PeerBundle parsing, consistency checks, and Messenger session guard branches`() = runBlocking {
+        requireConsistent(emptyList())
+
+        val storeDb = newInMemoryDatabase()
+        val store = SignalStore(storeDb)
+        val keys = dev.barrelmaker.obscura.kit.managers.SignalKeyUtils.generateProvisioningKeys(
+            org.signal.libsignal.protocol.IdentityKeyPair.generate(),
+        )
+        dev.barrelmaker.obscura.kit.managers.SignalKeyUtils.install(store, keys)
+        val noOtpBundleJson = keys.toDeviceKeys().toJson()
+            .put("deviceId", userId)
+            .put("oneTimePreKey", org.json.JSONObject.NULL)
+        assertThrows(IllegalArgumentException::class.java) {
+            parsePeerBundle(noOtpBundleJson)
+        }
+        val validBundleJson = keys.bundle(userId)
+        val parsed = parsePeerBundle(validBundleJson)
+        assertEquals(userId, parsed.deviceId)
+
+        assertThrows(dev.barrelmaker.obscura.kit.ObscuraError.ProtocolViolation::class.java) {
+            parsePeerBundle(org.json.JSONObject(validBundleJson.toString()).put("deviceId", "not-a-uuid"))
+        }
+        assertThrows(dev.barrelmaker.obscura.kit.ObscuraError.ProtocolViolation::class.java) {
+            parsePeerBundles(org.json.JSONArray().put(validBundleJson).put(validBundleJson))
+        }
+
+        val messenger = Messenger(store, APIClient("http://127.0.0.1:1") { "t" })
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                messenger.prepareSubmission(userId, obscura.client.v1.Client.ClientMessage.getDefaultInstance())
+            }
+        }
+        storeDb.deviceQueries.insert(userId, userId)
+        messenger.establishSession(parsed)
+        assertTrue(messenger.hasSession(userId))
+        // Calling establishSession when session already exists is a no-op
+        messenger.establishSession(parsed)
+        assertTrue(messenger.hasSession(userId))
     }
 
     @Test

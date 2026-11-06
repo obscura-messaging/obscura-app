@@ -13,6 +13,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -405,8 +408,167 @@ class SessionLifecycleTest {
         assertEquals(50, uploadedKeys.getJSONArray("oneTimePreKeys").length())
         assertEquals(2, uploadedKeys.getJSONObject("signedPreKey").getInt("keyId"))
 
+        // Trigger another replenish that hangs on upload, then logout() cancels replenishJob
         c.disconnect()
+        server.enqueue(MockResponse.Builder().body("""{"ticket":"t2"}""").build())
+        server.enqueue(MockResponse.Builder().webSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
+                webSocket.send(lowStatus)
+            }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(1000, null)
+            }
+        }).build())
+        server.enqueue(MockResponse.Builder().code(200).headersDelay(5, TimeUnit.SECONDS).build())
+        c.connect()
+        assertEquals("/v1/gateway/ticket", server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath)
+        assertEquals("/v1/gateway", server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath)
+        assertEquals("/v1/keys", server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath)
+        server.enqueue(MockResponse.Builder().code(204).build())
+        c.logout()
+        Unit
+    }
+
+    @Test fun `refresh generation races, mismatched session response, and automatic refresh loop branches`() = runBlocking {
+        val storage = storedSession()
+        val c = sessionClient(url, storage)
+        assertTrue(c.auth.restore())
+        val initialCreds = c.auth.requireCredentials()
+
+        // Calling restore() again while already authenticated cancels the previous refreshLoop
+        assertTrue(c.auth.restore())
+
+        // end() with non-matching expected credentials or non-matching expectedGeneration returns null without ending
+        val otherCreds = initialCreds.copy(token = "other")
+        assertNull(c.auth.end(expected = otherCreds))
+        assertNull(c.auth.end(expected = c.auth.requireCredentials(), expectedGeneration = 999L))
+        assertEquals(AuthState.AUTHENTICATED, c.authState.value)
+
+        // Start a refresh, then end(expected = current) so refreshInFlight is not cancelled:
+        // 1) Fails with 500 while logged out -> returns REJECTED
+        server.enqueue(refresh(500))
+        val failWhileLoggedOut = async(Dispatchers.Default) { c.auth.refresh() }
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        c.auth.end(expected = c.auth.requireCredentials())
+        assertEquals(TokenStatus.REJECTED, failWhileLoggedOut.await())
+
+        // 2) Fails with 500 after replacement session restored -> returns FRESH
+        storage.data = storedSession(refreshToken = "rep1").data
+        assertTrue(c.auth.restore())
+        server.enqueue(refresh(500))
+        val failAfterReplace = async(Dispatchers.Default) { c.auth.refresh() }
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        c.auth.end(expected = c.auth.requireCredentials())
+        storage.data = storedSession(refreshToken = "rep2").data
+        assertTrue(c.auth.restore())
+        assertEquals(TokenStatus.FRESH, failAfterReplace.await())
+
+        // 3) Succeeds with 200 while logged out -> returns REJECTED
+        server.enqueue(refresh(200))
+        val okWhileLoggedOut = async(Dispatchers.Default) { c.auth.refresh() }
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        c.auth.end(expected = c.auth.requireCredentials())
+        assertEquals(TokenStatus.REJECTED, okWhileLoggedOut.await())
+
+        // 4) Succeeds with 200 after replacement session restored -> returns FRESH
+        storage.data = storedSession(refreshToken = "rep3").data
+        assertTrue(c.auth.restore())
+        server.enqueue(refresh(200))
+        val okAfterReplace = async(Dispatchers.Default) { c.auth.refresh() }
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        c.auth.end(expected = c.auth.requireCredentials())
+        storage.data = storedSession(refreshToken = "rep4").data
+        assertTrue(c.auth.restore())
+        assertEquals(TokenStatus.FRESH, okAfterReplace.await())
+
+        // 5) Calling restore() while a refresh is in flight cancels refreshInFlight directly in start()
+        server.enqueue(refresh(200))
+        val canceledByStart = async(Dispatchers.Default) { runCatching { c.auth.refresh() } }
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        assertTrue(c.auth.restore())
+        canceledByStart.await()
+
+        // 6) Refresh 401 where logger callback restores a replacement session before onRejected runs
+        c.logger = object : ObscuraLogger by NoOpLogger {
+            override fun tokenRefreshFailed(attempt: Int, reason: String) {
+                c.auth.end(expected = c.auth.credentials)
+                storage.data = storedSession(refreshToken = "rep5").data
+                runBlocking { c.auth.restore() }
+            }
+        }
+        server.enqueue(MockResponse.Builder().code(401).body("{}").build())
+        assertEquals(TokenStatus.FRESH, c.auth.refresh())
+        assertEquals(AuthState.AUTHENTICATED, c.authState.value)
+        c.logger = NoOpLogger
+
+        // 7) Refresh returning credentials for a different userId or deviceId throws ProtocolViolation
+        server.enqueue(MockResponse.Builder().body(authResponseJson(userId = UUID.randomUUID().toString()).toString()).build())
+        assertTrue(runCatching { c.auth.refresh() }.exceptionOrNull() is ObscuraError.ProtocolViolation)
+        server.enqueue(MockResponse.Builder().body(authResponseJson(deviceId = UUID.randomUUID().toString()).toString()).build())
+        assertTrue(runCatching { c.auth.refresh() }.exceptionOrNull() is ObscuraError.ProtocolViolation)
         c.auth.end()
         Unit
+    }
+
+    @Test fun `refreshAheadOfExpiry retries after failure, stops on rejection, and logs unexpected exceptions`() = runTest {
+        val logs = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val logger = object : ObscuraLogger by NoOpLogger {
+            override fun log(message: String) { logs += message }
+        }
+        val db = newInMemoryDatabase()
+        val signalStore = dev.barrelmaker.obscura.kit.crypto.SignalStore(db).also { it.generateIdentity() }
+        val devices = dev.barrelmaker.obscura.kit.stores.DeviceStore(db).also {
+            it.storeLocalInTransaction(SELF_USER_ID, dev.barrelmaker.obscura.kit.stores.LocalDevice(SELF_DEVICE_ID, SELF_DEVICE_ID))
+        }
+        val storage = storedSession(expiresAt = 200L)
+        val api = dev.barrelmaker.obscura.kit.network.APIClient(url) { storage.data?.get("token") }
+        val mgrScope = kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.test.StandardTestDispatcher(testScheduler),
+        )
+        lateinit var mgr: dev.barrelmaker.obscura.kit.managers.AuthManager
+        mgr = dev.barrelmaker.obscura.kit.managers.AuthManager(
+            api = api,
+            signalStore = signalStore,
+            devices = devices,
+            storage = storage,
+            deviceName = "Test",
+            scope = mgrScope,
+            logger = { logger },
+            onRejected = { creds, gen -> mgr.end(creds, gen) },
+            clock = { 90_000L },
+        )
+
+        suspend fun stepVirtualTime(ms: Long) {
+            advanceTimeBy(ms)
+            runCurrent()
+            val req = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(req)
+            kotlinx.coroutines.withContext(Dispatchers.IO) { Thread.sleep(50) }
+            runCurrent()
+        }
+
+        // Restore with fresh token (expiresAt = 200s, now = 90s -> 110s left; 80% is 88_000ms)
+        assertTrue(mgr.restore())
+
+        // 1st automatic refresh fails with 500 (UNAVAILABLE -> refreshFailures = 1, next delay uses retryDelayMs(1) = 5_000ms)
+        server.enqueue(MockResponse.Builder().code(500).body("{}").build())
+        // 2nd automatic refresh succeeds with 200 (FRESH -> refreshFailures = 0, expiresAt = 100s -> 8_000ms delay)
+        server.enqueue(MockResponse.Builder().code(200).body(authResponseJson(expiresAt = 100L).toString()).build())
+        // 3rd automatic refresh throws ProtocolViolation (mismatched userId) -> stops loop and logs
+        server.enqueue(MockResponse.Builder().code(200).body(authResponseJson(userId = UUID.randomUUID().toString()).toString()).build())
+
+        stepVirtualTime(88_001L)
+        stepVirtualTime(5_001L)
+        stepVirtualTime(8_001L)
+
+        assertTrue(logs.any { it.contains("SESSION automatic refresh stopped") })
+        mgr.end()
+
+        // Also test automatic refresh stopping cleanly when refresh returns REJECTED (401)
+        storage.data = storedSession(expiresAt = 200L).data
+        assertTrue(mgr.restore())
+        server.enqueue(MockResponse.Builder().code(401).body("{}").build())
+        stepVirtualTime(88_001L)
+        assertEquals(AuthState.LOGGED_OUT, mgr.state.value)
     }
 }

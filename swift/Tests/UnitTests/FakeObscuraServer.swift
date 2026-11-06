@@ -29,14 +29,25 @@ final class FakeObscuraServer: @unchecked Sendable {
     private(set) var idempotencyKeys: [String] = []
 
     private var accounts: [String: String] = [:]
+    private var sessionTokens: [String: String] = [:]
     private var linkSessions: [String: (userId: String, body: Data?)] = [:]
     private var attachments: [String: Data] = [:]
     private var createDeviceStatus = 201
     private var tokenRejections = 0
     private var refreshed: [String: Any]?
+    private var preKeyUploads = 0
+    private var preKeyStatus = 204
+    private var pushTokens: [String] = []
+    private var customDevicesResponse: [[String: Any]]?
+    private var gatewayTicket: String?
 
     func failDeviceList(status: Int) { lock.withLock { listStatus = status } }
+    func setCustomDevicesResponse(_ list: [[String: Any]]?) { lock.withLock { customDevicesResponse = list } }
     func failDeviceCreation(status: Int) { lock.withLock { createDeviceStatus = status } }
+    func failPreKeyUpload(status: Int) { lock.withLock { preKeyStatus = status } }
+    func setGatewayTicket(_ ticket: String?) { lock.withLock { gatewayTicket = ticket } }
+    func preKeyUploadCount() -> Int { lock.withLock { preKeyUploads } }
+    func registeredPushTokens() -> [String] { lock.withLock { pushTokens } }
     /// Answers the next `count` token-authenticated requests with 401.
     func rejectTokens(_ count: Int) { lock.withLock { tokenRejections = count } }
     /// Lets refreshes succeed with these tokens instead of being rejected.
@@ -109,8 +120,43 @@ final class FakeObscuraServer: @unchecked Sendable {
             return tokenRejections > 0
         }) { return (401, Data()) }
         if request.httpMethod == "GET", path == "/v1/devices" { return deviceList(token) }
+        if request.httpMethod == "POST", path == "/v1/users" {
+            return lock.withLock {
+                let payload = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
+                let username = payload["username"] as? String ?? "user"
+                let userId = accounts[username] ?? UUID().uuidString.lowercased()
+                accounts[username] = userId
+                let deviceId = UUID().uuidString.lowercased()
+                sessionTokens[deviceId] = userId
+                let response: [String: Any] = [
+                    "token": deviceId,
+                    "refreshToken": "rt",
+                    "expiresAt": Int(Date().timeIntervalSince1970) + 3600,
+                    "userId": userId,
+                    "deviceId": deviceId,
+                ]
+                return (201, try! JSONSerialization.data(withJSONObject: response))
+            }
+        }
         if request.httpMethod == "POST", path == "/v1/session" { return login(body) }
-        if request.httpMethod == "POST", path == "/v1/devices" { return lock.withLock { (createDeviceStatus, Data()) } }
+        if request.httpMethod == "POST", path == "/v1/devices" {
+            return lock.withLock {
+                guard createDeviceStatus == 201 else { return (createDeviceStatus, Data()) }
+                let payload = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
+                let sessionId = payload["linkSessionId"] as? String ?? ""
+                let userId = linkSessions[sessionId]?.userId ?? UUID().uuidString.lowercased()
+                let deviceId = UUID().uuidString.lowercased()
+                sessionTokens[deviceId] = userId
+                let response: [String: Any] = [
+                    "token": deviceId,
+                    "refreshToken": "rt",
+                    "expiresAt": Int(Date().timeIntervalSince1970) + 3600,
+                    "userId": userId,
+                    "deviceId": deviceId,
+                ]
+                return (201, try! JSONSerialization.data(withJSONObject: response))
+            }
+        }
         if path.hasPrefix("/v1/link-sessions") { return link(request, token: token, body: body) }
         if request.httpMethod == "POST", path == "/v1/attachments" {
             let id = UUID().uuidString.lowercased()
@@ -119,6 +165,22 @@ final class FakeObscuraServer: @unchecked Sendable {
         }
         if request.httpMethod == "GET", path.hasPrefix("/v1/attachments/") {
             return lock.withLock { attachments[String(path.dropFirst("/v1/attachments/".count))].map { (200, $0) } ?? (404, Data()) }
+        }
+        if request.httpMethod == "POST", path == "/v1/keys" {
+            return lock.withLock {
+                guard preKeyStatus == 204 else { return (preKeyStatus, Data("prekey upload failed".utf8)) }
+                preKeyUploads += 1
+                return (204, Data())
+            }
+        }
+        if request.httpMethod == "PUT", path == "/v1/push-token" {
+            return lock.withLock {
+                if let payload = try? JSONSerialization.jsonObject(with: body) as? [String: String],
+                   let pushToken = payload["token"] {
+                    pushTokens.append(pushToken)
+                }
+                return (204, Data())
+            }
         }
         if request.httpMethod == "GET", path.hasPrefix("/v1/keys/") {
             let parts = path.dropFirst("/v1/keys/".count).split(separator: "/").map(String.init)
@@ -130,7 +192,11 @@ final class FakeObscuraServer: @unchecked Sendable {
         }
         if request.httpMethod == "POST", path == "/v1/gateway/ticket" {
             return lock.withLock {
-                caller(token) == nil ? (401, Data()) : (503, Data("fake gateway is unavailable".utf8))
+                guard caller(token) != nil else { return (401, Data()) }
+                if let ticket = gatewayTicket {
+                    return (200, Data(#"{"ticket":"\#(ticket)"}"#.utf8))
+                }
+                return (503, Data("fake gateway is unavailable".utf8))
             }
         }
         if request.httpMethod == "DELETE", path == "/v1/session" { return (204, Data()) }
@@ -148,6 +214,7 @@ final class FakeObscuraServer: @unchecked Sendable {
                 guard let username = request["username"] as? String, let userId = accounts[username] else { return (401, Data()) }
                 devices = devices.filter { $0.value.userId != userId }
                 let newDeviceId = UUID().uuidString.lowercased()
+                sessionTokens[newDeviceId] = userId
                 let response: [String: Any] = [
                     "token": newDeviceId,
                     "refreshToken": "rt",
@@ -166,7 +233,7 @@ final class FakeObscuraServer: @unchecked Sendable {
     }
 
     private func caller(_ token: String) -> String? {
-        devices[token]?.userId
+        devices[token]?.userId ?? sessionTokens[token]
     }
 
     private func login(_ body: Data) -> (Int, Data) {
@@ -217,9 +284,10 @@ final class FakeObscuraServer: @unchecked Sendable {
             guard let userId = caller(token) else { return (401, Data()) }
             listFetches[userId, default: 0] += 1
             guard listStatus == 200 else { return (listStatus, Data("device list failed".utf8)) }
-            return (200, try! JSONSerialization.data(withJSONObject: [
-                "devices": owned(userId).map { ["deviceId": $0.deviceId, "name": "test", "isPrimary": $0.isPrimary] },
-            ]))
+            let list = customDevicesResponse ?? owned(userId).map {
+                ["deviceId": $0.deviceId, "name": "test", "isPrimary": $0.isPrimary]
+            }
+            return (200, try! JSONSerialization.data(withJSONObject: ["devices": list]))
         }
     }
 
@@ -277,7 +345,14 @@ final class FakeServerProtocol: URLProtocol {
     static let onDeviceList = Locked<(@Sendable () -> Void)?>(nil)
     /// Answers `POST /v1/messages` instead of the server when it returns a response; gets the request body.
     static let messageResponse = Locked<(@Sendable (Data) -> (Int, Data)?)?>(nil)
-    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == FakeObscuraServer.host }
+    override class func canInit(with request: URLRequest) -> Bool {
+        guard let url = request.url else { return false }
+        if url.host == FakeObscuraServer.host { return true }
+        if url.host == "127.0.0.1", url.scheme?.lowercased() == "http", FakeObscuraServer.active != nil {
+            return true
+        }
+        return false
+    }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         if request.url?.path == "/v1/devices", request.httpMethod == "GET",

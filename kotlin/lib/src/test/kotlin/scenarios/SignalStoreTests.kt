@@ -215,6 +215,56 @@ class SignalStoreTests {
         assertFalse(store.containsSession(SignalProtocolAddress("bob", 3)))
         assertTrue(store.containsSession(SignalProtocolAddress("alice", 1)),
             "Alice's session should be untouched")
+
+        store.deleteAllSessions()
+        assertFalse(store.containsSession(SignalProtocolAddress("alice", 1)))
+    }
+
+    @Test
+    fun `uninitialized identity, signed prekey list and removal, existing sessions, and unsupported key types`() {
+        assertFalse(store.hasIdentity())
+        assertThrows(IllegalStateException::class.java) { store.identityKeyPair }
+        assertThrows(IllegalStateException::class.java) { store.localRegistrationId }
+
+        val (identity, _) = store.generateIdentity()
+        assertTrue(store.hasIdentity())
+        db.signalKeyQueries.deleteLocalIdentity()
+        assertFalse(store.hasIdentity())
+        store.installIdentity(identity, 123)
+        assertTrue(store.hasIdentity())
+
+        val keyPair = Curve.generateKeyPair()
+        val sig = Curve.calculateSignature(identity.privateKey, keyPair.publicKey.serialize())
+        store.storeSignedPreKey(7, SignedPreKeyRecord(7, 1000L, keyPair, sig))
+        assertEquals(listOf(7), store.loadSignedPreKeys().map { it.id })
+        store.removeSignedPreKey(7)
+        assertTrue(store.loadSignedPreKeys().isEmpty())
+
+        val bobAddr = SignalProtocolAddress("bob-phone", 1)
+        assertThrows(NoSessionException::class.java) {
+            store.loadExistingSessions(listOf(bobAddr))
+        }
+        store.storeSession(bobAddr, SessionRecord())
+        assertEquals(1, store.loadExistingSessions(listOf(bobAddr)).size)
+        assertEquals(emptyList<Int>(), store.getSubDeviceSessions("bob-phone"))
+
+        val dummySenderKey = object : org.signal.libsignal.protocol.groups.state.SenderKeyRecord(0L) {
+            override fun release(handle: Long) {}
+        }
+        val dummyKyberKey = KyberPreKeyRecord(
+            1,
+            0L,
+            org.signal.libsignal.protocol.kem.KEMKeyPair.generate(org.signal.libsignal.protocol.kem.KEMKeyType.KYBER_1024),
+            ByteArray(64),
+        )
+        val distId = java.util.UUID.randomUUID()
+        assertThrows(UnsupportedOperationException::class.java) { store.storeSenderKey(bobAddr, distId, dummySenderKey) }
+        assertThrows(UnsupportedOperationException::class.java) { store.loadSenderKey(bobAddr, distId) }
+        assertThrows(InvalidKeyIdException::class.java) { store.loadKyberPreKey(1) }
+        assertEquals(emptyList<KyberPreKeyRecord>(), store.loadKyberPreKeys())
+        assertThrows(UnsupportedOperationException::class.java) { store.storeKyberPreKey(1, dummyKyberKey) }
+        assertFalse(store.containsKyberPreKey(1))
+        assertThrows(UnsupportedOperationException::class.java) { store.markKyberPreKeyUsed(1) }
     }
 
 }

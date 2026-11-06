@@ -216,6 +216,114 @@ final class LinkingTests: XCTestCase {
         XCTAssertEqual(client.authState, .loggedOut)
     }
 
+    func testRegisterAndCachedLinkSessionAndDeviceValidation() async throws {
+        let registered = try freshClient()
+        try await registered.register("bob_new", "password123")
+        XCTAssertEqual(registered.authState, .authenticated)
+        let bobUsername = await registered.username
+        let bobDeviceId = await registered.deviceId
+        let bobIsPrimary = try await registered.isPrimary
+        XCTAssertEqual(bobUsername, "bob_new")
+        XCTAssertNotNil(bobDeviceId)
+        XCTAssertTrue(bobIsPrimary)
+        try await registered.logout()
+
+        let linkClient = try freshClient()
+        await assertThrows(.invalidArgument("deviceName must not be blank")) {
+            _ = try await linkClient.beginLink("alice", "password", deviceName: " \t\n ")
+        }
+
+        // login returning .linkRequired caches pendingLinkSession, which beginLink reuses.
+        let scenario = try await linkClient.login("alice", "password")
+        XCTAssertEqual(scenario, .linkRequired)
+        let req = try await linkClient.beginLink("alice", "password", deviceName: "iPad")
+        XCTAssertEqual(req.deviceName, "iPad")
+        XCTAssertEqual(req.username, "alice")
+
+        // Expired LinkRequest fails immediately with link session expired.
+        let alreadyExpired = LinkRequest(
+            code: req.code, sessionId: req.sessionId, expiresAt: 1,
+            username: "alice", userId: req.userId, deviceName: "iPad", privateKey: req.privateKey
+        )
+        await assertThrows(.linkFailed("link session expired")) {
+            try await linkClient.completeLink(alreadyExpired)
+        }
+
+        // Invalid primaryDeviceID in bundle is a protocol violation.
+        let ephemeral = PrivateKey.generate()
+        var badPrimaryBundle = Obscura_Client_V1_LinkBundle()
+        badPrimaryBundle.identityKeyPair = Data(IdentityKeyPair.generate().serialize())
+        badPrimaryBundle.userID = "alice-id"
+        badPrimaryBundle.primaryDeviceID = "not-a-uuid"
+        let badPrimaryBody = try LinkCrypto.seal(badPrimaryBundle.serializedData(), to: ephemeral.publicKey).serializedData()
+        XCTAssertThrowsError(try ObscuraClient.open(badPrimaryBody, privateKey: Data(ephemeral.serialize()), userId: "alice-id")) {
+            XCTAssertEqual($0 as? ObscuraError, .protocolViolation("invalid primary device id in link bundle"))
+        }
+
+        // devices() requires exactly one primary device.
+        server.setCustomDevicesResponse([
+            ["deviceId": phone.deviceId, "name": "test", "isPrimary": false],
+        ])
+        await assertThrows(.protocolViolation("the account has no primary device")) {
+            _ = try await self.phoneClient.devices()
+        }
+        server.setCustomDevicesResponse(nil)
+    }
+
+    func testCompleteLinkPollsRestoresHistoryAndValidatesSnapshot() async throws {
+        try await phoneClient.friends.add(UUID().uuidString.lowercased(), username: "bob", status: .accepted)
+        try await phoneClient.content.insertConversationItem(ConversationItem(
+            id: "hist_msg_1", peerUserId: "bob-id", kind: "message", authorUserId: "bob-id",
+            sentAt: 500, viewedAt: nil, content: "history hello", attachment: nil,
+            caption: nil, captionMeta: nil, displayDuration: 0
+        ))
+
+        let newClient = try freshClient()
+        let request = try await newClient.beginLink("alice", "password", deviceName: "Laptop")
+        let approveTask = Task {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            try await self.phoneClient.approveLink(request.code)
+        }
+        do {
+            try await newClient.completeLink(request)
+            XCTFail("fake gateway returns 503 on connect at end of completeLink")
+        } catch {
+            // connect() fails with 503 after history and credentials are installed
+            XCTAssertEqual((error as? ObscuraError)?.code, "HTTP_ERROR")
+        }
+        try await approveTask.value
+
+        XCTAssertEqual(newClient.authState, .authenticated)
+        let isPrimary = try await newClient.isPrimary
+        XCTAssertFalse(isPrimary)
+        let messages = try await newClient.getMessages()
+        XCTAssertEqual(messages.map(\.id), ["hist_msg_1"])
+        let friends = try await newClient.getFriends()
+        XCTAssertEqual(friends.count, 1)
+        try await newClient.logout()
+
+        // Malformed history snapshot bytes throw PROTOCOL_VIOLATION.
+        let badHistoryClient = try freshClient()
+        let badReq = try await badHistoryClient.beginLink("alice", "password", deviceName: "Tablet")
+        let badCode = try LinkCrypto.decode(badReq.code)
+        let badAttachment = try await phoneClient.uploadAttachment(Data([0xff, 0x01]))
+        var bundle = Obscura_Client_V1_LinkBundle()
+        bundle.identityKeyPair = Data(try phoneClient.signalStore.identityKeyPair(context: NullContext()).serialize())
+        bundle.userID = phone.userId
+        bundle.username = "alice"
+        bundle.primaryDeviceID = phone.deviceId
+        bundle.history.attachmentID = badAttachment.id
+        bundle.history.contentKey = badAttachment.contentKey
+        bundle.history.nonce = badAttachment.nonce
+        let envelope = try LinkCrypto.seal(bundle.serializedData(), to: PublicKey(badCode.ephemeralPublicKey))
+        server.approve(badReq.sessionId, body: try envelope.serializedData())
+
+        await assertThrows(.protocolViolation("invalid history snapshot")) {
+            try await badHistoryClient.completeLink(badReq)
+        }
+        try await badHistoryClient.logout()
+    }
+
     private func openLinkSession() async throws -> String {
         try await freshClient().beginLink("alice", "password", deviceName: "d").sessionId
     }

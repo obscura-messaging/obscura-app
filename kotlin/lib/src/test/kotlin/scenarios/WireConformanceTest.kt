@@ -101,4 +101,21 @@ class WireConformanceTest {
     private inline fun forEach(arr: org.json.JSONArray, body: (JSONObject) -> Unit) {
         for (i in 0 until arr.length()) body(arr.getJSONObject(i))
     }
+
+    @org.junit.jupiter.api.Test
+    fun `WireCodec handles unrecognized enum values and blank friend userId`() {
+        org.junit.jupiter.api.Assertions.assertNull(WireCodec.decodeTypingState(Client.TypingState.UNRECOGNIZED))
+        val unrecognizedFriend = Client.FriendRecord.newBuilder()
+            .setUserId("019f025a-0000-7de6-84b6-000000000002")
+            .setUsername("alice")
+            .setStatusValue(999)
+            .build()
+        org.junit.jupiter.api.Assertions.assertNull(WireCodec.decodeFriend(unrecognizedFriend))
+        val blankIdFriend = Client.FriendRecord.newBuilder()
+            .setUserId(" ")
+            .setUsername("alice")
+            .setStatus(Client.FriendStatus.FRIEND_STATUS_ACCEPTED)
+            .build()
+        org.junit.jupiter.api.Assertions.assertNull(WireCodec.decodeFriend(blankIdFriend))
+    }
 }

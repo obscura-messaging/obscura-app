@@ -4,7 +4,7 @@ import {
   type ConversationItem, type DirectMessageItem, type PixItem,
 } from '../chats';
 import {
-  acceptedFriends, friendProfileEntries, pendingFriends,
+  acceptedFriends, displayNameFor, friendProfileEntries, pendingFriends,
   type Friend, type ProfileItem,
 } from '../friends';
 import { displayMs, storyGroups, type StoryItem } from '../viewer';
@@ -238,8 +238,18 @@ describe('friendActivities', () => {
     expect(activityPreview(emptyActivity, ME)).toEqual({ text: 'Tap to chat', highlight: false });
 
     const [msgOnlyActivity] = friendActivities([BOB], ME, [msg('m2', 10, BOB.userId, BOB.userId, 'hey there')]);
+    expect(activityPreview(msgOnlyActivity, ME)).toEqual({
+      text: 'hey there',
+      highlight: false,
+    });
     expect(activityPreview({ ...msgOnlyActivity, latestAt: 99 }, ME)).toEqual({
       text: 'hey there',
+      highlight: false,
+    });
+
+    const [ownMsgOnlyActivity] = friendActivities([BOB], ME, [msg('m2_own', 10, ME, BOB.userId, 'from me')]);
+    expect(activityPreview({ ...ownMsgOnlyActivity, latestAt: 99 }, ME)).toEqual({
+      text: 'You: from me',
       highlight: false,
     });
 
@@ -322,5 +332,9 @@ describe('storyGroups & friendProfileEntries', () => {
     expect(friendProfileEntries(profiles, identity)).toEqual([
       { entry: profiles[1], name: 'bob' },
     ]);
+    expect(displayNameFor('', identity)).toBeNull();
+    expect(displayNameFor(ME, identity)).toBe('me');
+    expect(displayNameFor(BOB.userId, identity)).toBe('bob');
+    expect(displayNameFor(DAVE.userId, identity)).toBeNull();
   });
 });

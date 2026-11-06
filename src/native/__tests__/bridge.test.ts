@@ -210,5 +210,9 @@ describe('error code propagation', () => {
     await expect(Obscura.sendMessage('u_bob', 'hi')).rejects.toMatchObject({ code: 'SEND_FAILED' });
     await expect(Obscura.sendMessage('u_bob', 'hi again')).resolves.toEqual(expect.any(String));
   });
+
+  it('forwards non-function property reads through the Obscura proxy', () => {
+    expect((Obscura as unknown as { clipboard: string | null }).clipboard).toBeNull();
+  });
 });
 

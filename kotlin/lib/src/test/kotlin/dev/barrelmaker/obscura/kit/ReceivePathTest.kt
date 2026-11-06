@@ -254,10 +254,11 @@ class ReceivePathTest {
         assertNull(c.messageReceived.tryReceive().getOrNull())
 
         // Pix without caption or captionMeta stores null for both
-        c.receive(pixMessage("pix_bare", caption = "", captionMeta = "", contentKey = key, nonce = nonce), envelopeId = "e5")
+        c.receive(pixMessage("pix_bare", mediaType = "", caption = "", captionMeta = "", contentKey = key, nonce = nonce), envelopeId = "e5")
         val bare = c.getMessages().first { it.id == "pix_bare" }
         assertNull(bare.caption)
         assertNull(bare.captionMeta)
+        assertEquals("photo", bare.attachment?.mediaType)
     }
 
     @Test
@@ -362,6 +363,22 @@ class ReceivePathTest {
         c.receive(friendRequest("alice"), envelopeId = "env-2")
         c.receive(friendAccept(), envelopeId = "env-3")
         assertEquals(FriendStatus.PENDING_RECEIVED, c.getFriends().single().status)
+
+        // Logged-out primary receiving a friend request logs FRIEND_LIST_SYNC not sent
+        val loggedOutPrimary = newClient().also { it.storeLocalDevice() }
+        loggedOutPrimary.route(friendRequest("alice"), peer, peerDevice, "env-logged-out")
+        assertTrue(loggedOutPrimary.getDebugLog().any { it.contains("FRIEND_LIST_SYNC not sent") })
+
+        // Unprovisioned client (no local device) ignores friend request and friend list sync
+        val unprovisioned = newClient()
+        unprovisioned.route(friendRequest("alice"), peer, peerDevice, "env-unprov-1")
+        unprovisioned.route(
+            ClientMessage.newBuilder().setFriendListSync(obscura.client.v1.Client.FriendListSync.newBuilder().setVersion(1)).build(),
+            peer,
+            peerDevice,
+            "env-unprov-2",
+        )
+        assertTrue(unprovisioned.getFriends().isEmpty())
     }
 
     @Test

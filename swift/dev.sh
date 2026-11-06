@@ -34,7 +34,34 @@ case "${1:-test}" in
     ;;
   test)
     prepare_libsignal_package
-    LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test "${@:2}"
+    if [[ "${*:2}" == *"UnitTests"* ]]; then
+      LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test --enable-code-coverage "${@:2}"
+      REPORT="$(xcrun llvm-cov report \
+        .build/debug/UnitTests.xctest/Contents/MacOS/UnitTests \
+        -instr-profile=.build/debug/codecov/default.profdata \
+        --ignore-filename-regex='.build|Tests|Sources/ObscuraKit/Proto' \
+        Sources/ObscuraKit)"
+      echo "$REPORT"
+      awk '
+        /^TOTAL/ {
+          found = 1
+          regions = $4; gsub(/%/, "", regions)
+          lines = $10; gsub(/%/, "", lines)
+          if (lines + 0 < 95.0 || regions + 0 < 90.0) {
+            printf "error: coverage below threshold (lines %.2f%% < 95%%, regions %.2f%% < 90%%)\n", lines, regions > "/dev/stderr"
+            exit 1
+          }
+        }
+        END {
+          if (!found) {
+            print "error: missing TOTAL line in llvm-cov report" > "/dev/stderr"
+            exit 1
+          }
+        }
+      ' <<< "$REPORT"
+    else
+      LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test "${@:2}"
+    fi
     ;;
   shell)
     prepare_libsignal_package

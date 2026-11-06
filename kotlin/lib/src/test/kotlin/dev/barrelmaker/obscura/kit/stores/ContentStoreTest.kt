@@ -257,6 +257,44 @@ class ContentStoreTest {
                 HistorySync.restoreHistorySnapshot(pointer!!, targetStore) { _, _, _ -> byteArrayOf(-1, -1, -1) }
             }
         }
+
+        // decodeAttachment defaults empty mediaType to "photo"
+        val decodedDefaultType = HistorySync.decodeAttachment(
+            AttachmentPointer.newBuilder()
+                .setId("att_default")
+                .setContentKey(ByteString.copyFrom(byteArrayOf(1)))
+                .setNonce(ByteString.copyFrom(byteArrayOf(2)))
+                .setMediaType("")
+                .build(),
+        )
+        assertEquals("photo", decodedDefaultType?.mediaType)
+
+        // ContentStore profile upsert when newer timestamp wins, raw attachment edge cases, and envelope check failure
+        assertTrue(
+            targetStore.upsertProfileIfNewerInTransaction(
+                ProfileItem(peer, "dev_0", 999L, "Bob Newer", "New Bio"),
+            ),
+        )
+        db.contentQueries.insertStory("st_no_key", peer, 10L, 100L, "c", "ref", null, byteArrayOf(1), "photo", null, 0L)
+        db.contentQueries.insertStory("st_no_nonce", peer, 10L, 100L, "c", "ref", byteArrayOf(1), null, "photo", null, 0L)
+        db.contentQueries.insertStory("st_null_type", peer, 10L, 100L, "c", "ref", byteArrayOf(1), byteArrayOf(2), null, null, 0L)
+        db.contentQueries.insertStory("st_empty_type", peer, 10L, 100L, "c", "ref", byteArrayOf(1), byteArrayOf(2), "", null, 0L)
+        db.contentQueries.insertStory("st_blank_ref", peer, 10L, 100L, "c", " ", byteArrayOf(1), byteArrayOf(2), "photo", null, 0L)
+        val rawStories = store.getAllStories().associateBy { it.id }
+        assertNull(rawStories["st_no_key"]?.attachment)
+        assertNull(rawStories["st_no_nonce"]?.attachment)
+        assertNull(rawStories["st_blank_ref"]?.attachment)
+        assertEquals("photo", rawStories["st_null_type"]?.attachment?.mediaType)
+        assertEquals("photo", rawStories["st_empty_type"]?.attachment?.mediaType)
+
+        targetDriver.execute(
+            null,
+            "CREATE TRIGGER drop_env AFTER INSERT ON ProcessedEnvelope BEGIN DELETE FROM ProcessedEnvelope WHERE envelope_id = NEW.envelope_id; END",
+            0,
+        )
+        assertThrows(IllegalStateException::class.java) {
+            targetStore.recordEnvelopeInTransaction("env_missing")
+        }
         Unit
     }
 
@@ -366,12 +404,13 @@ class ContentStoreTest {
                 assertTrue(c.content.getUndeliveredProfiles().isEmpty())
 
                 // Direct sendPix, postStory, updateProfile, and sendTyping when server accepts
-                c.sendPix(peer, "att_ok", keyB64, nonceB64, "photo", "hi", null, 5)
+                c.sendPix(peer, "att_ok", keyB64, nonceB64, "", "hi", null, 5)
                 c.postStory("story ok", "att_st_ok", keyB64, nonceB64, "photo", null)
                 c.updateProfile("Alice 3", "Bio 3")
                 c.sendTyping(peer, dev.barrelmaker.obscura.kit.TypingState.STARTED)
                 // Second sendTyping within 2s is throttled
                 c.sendTyping(peer, dev.barrelmaker.obscura.kit.TypingState.STARTED)
+                assertEquals(setOf("directMessage"), c.sweepExpired())
 
                 // Incoming message from peer can be marked seen once; missing or own messages are ignored
                 c.markSeen("non_existent_id")

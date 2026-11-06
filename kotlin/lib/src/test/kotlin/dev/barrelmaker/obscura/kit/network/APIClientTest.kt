@@ -151,4 +151,30 @@ class APIClientTest {
         assertTrue(runCatching { signedOut.fetchAttachment("a") }.exceptionOrNull() is ObscuraError.NotAuthenticated)
         assertEquals(0, server.requestCount)
     }
+
+    @Test
+    fun `malformed JSON, invalid own device lists, and invalid link sessions throw ProtocolViolation`() = runBlocking {
+        server.enqueue(status(200, body = "not-json"))
+        assertTrue(runCatching { api.fetchGatewayTicket() }.exceptionOrNull() is ObscuraError.ProtocolViolation)
+
+        for (badDevices in listOf(
+            """{"devices":[{"deviceId":"not-a-uuid","isPrimary":true}]}""",
+            """{"devices":[{"deviceId":"019f025a-0000-7de6-84b6-0000000000d1","isPrimary":true},{"deviceId":"019f025a-0000-7de6-84b6-0000000000d1","isPrimary":false}]}""",
+        )) {
+            server.enqueue(status(200, body = badDevices))
+            assertTrue(runCatching { api.fetchOwnDevices() }.exceptionOrNull() is ObscuraError.ProtocolViolation, badDevices)
+        }
+
+        for (badSession in listOf(
+            """{"id":"","userId":"019f025a-0000-7de6-84b6-000000000001","expiresAt":100}""",
+            """{"id":"ls","userId":"not-a-uuid","expiresAt":100}""",
+            """{"id":"ls","userId":"019f025a-0000-7de6-84b6-000000000001","expiresAt":0}""",
+        )) {
+            server.enqueue(status(200, body = badSession))
+            assertTrue(runCatching { api.createLinkSession("u", "p") }.exceptionOrNull() is ObscuraError.ProtocolViolation, badSession)
+        }
+
+        val httpsApi = APIClient("https://obscura.example.com") { "token" }
+        assertEquals("wss://obscura.example.com/v1/gateway?ticket=abc", httpsApi.gatewayUrl("abc"))
+    }
 }

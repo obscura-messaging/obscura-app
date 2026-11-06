@@ -99,6 +99,23 @@ class AttachmentCryptoTest {
             assertArrayEquals(movBytes, movFile.readBytes())
             assertEquals(movFile.absolutePath, AttachmentCrypto.readCached(cacheDir, "att_mov")?.absolutePath)
 
+            // 12+ byte payloads that partially match "ftyp" still fall back to jpg
+            for (partial in listOf(
+                ByteArray(12),
+                byteArrayOf(0, 0, 0, 0, 'f'.code.toByte(), 0, 0, 0, 0, 0, 0, 0),
+                byteArrayOf(0, 0, 0, 0, 'f'.code.toByte(), 't'.code.toByte(), 0, 0, 0, 0, 0, 0),
+                byteArrayOf(0, 0, 0, 0, 'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 0, 0, 0, 0, 0),
+            )) {
+                assertEquals("jpg", AttachmentCrypto.writeCached(cacheDir, "att_partial", partial).extension)
+            }
+
+            // Fallback to copyTo when renameTo fails (e.g. dest is an existing empty directory)
+            val fallbackDest = File(cacheDir, "att_fallback.jpg").also { it.mkdirs() }
+            assertTrue(fallbackDest.isDirectory)
+            val fallbackWritten = AttachmentCrypto.writeCached(cacheDir, "att_fallback", jpgBytes)
+            assertTrue(fallbackWritten.isFile)
+            assertArrayEquals(jpgBytes, fallbackWritten.readBytes())
+
             // Empty file is ignored by readCached
             File(cacheDir, "att_empty.jpg").writeBytes(ByteArray(0))
             assertNull(AttachmentCrypto.readCached(cacheDir, "att_empty"))
@@ -106,17 +123,21 @@ class AttachmentCryptoTest {
             // purgeCached deletes both main and leftover .tmp files across all extensions
             File(cacheDir, "att_mp4.mp4.tmp").writeBytes(byteArrayOf(1))
             File(cacheDir, "att_mp4.mp4.uuid.tmp").writeBytes(byteArrayOf(1))
+            File(cacheDir, "att_mp4.keep").writeBytes(byteArrayOf(1))
             AttachmentCrypto.purgeCached(cacheDir, "att/jpg:1")
             AttachmentCrypto.purgeCached(cacheDir, "att_mp4")
+            AttachmentCrypto.purgeCached(File(cacheDir, "nonexistent"), "att_mp4")
 
             assertNull(AttachmentCrypto.readCached(cacheDir, "att/jpg:1"))
             assertNull(AttachmentCrypto.readCached(cacheDir, "att_mp4"))
             assertFalse(File(cacheDir, "att_mp4.mp4.tmp").exists())
             assertFalse(File(cacheDir, "att_mp4.mp4.uuid.tmp").exists())
+            assertTrue(File(cacheDir, "att_mp4.keep").exists())
 
             // purgeAllCached deletes all remaining files in cacheDir
             assertTrue(movFile.exists())
             AttachmentCrypto.purgeAllCached(cacheDir)
+            AttachmentCrypto.purgeAllCached(File(cacheDir, "nonexistent"))
             assertNull(AttachmentCrypto.readCached(cacheDir, "att_mov"))
         } finally {
             cacheDir.deleteRecursively()

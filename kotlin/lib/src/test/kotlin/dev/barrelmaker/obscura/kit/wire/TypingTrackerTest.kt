@@ -54,6 +54,10 @@ class TypingTrackerTest {
 
         assertEquals(emptyList<String>(), tracker.observe("ctx").first())
         assertTrue(tracker.shouldSend("ctx", TypingState.STARTED, nowMs = 1))
+
+        // Stopping an unknown device/context is a safe no-op
+        tracker.stopped("unknown-ctx", "unknown-device")
+        assertEquals(emptyList<String>(), tracker.observe("unknown-ctx").first())
     }
 
     @Test
@@ -92,6 +96,7 @@ class TypingTrackerTest {
         assertFalse(c.observePeerTyping(peer).first())
 
         assertThrows(ObscuraError.InvalidArgument::class.java) { c.observePeerTyping(" ") }
+        assertThrows(ObscuraError.InvalidArgument::class.java) { c.observeTyping(" ") }
         assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.sendTyping(" ", TypingState.STARTED) } }
         Unit
     }

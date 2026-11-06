@@ -157,6 +157,12 @@ describe('slide projections & viewer groups', () => {
       groups: [{ userId: BOB.userId, username: 'bob', stories: [pixToSlide(pix1), pixToSlide(pix2)] }],
       initialGroupIdx: 0,
     });
+    expect(
+      pixViewerGroups([pix1], 'uUnlisted', 'fallbackName', ['p1'], [BOB]),
+    ).toEqual({
+      groups: [{ userId: 'uUnlisted', username: 'fallbackName', stories: [pixToSlide(pix1)] }],
+      initialGroupIdx: 0,
+    });
     expect(pixViewerGroups([msgWithWantedId], BOB.userId, 'fallback', ['m1'], [BOB])).toEqual({
       groups: [],
       initialGroupIdx: 0,

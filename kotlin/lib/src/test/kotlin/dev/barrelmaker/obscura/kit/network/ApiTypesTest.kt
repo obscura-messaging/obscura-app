@@ -33,8 +33,14 @@ class ApiTypesTest {
             JSONObject("""{"token":"t","refreshToken":"r","expiresAt":$FAR_FUTURE,"userId":"$SELF_USER_ID","deviceId":"$SELF_DEVICE_ID"}""")
         )
         assertEquals(AuthResponse("t", "r", FAR_FUTURE, SELF_USER_ID, SELF_DEVICE_ID), valid)
-        assertThrows(ObscuraError.ProtocolViolation::class.java) {
-            AuthResponse.from(JSONObject("""{"token":"t","refreshToken":"r","expiresAt":1}"""))
+        for (invalid in listOf(
+            """{"token":"","refreshToken":"r","expiresAt":1,"userId":"$SELF_USER_ID","deviceId":"$SELF_DEVICE_ID"}""",
+            """{"token":"t","refreshToken":"","expiresAt":1,"userId":"$SELF_USER_ID","deviceId":"$SELF_DEVICE_ID"}""",
+            """{"token":"t","refreshToken":"r","expiresAt":0,"userId":"$SELF_USER_ID","deviceId":"$SELF_DEVICE_ID"}""",
+            """{"token":"t","refreshToken":"r","expiresAt":1,"userId":"not-a-uuid","deviceId":"$SELF_DEVICE_ID"}""",
+            """{"token":"t","refreshToken":"r","expiresAt":1,"userId":"$SELF_USER_ID","deviceId":"not-a-uuid"}""",
+        )) {
+            assertThrows(ObscuraError.ProtocolViolation::class.java, { AuthResponse.from(JSONObject(invalid)) }, invalid)
         }
     }
 

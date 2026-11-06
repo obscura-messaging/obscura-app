@@ -127,4 +127,25 @@ class LinkConformanceTest {
     }
 
     private fun objects(array: JSONArray) = (0 until array.length()).map { array.getJSONObject(it) }
+
+    @org.junit.jupiter.api.Test
+    fun `LinkCrypto open rejects malformed protobuf, invalid nonce length, and invalid ephemeral public key`() {
+        val own = Curve.generateKeyPair().privateKey
+        org.junit.jupiter.api.Assertions.assertThrows(dev.barrelmaker.obscura.kit.ObscuraError.LinkFailed::class.java) {
+            LinkCrypto.open(byteArrayOf(-1, -1, -1), own)
+        }
+        val badNonceEnv = LinkEnvelope.newBuilder()
+            .setNonce(ByteString.copyFrom(byteArrayOf(1, 2, 3)))
+            .build()
+        org.junit.jupiter.api.Assertions.assertThrows(dev.barrelmaker.obscura.kit.ObscuraError.LinkFailed::class.java) {
+            LinkCrypto.open(badNonceEnv.toByteArray(), own)
+        }
+        val badKeyEnv = LinkEnvelope.newBuilder()
+            .setNonce(ByteString.copyFrom(ByteArray(12)))
+            .setEphemeralPublicKey(ByteString.copyFrom(byteArrayOf(1, 2, 3)))
+            .build()
+        org.junit.jupiter.api.Assertions.assertThrows(dev.barrelmaker.obscura.kit.ObscuraError.LinkFailed::class.java) {
+            LinkCrypto.open(badKeyEnv.toByteArray(), own)
+        }
+    }
 }

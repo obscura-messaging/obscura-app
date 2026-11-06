@@ -38,6 +38,9 @@ class AccountTest {
     private class Account {
         var devices = listOf(SELF_DEVICE_ID to true)
         var loginDeviceId: String? = null
+        var loginStatus: Int? = null
+        var provisionUserId: String = SELF_USER_ID
+        var linkSessionStatus: Int = 200
         var linkBody: ByteArray? = null
         var linkStatus = 200
         val attachments = Collections.synchronizedMap(mutableMapOf<String, ByteArray>())
@@ -54,19 +57,26 @@ class AccountTest {
                     path == "/v1/users" && request.method == "POST" ->
                         MockResponse.Builder().code(201).body(authResponseJson(deviceId = SELF_DEVICE_ID).toString()).build()
                     path == "/v1/session" -> {
+                        if (account.loginStatus != null) {
+                            return MockResponse.Builder().code(account.loginStatus!!).body("{}").build()
+                        }
                         val reqDeviceId = JSONObject(request.body!!.utf8()).optString("deviceId")
-                        if (account.loginDeviceId != null && reqDeviceId == account.loginDeviceId) {
+                        if (account.loginDeviceId != null) {
                             json(authResponseJson(deviceId = account.loginDeviceId!!))
-                        } else {
+                        } else if (reqDeviceId == SELF_DEVICE_ID) {
                             MockResponse.Builder().code(409).body("""{"error":"Device does not belong to this account"}""").build()
+                        } else {
+                            MockResponse.Builder().code(409).build()
                         }
                     }
                     path == "/v1/users/reset" ->
                         json(authResponseJson(deviceId = newDeviceId))
                     path == "/v1/devices" && request.method == "GET" -> json(JSONObject().put("devices",
                         account.devices.map { (id, primary) -> JSONObject().put("deviceId", id).put("isPrimary", primary) }))
-                    path == "/v1/devices" -> json(authResponseJson(deviceId = newDeviceId))
-                    path == "/v1/link-sessions" -> json(
+                    path == "/v1/devices" -> json(authResponseJson(userId = account.provisionUserId, deviceId = newDeviceId))
+                    path == "/v1/link-sessions" -> if (account.linkSessionStatus != 200) {
+                        MockResponse.Builder().code(account.linkSessionStatus).body("{}").build()
+                    } else json(
                         JSONObject().put("id", "ls-1").put("userId", SELF_USER_ID).put("expiresAt", System.currentTimeMillis() / 1000 + 600)
                     )
                     path == "/v1/link-sessions/ls-1" && request.method == "PUT" && account.linkStatus != 200 ->
@@ -378,5 +388,61 @@ class AccountTest {
         assertTrue(runCatching { c.beginLink("self", "password", "Tablet") }.exceptionOrNull() is ObscuraError.InvalidArgument)
         assertTrue(runCatching { newClient(url).beginLink("self", "password", " ") }.exceptionOrNull() is ObscuraError.InvalidArgument)
         assertTrue(account.requests.isEmpty())
+
+        // Device without LocalDevice entry but with Signal identity is also rejected as already provisioned
+        val signalOnly = newClient(url, MemoryStorage()).also { it.signalStore.generateIdentity() }
+        assertTrue(runCatching { signalOnly.register("self", "password") }.exceptionOrNull() is ObscuraError.InvalidArgument)
+        assertTrue(runCatching { signalOnly.register(" ", "password") }.exceptionOrNull() is ObscuraError.InvalidArgument)
+        assertTrue(runCatching { signalOnly.register("self", " ") }.exceptionOrNull() is ObscuraError.InvalidArgument)
+    }
+
+    @Test fun `login link-session cache misses, unprovisioned login errors, device mismatch variants, and provision account mismatch`() = runBlocking {
+        val now = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+        val unprovisioned = newClient(url, MemoryStorage(), clock = { now.get() })
+
+        // Unprovisioned login with 401 returns INVALID_CREDENTIALS; 500 rethrows
+        account.linkSessionStatus = 401
+        assertEquals(LoginScenario.INVALID_CREDENTIALS, unprovisioned.login("self", "wrong"))
+        account.linkSessionStatus = 500
+        assertTrue(runCatching { unprovisioned.login("self", "wrong") }.exceptionOrNull() is ObscuraError.Http)
+        account.linkSessionStatus = 200
+
+        // Cached link session is discarded when username differs, password differs, or session is near expiry
+        assertEquals(LoginScenario.LINK_REQUIRED, unprovisioned.login("self", "password"))
+        unprovisioned.beginLink("other-user", "password", "Tablet")
+        assertEquals(4, requestsTo("/v1/link-sessions").size)
+
+        assertEquals(LoginScenario.LINK_REQUIRED, unprovisioned.login("self", "password"))
+        unprovisioned.beginLink("self", "other-password", "Tablet")
+        assertEquals(6, requestsTo("/v1/link-sessions").size)
+
+        assertEquals(LoginScenario.LINK_REQUIRED, unprovisioned.login("self", "password"))
+        now.addAndGet(600_000L)
+        unprovisioned.beginLink("self", "password", "Tablet")
+        assertEquals(8, requestsTo("/v1/link-sessions").size)
+
+        // Provisioned login: 500 rethrows; mismatched response.deviceId or missing Signal identity returns DEVICE_MISMATCH
+        val provisioned = sessionClient(url, MemoryStorage())
+        account.loginStatus = 500
+        assertTrue(runCatching { provisioned.login("self", "password") }.exceptionOrNull() is ObscuraError.Http)
+        account.loginStatus = null
+        account.loginDeviceId = newDeviceId
+        assertEquals(LoginScenario.DEVICE_MISMATCH, provisioned.login("self", "password"))
+
+        val noSignal = newClient(url, MemoryStorage()).also { it.storeLocalDevice() }
+        account.loginDeviceId = SELF_DEVICE_ID
+        assertEquals(LoginScenario.DEVICE_MISMATCH, noSignal.login("self", "password"))
+
+        // provisionLinked with default persist parameter and mismatched userId throws ProtocolViolation
+        unprovisioned.auth.publishAuthenticated()
+        assertEquals(AuthState.LOGGED_OUT, unprovisioned.authState.value)
+        account.provisionUserId = "019f025a-0000-7de6-84b6-000000000999"
+        val keys = dev.barrelmaker.obscura.kit.managers.SignalKeyUtils.generateProvisioningKeys(
+            org.signal.libsignal.protocol.IdentityKeyPair.generate(),
+        )
+        val err = runCatching {
+            unprovisioned.auth.provisionLinked(SELF_USER_ID, SELF_DEVICE_ID, "self", "Tablet", keys, "ls-1")
+        }.exceptionOrNull()
+        assertTrue(err is ObscuraError.ProtocolViolation)
     }
 }
