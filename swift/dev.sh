@@ -36,9 +36,19 @@ case "${1:-test}" in
     prepare_libsignal_package
     if [[ "${*:2}" == *"UnitTests"* ]]; then
       LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test --enable-code-coverage "${@:2}"
+      # SwiftPM names the test bundle differently across toolchains
+      # (UnitTests.xctest vs. <Package>PackageTests.xctest), so locate it.
+      BIN_PATH="$(LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT build --show-bin-path)"
+      PROFDATA="$(dirname "$(LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test --show-codecov-path)")/default.profdata"
+      BUNDLE="$(find "$BIN_PATH" -maxdepth 1 -name '*.xctest' | head -n 1)"
+      if [ -z "$BUNDLE" ]; then
+        echo "error: no .xctest bundle found in $BIN_PATH" >&2
+        exit 1
+      fi
+      BINARY="$BUNDLE/Contents/MacOS/$(basename "$BUNDLE" .xctest)"
       REPORT="$(xcrun llvm-cov report \
-        .build/debug/UnitTests.xctest/Contents/MacOS/UnitTests \
-        -instr-profile=.build/debug/codecov/default.profdata \
+        "$BINARY" \
+        -instr-profile="$PROFDATA" \
         --ignore-filename-regex='.build|Tests|Sources/ObscuraKit/Proto' \
         Sources/ObscuraKit)"
       echo "$REPORT"
