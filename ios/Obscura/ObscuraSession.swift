@@ -45,9 +45,11 @@ final class ObscuraSession {
                 client = restored
                 clientUsername = username.lowercased()
                 observeMessages(restored)
-                restoreTask = Task {
+                restoreTask = Task { [weak self] in
                     if !(await restored.restorePersistedSession()) {
-                        logger.log("No usable stored session")
+                        self?.logger.log("No usable stored session")
+                    } else if self?.appInForeground == false {
+                        await restored.disconnect()
                     }
                 }
             }
@@ -139,15 +141,21 @@ final class ObscuraSession {
                 self.appInForeground = true
                 self.onAppStateChanged?(true)
                 await self.restoreTask?.value
-                guard let client = self.client, client.authState == .authenticated else { return }
+                guard self.appInForeground, let client = self.client, client.authState == .authenticated else { return }
                 do { try await client.connect() }
                 catch { self.logger.log("Foreground reconnect failed: \(error)") }
             }
         }
         center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
-                self?.appInForeground = false
-                self?.onAppStateChanged?(false)
+                guard let self else { return }
+                self.appInForeground = false
+                self.onAppStateChanged?(false)
+                await self.client?.disconnect()
+                await self.restoreTask?.value
+                if !self.appInForeground {
+                    await self.client?.disconnect()
+                }
             }
         }
     }

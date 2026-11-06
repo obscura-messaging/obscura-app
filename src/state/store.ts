@@ -4,29 +4,15 @@ import { useShallow } from 'zustand/react/shallow';
 import {
   Obscura, onObscuraEvent,
   type Friend, type ConnectionState, type ObscuraEvent,
+  type ConversationItem, type StoryItem, type ProfileItem,
 } from '../native/ObscuraModule';
-import { drainInboxFully } from './drainInbox';
-import { writeEntry, flushOutbox } from './writeEntry';
 import { primaryOnly } from './devices';
 import { requestStartupPermissions } from './permissions';
 import { getJsLog, logError } from '../utils/log';
-import type { Entry } from '../domain/merge';
-import type { ModelData, ModelName } from '../models/schema';
-import { EPHEMERAL_MODELS, isEphemeral } from '../domain/expiry';
 import { acceptedFriends, pendingFriends, type Identity } from '../domain/friends';
 import { cleanCode } from '../domain/qr';
-import { SEEN_MODEL, indexReceipts, seenEntryId, viewedAtFor } from '../domain/seen';
-import { readEntries } from './entryStore';
-import { sweepExpired } from './expiry';
 
-export type { Friend, ConnectionState };
-
-/** An entry as screens see it: `data` as sent, plus when its recipient saw it (ephemeral models). */
-export type ScreenEntry<D = Record<string, unknown>> = Entry<D> & { viewedAt: number | null };
-
-type ModelEntryMap = {
-  [M in ModelName]?: ScreenEntry<ModelData<M>>[];
-} & Record<string, ScreenEntry[] | undefined>;
+export type { Friend, ConnectionState, ConversationItem, StoryItem, ProfileItem };
 
 interface Session {
   /** The cold-start auth check has finished, so `authed` can be trusted. */
@@ -40,8 +26,9 @@ interface Session {
   /** Every relationship, any status. */
   friends: Friend[];
   connState: ConnectionState;
-  /** Entries per model; `undefined` until a screen first reads the model. */
-  entries: ModelEntryMap;
+  messages: ConversationItem[];
+  stories: StoryItem[];
+  profiles: ProfileItem[];
 }
 
 const SIGNED_OUT = {
@@ -52,22 +39,18 @@ const SIGNED_OUT = {
   isPrimary: null,
   friends: [],
   connState: 'disconnected',
-  entries: {},
+  messages: [],
+  stories: [],
+  profiles: [],
 } as const satisfies Omit<Session, 'bootstrapped'>;
 
 export const useStore = create<Session>(() => ({ bootstrapped: false, ...SIGNED_OUT }));
 
-/** Models a screen has requested, tracked before the first async read finishes so concurrent refreshes are not dropped. */
-const openedModels = new Set<string>();
-/** In-memory index of `seen` receipts, so receipt updates can re-project `viewedAt` without re-reading ephemeral tables. */
-let cachedReceipts: ReadonlyMap<string, Entry> | null = null;
 /** Incremented on every `resetSession()` so in-flight reads from a signed-out session never write into the next one. */
 let sessionEpoch = 0;
 
 export function resetSession(): void {
   sessionEpoch += 1;
-  openedModels.clear();
-  cachedReceipts = null;
   useStore.setState(SIGNED_OUT);
 }
 
@@ -103,85 +86,19 @@ export function usePendingFriends(): Friend[] {
   return useMemo(() => pendingFriends(friends), [friends]);
 }
 
-/**
- * All entries for `model`, loading on first use. Every stored entry passed the schema's field check,
- * which is what makes the typed `data` sound.
- */
-export function useModelEntries<M extends ModelName>(model: M): ScreenEntry<ModelData<M>>[] {
-  const entries = useStore((s) => s.entries[model]);
-  useEffect(() => {
-    if (entries === undefined) loadEntries(model);
-  }, [model, entries]);
-  return (entries ?? []) as ScreenEntry<ModelData<M>>[];
+export function useMessages(): ConversationItem[] {
+  return useStore((s) => s.messages);
 }
 
-// ─── Entry cache ─────────────────────────────────────────
-
-async function loadReceipts(reload = false): Promise<ReadonlyMap<string, Entry>> {
-  if (cachedReceipts === null || reload) {
-    const epoch = sessionEpoch;
-    const rows = indexReceipts(await readEntries(SEEN_MODEL));
-    if (epoch !== sessionEpoch) return rows;
-    cachedReceipts = rows;
-  }
-  return cachedReceipts;
+export function useStories(): StoryItem[] {
+  return useStore((s) => s.stories);
 }
 
-export async function loadEntries(model: string, preloadedReceipts?: ReadonlyMap<string, Entry>): Promise<void> {
-  const epoch = sessionEpoch;
-  openedModels.add(model);
-  try {
-    const rows = await readEntries(model);
-    const receipts = isEphemeral(model)
-      ? (preloadedReceipts ?? await loadReceipts(true))
-      : new Map<string, Entry>();
-    if (epoch !== sessionEpoch) return;
-    const entries = rows.map(({ undelivered: _undelivered, ...entry }) => (
-      { ...entry, viewedAt: viewedAtFor(model, entry, receipts) }
-    ));
-    useStore.setState((s) => ({ entries: { ...s.entries, [model]: entries } }));
-  } catch (e) {
-    logError('entries.load:' + model, e);
-  }
+export function useProfiles(): ProfileItem[] {
+  return useStore((s) => s.profiles);
 }
 
-/** Reload the changed models that a screen has loaded. A receipt-only change re-projects `viewedAt` in memory. */
-async function refreshLoaded(models: Iterable<string>): Promise<void> {
-  const epoch = sessionEpoch;
-  const changed = new Set(models);
-  const seenChanged = changed.delete(SEEN_MODEL);
-  const isOpened = (m: string) => openedModels.has(m) || useStore.getState().entries[m] !== undefined;
-  const toReload = [...changed].filter(isOpened);
-
-  const needsReceipts = seenChanged || toReload.some(isEphemeral);
-  const receipts = needsReceipts ? await loadReceipts(seenChanged) : undefined;
-  if (epoch !== sessionEpoch) return;
-
-  for (const model of toReload) {
-    await loadEntries(model, receipts);
-    if (epoch !== sessionEpoch) return;
-  }
-
-  if (seenChanged && receipts) {
-    const toReproject = EPHEMERAL_MODELS.filter(
-      (m) => !changed.has(m) && useStore.getState().entries[m] !== undefined,
-    );
-    if (toReproject.length > 0) {
-      useStore.setState((s) => {
-        const next: Record<string, ScreenEntry[] | undefined> = { ...s.entries };
-        for (const m of toReproject) {
-          const current = s.entries[m];
-          if (current) {
-            next[m] = current.map((e) => ({ ...e, viewedAt: viewedAtFor(m, e, receipts) }));
-          }
-        }
-        return { entries: next as ModelEntryMap };
-      });
-    }
-  }
-}
-
-// ─── Sync ────────────────────────────────────────────────
+// ─── Slice refresh & sync ────────────────────────────────
 // These never reject: they run from event handlers and timers that cannot act on a failure.
 
 /** Coalesce concurrent triggers within the same session epoch into at most one in-flight execution plus one trailing pass. */
@@ -210,33 +127,95 @@ function coalesce(task: () => Promise<void>): () => Promise<void> {
   };
 }
 
-export const drainAndRefresh: () => Promise<void> = coalesce(async () => {
+export const refreshMessages: () => Promise<void> = coalesce(async () => {
+  const epoch = sessionEpoch;
   try {
-    await refreshLoaded((await drainInboxFully()).touched);
+    const messages = await Obscura.getMessages();
+    if (epoch !== sessionEpoch) return;
+    useStore.setState({ messages });
   } catch (e) {
-    logError('inbox.drain', e);
+    logError('messages.refresh', e);
   }
 });
 
+export const refreshStories: () => Promise<void> = coalesce(async () => {
+  const epoch = sessionEpoch;
+  try {
+    const stories = await Obscura.getStories();
+    if (epoch !== sessionEpoch) return;
+    useStore.setState({ stories });
+  } catch (e) {
+    logError('stories.refresh', e);
+  }
+});
+
+export const refreshProfiles: () => Promise<void> = coalesce(async () => {
+  const epoch = sessionEpoch;
+  try {
+    const profiles = await Obscura.getProfiles();
+    if (epoch !== sessionEpoch) return;
+    useStore.setState({ profiles });
+  } catch (e) {
+    logError('profiles.refresh', e);
+  }
+});
+
+async function refreshSlicesForModels(models: Iterable<string>): Promise<void> {
+  let needMessages = false;
+  let needStories = false;
+  let needProfiles = false;
+  for (const model of models) {
+  switch (model) {
+    case 'directMessage':
+    case 'pix':
+    case 'seen':
+      needMessages = true;
+      break;
+    case 'story':
+      needStories = true;
+      break;
+    case 'profile':
+      needProfiles = true;
+      break;
+  }
+  }
+  await Promise.all([
+    needMessages ? refreshMessages() : Promise.resolve(),
+    needStories ? refreshStories() : Promise.resolve(),
+    needProfiles ? refreshProfiles() : Promise.resolve(),
+  ]);
+}
+
+export async function refreshAll(): Promise<void> {
+  await Promise.all([
+    refreshMessages(),
+    refreshStories(),
+    refreshProfiles(),
+  ]);
+}
+
 /** Retry entries whose send reached nobody. */
 export const flushOutboxFromStore: () => Promise<void> = coalesce(async () => {
-  const { myUserId, friends } = useStore.getState();
-  if (myUserId === '') return;
   try {
-    await flushOutbox({ selfUserId: myUserId, friends });
+    await Obscura.flushOutbox();
   } catch (e) {
     logError('outbox.flush', e);
   }
 });
 
 export const sweepAndRefresh: () => Promise<void> = coalesce(async () => {
-  await refreshLoaded(await sweepExpired());
+  try {
+    const touched = await Obscura.sweepExpired();
+    await refreshSlicesForModels(touched);
+  } catch (e) {
+    logError('expiry.sweep', e);
+  }
 });
 
 /** Everything "the network or the app came back" means: receive, retry and expire. */
 async function syncAll(): Promise<void> {
   await Promise.all([
-    drainAndRefresh(),
+    refreshAll(),
     flushOutboxFromStore(),
     sweepAndRefresh(),
   ]);
@@ -246,30 +225,21 @@ const SWEEP_INTERVAL_MS = 30 * 1000;
 
 // ─── Writes ──────────────────────────────────────────────
 
-/**
- * Store an entry, send it to its audience and refresh the model. The single application write path.
- *
- * @throws DirectRoutingUnresolved when the audience cannot be resolved (nothing is stored), or the
- *   send error when it reached nobody (the entry is kept and retried by the outbox).
- */
-export async function saveEntry(model: string, data: Record<string, unknown>, id?: string): Promise<string> {
-  const { myUserId, myDeviceId, friends } = useStore.getState();
-  // An empty author device would lose every REPLACE tie-break, so refuse until the session loads.
-  if (myUserId === '' || myDeviceId === '') {
-    throw new Error('saveEntry called before the session identity loaded — refusing to write');
-  }
+/** Send a seen receipt for an entry this user received. */
+export async function markSeen(entryId: string): Promise<void> {
   try {
-    return await writeEntry({ model, id, data, selfUserId: myUserId, myDeviceId, friends });
+    await Obscura.markSeen(entryId);
   } finally {
-    await refreshLoaded([model]);
+    await refreshMessages();
   }
 }
 
-/** Send a seen receipt for an entry this user received. */
-export async function markSeen(model: string, entry: Entry): Promise<void> {
-  const conversationId = entry.data.conversationId;
-  if (typeof conversationId !== 'string') return;
-  await saveEntry(SEEN_MODEL, { conversationId, viewedAt: Date.now() }, seenEntryId(model, entry.id));
+export async function saveOwnProfile(displayName: string, bio: string): Promise<void> {
+  try {
+    await Obscura.updateProfile(displayName, bio);
+  } finally {
+    await refreshProfiles();
+  }
 }
 
 // ─── Session & Friends ───────────────────────────────────
@@ -316,15 +286,15 @@ export function subscribeToLaunchScreen(onScreen: (screen: string) => void): () 
   });
 }
 
-export function applyObscuraEvent(event: ObscuraEvent): void {
+export async function applyObscuraEvent(event: ObscuraEvent): Promise<void> {
   switch (event.type) {
     case 'friendsChanged':
-      refreshFriends().catch((e) => logError('friends.refresh', e));
+      await refreshFriends().catch((e) => logError('friends.refresh', e));
       return;
     case 'connectionChanged':
       useStore.setState({ connState: event.state });
       // The server redelivers anything unacknowledged on reconnect.
-      if (event.state === 'connected') syncAll();
+      if (event.state === 'connected') await syncAll();
       return;
     case 'authStateChanged':
       if (event.state === 'loggedOut') resetSession();
@@ -333,22 +303,25 @@ export function applyObscuraEvent(event: ObscuraEvent): void {
     case 'appStateChanged':
       // Native code may have stored rows while JS was suspended; only flush the outbox if connected.
       if (event.state === 'active') {
-        drainAndRefresh();
-        if (useStore.getState().connState === 'connected') flushOutboxFromStore();
-        sweepAndRefresh();
+        await Promise.all([
+          refreshAll(),
+          useStore.getState().connState === 'connected' ? flushOutboxFromStore() : Promise.resolve(),
+          sweepAndRefresh(),
+        ]);
       }
       return;
     case 'pushTokenReceived':
-      Obscura.registerPushToken(event.token).catch((e) => logError('push.register', e));
+      if (useStore.getState().authed) {
+        await Obscura.registerPushToken(event.token).catch((e) => logError('push.register', e));
+      }
       return;
     case 'messageReceived':
-      // Only a wake-up: the message is in the inbox, not the event.
-      drainAndRefresh();
+      await refreshSlicesForModels([event.model]);
       return;
   }
 }
 
-/** Load the session identity and friends atomically, then sync: the drain needs the identity to authorize. */
+/** Load the session identity and friends atomically, then sync all domain slices. */
 export async function loadSession(): Promise<void> {
   const pull = <T>(p: Promise<T>, fallback: T): Promise<T> =>
     p.catch((e) => { logError('session.load', e); return fallback; });
@@ -372,26 +345,46 @@ export async function loadSession(): Promise<void> {
   await syncAll();
 }
 
+export async function bootstrapAuthState(): Promise<void> {
+  try {
+    const state = await Obscura.getAuthState();
+    if (state === 'authenticated') {
+      await loadSession();
+      useStore.setState({ authed: true });
+    }
+  } catch (e) {
+    logError('bootstrap.authState', e);
+  } finally {
+    useStore.setState({ bootstrapped: true });
+  }
+}
+
+export async function ensureSessionLoaded(): Promise<void> {
+  if (useStore.getState().myUserId === '') {
+    await loadSession();
+  }
+}
+
+export function shouldRequestStartupPermissions(
+  authed: boolean,
+  connState: ConnectionState,
+  alreadyRequested: boolean,
+): boolean {
+  return authed && connState === 'connected' && !alreadyRequested;
+}
+
 /** Mounted once at the app root: the auth check, the event subscription and the signed-in loops. */
 export function ObscuraBootstrap(): null {
   useEffect(() => {
-    Obscura.getAuthState()
-      .then(async (state) => {
-        if (state === 'authenticated') {
-          await loadSession();
-          useStore.setState({ authed: true });
-        }
-      })
-      .catch((e) => logError('bootstrap.authState', e))
-      .finally(() => useStore.setState({ bootstrapped: true }));
+    bootstrapAuthState();
   }, []);
 
-  useEffect(() => onObscuraEvent(applyObscuraEvent), []);
+  useEffect(() => onObscuraEvent((e) => { applyObscuraEvent(e); }), []);
 
   const authed = useStore((s) => s.authed);
   useEffect(() => {
     if (!authed) return;
-    loadSession();
+    ensureSessionLoaded();
     const timer = setInterval(() => { sweepAndRefresh(); }, SWEEP_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [authed]);
@@ -401,7 +394,7 @@ export function ObscuraBootstrap(): null {
   const permissionsRequested = useRef(false);
   useEffect(() => {
     if (!authed) { permissionsRequested.current = false; return; }
-    if (connState !== 'connected' || permissionsRequested.current) return;
+    if (!shouldRequestStartupPermissions(authed, connState, permissionsRequested.current)) return;
     permissionsRequested.current = true;
     requestStartupPermissions().catch((e) => logError('permissions.startup', e));
   }, [authed, connState]);

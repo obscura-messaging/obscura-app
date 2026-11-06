@@ -1,40 +1,53 @@
 import { useEffect, useState } from 'react';
-import { Obscura, onObscuraEvent } from '../native/ObscuraModule';
+import { Obscura, onObscuraEvent, type ObscuraEvent } from '../native/ObscuraModule';
 import { logError } from '../utils/log';
-import { saveEntry } from './store';
+import { refreshMessages } from './store';
 
 /** Real-time typing indicator and message sending for a 1:1 conversation. */
 
-export function notifyTyping(friendUserId: string, convId: string, prevText: string, nextText: string): void {
+export async function notifyTyping(friendUserId: string, prevText: string, nextText: string): Promise<void> {
   if (nextText.length > 0) {
-    Obscura.sendTyping([friendUserId], convId).catch((e) => logError('typing.send', e));
+    await Obscura.sendTyping(friendUserId).catch((e) => logError('typing.send', e));
   } else if (prevText.length > 0) {
-    Obscura.stopTyping([friendUserId], convId).catch((e) => logError('typing.stop', e));
+    await Obscura.stopTyping(friendUserId).catch((e) => logError('typing.stop', e));
   }
 }
 
-export async function sendChatMessage(convId: string, friendUserId: string, content: string): Promise<void> {
-  await Obscura.stopTyping([friendUserId], convId);
-  await saveEntry('directMessage', { conversationId: convId, content });
+export async function sendChatMessage(friendUserId: string, content: string): Promise<void> {
+  await Obscura.stopTyping(friendUserId);
+  try {
+    await Obscura.sendMessage(friendUserId, content);
+  } finally {
+    await refreshMessages();
+  }
 }
 
-export function usePeerTyping(convId: string, friendUserId: string): boolean {
+export function nextPeerTypingState(
+  current: boolean,
+  friendUserId: string,
+  event: ObscuraEvent,
+): boolean {
+  if (event.type === 'messageReceived' && event.model === 'directMessage') {
+    return false;
+  }
+  if (event.type === 'typingChanged' && event.peerUserId === friendUserId) {
+    return event.typing;
+  }
+  return current;
+}
+
+export function usePeerTyping(friendUserId: string): boolean {
   const [peerTyping, setPeerTyping] = useState(false);
   useEffect(() => {
     setPeerTyping(false);
     const unsubscribe = onObscuraEvent((event) => {
-      if (event.type === 'messageReceived' && event.model === 'directMessage') {
-        setPeerTyping(false);
-      } else if (event.type === 'typingChanged' && event.conversationId === convId) {
-        // Anyone can signal under this id; only this conversation's friend counts.
-        setPeerTyping(event.userIds.includes(friendUserId));
-      }
+      setPeerTyping((current) => nextPeerTypingState(current, friendUserId, event));
     });
-    Obscura.observeTyping(convId).catch((e) => logError('typing.observe', e));
+    Obscura.observeTyping(friendUserId).catch((e) => logError('typing.observe', e));
     return () => {
       unsubscribe();
-      Obscura.stopObservingTyping(convId).catch((e) => logError('typing.unobserve', e));
+      Obscura.stopObservingTyping(friendUserId).catch((e) => logError('typing.unobserve', e));
     };
-  }, [convId, friendUserId]);
+  }, [friendUserId]);
   return peerTyping;
 }

@@ -7,7 +7,13 @@ if [[ -z "${JAVA_HOME:-}" ]]; then
       JAVA_HOME="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
       ;;
     Linux)
-      if command -v java >/dev/null 2>&1; then
+      for candidate in /usr/lib/jvm/java-21-openjdk-* /usr/lib/jvm/temurin-21-jdk-*; do
+        if [[ -x "$candidate/bin/java" ]]; then
+          JAVA_HOME="$candidate"
+          break
+        fi
+      done
+      if [[ -z "${JAVA_HOME:-}" ]] && command -v java >/dev/null 2>&1; then
         JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
       fi
       ;;

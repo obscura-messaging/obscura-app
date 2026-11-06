@@ -1,4 +1,8 @@
-import type { Friend } from '../native/ObscuraModule';
+export interface Friend {
+  userId: string;
+  username: string;
+  status: 'pending_sent' | 'pending_received' | 'accepted';
+}
 
 export function isAccepted(friend: Friend): boolean {
   return friend.status === 'accepted';
@@ -27,4 +31,22 @@ export function displayNameFor(userId: string, { myUserId, myUsername, friends }
   if (userId === '') return null;
   if (userId === myUserId) return myUsername;
   return friends.find((f) => f.userId === userId && isAccepted(f))?.username ?? null;
+}
+
+export interface ProfileItem {
+  userId: string;
+  authorDeviceId: string;
+  updatedAt: number;
+  displayName: string;
+  bio: string;
+}
+
+export function friendProfileEntries<P extends { userId: string }>(
+  profiles: readonly P[],
+  identity: Identity,
+): Array<{ entry: P; name: string }> {
+  return profiles.flatMap((entry) => {
+    const name = entry.userId === identity.myUserId ? null : displayNameFor(entry.userId, identity);
+    return name === null ? [] : [{ entry, name }];
+  });
 }

@@ -7,7 +7,7 @@
     "lint": "eslint .",
     "start": "react-native start",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
-    "test": "jest"
+    "test": "jest --coverage"
   },
   "dependencies": {
     "@react-navigation/bottom-tabs": "^7.21.0",

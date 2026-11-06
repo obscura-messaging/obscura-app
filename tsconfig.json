@@ -10,7 +10,8 @@
   "exclude": [
     "**/node_modules",
     "**/__tests__/**",
-    "obscura-native/**",
+    "kotlin/**",
+    "swift/**",
     "jest.setup.ts"
   ]
 }

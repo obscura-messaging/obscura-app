@@ -1,7 +1,9 @@
 import {
-  MIN_PASSWORD_LENGTH, cancelLink, credentialsProblem, linkThisDevice, logIn, register, resetAccount,
+  MIN_PASSWORD_LENGTH, cancelLink, cancelPendingLinkOnUnmount,
+  credentialsProblem, linkThisDevice, logIn, register, resetAccount,
 } from '../login';
 import { resetSession, useStore } from '../store';
+import { Obscura } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
 const bridge = getFakeBridge();
@@ -18,8 +20,8 @@ describe('logIn', () => {
   it('connects an existing device without provisioning', async () => {
     expect(await logIn('alice', 'password-1234')).toBe('signedIn');
 
-    expect(bridge.__calls).toEqual(['login', 'connect']);
     expect(useStore.getState().authed).toBe(true);
+    expect(bridge.connectionState).toBe('connected');
   });
 
   it('asks for a link when there is no local device', async () => {
@@ -27,11 +29,13 @@ describe('logIn', () => {
 
     expect(await logIn('alice', 'password-1234')).toBe('linkRequired');
 
-    expect(bridge.__calls).toEqual(['login']);
     expect(useStore.getState().authed).toBe(false);
+    expect(bridge.connectionState).toBe('disconnected');
   });
 
   it('wipes a device the account no longer has, then logs in again to link', async () => {
+    bridge.__deliverMessage({ id: 'stale_dm', content: 'old' });
+    bridge.__deliverStory({ id: 'stale_story', content: 'old' });
     bridge.__setLoginScenario('deviceMismatch');
     const login = bridge.login.bind(bridge);
     jest.spyOn(bridge, 'login').mockImplementation(async (u, p) => {
@@ -42,25 +46,29 @@ describe('logIn', () => {
 
     expect(await logIn('alice', 'password-1234')).toBe('linkRequired');
 
-    expect(bridge.__calls).toEqual(['login', 'wipeDevice', 'login']);
+    expect(await Obscura.getMessages()).toEqual([]);
+    expect(await Obscura.getStories()).toEqual([]);
     expect(bridge.authState).toBe('loggedOut');
   });
 
   it('refuses a second mismatch rather than wiping in a loop', async () => {
+    bridge.__deliverMessage({ id: 'stale_dm', content: 'old' });
     bridge.__setLoginScenario('deviceMismatch');
 
     await expect(logIn('alice', 'password-1234')).rejects.toThrow(/after a wipe/);
 
-    expect(bridge.__calls).toEqual(['login', 'wipeDevice', 'login']);
+    expect(await Obscura.getMessages()).toEqual([]);
+    expect(useStore.getState().authed).toBe(false);
   });
 
   it('does not log in again when the wipe fails', async () => {
+    bridge.__deliverMessage({ id: 'keep_dm', content: 'still here' });
     bridge.__setLoginScenario('deviceMismatch');
     bridge.__failNext('wipeDevice', 'WIPE_ERROR');
 
     await expect(logIn('alice', 'password-1234')).rejects.toMatchObject({ code: 'WIPE_ERROR' });
 
-    expect(bridge.__calls).toEqual(['login', 'wipeDevice']);
+    expect(await Obscura.getMessages()).toHaveLength(1);
     expect(useStore.getState().authed).toBe(false);
   });
 
@@ -69,8 +77,8 @@ describe('logIn', () => {
 
     expect(await logIn('alice', 'password-1234')).toBe('invalidCredentials');
 
-    expect(bridge.__calls).toEqual(['login']);
     expect(useStore.getState().authed).toBe(false);
+    expect(bridge.connectionState).toBe('disconnected');
   });
 });
 
@@ -118,11 +126,18 @@ describe('linkThisDevice', () => {
     const codes: string[] = [];
     const linking = linkThisDevice('alice', 'password-1234', (code) => codes.push(code));
 
-    await cancelLink();
+    await cancelPendingLinkOnUnmount();
 
     await expect(linking).rejects.toMatchObject({ code: 'CANCELLED' });
     expect(codes).toEqual([]);
-    expect(bridge.__calls).toEqual(['beginLink', 'cancelLink', 'cancelLink']);
+    expect(bridge.__calls).toContain('beginLink');
+    expect(bridge.__calls).toContain('cancelLink');
+    expect(bridge.__calls).not.toContain('completeLink');
+
+    bridge.__calls.length = 0;
+    useStore.setState({ authed: true });
+    await cancelPendingLinkOnUnmount();
+    expect(bridge.__calls).not.toContain('cancelLink');
   });
 });
 
@@ -130,8 +145,8 @@ describe('resetAccount', () => {
   it('resets and provisions this device as the new primary, then connects', async () => {
     await resetAccount('alice', 'password-1234');
 
-    expect(bridge.__calls).toEqual(['resetAccount', 'connect']);
     expect(useStore.getState().authed).toBe(true);
+    expect(bridge.connectionState).toBe('connected');
   });
 
   it('connects nothing when the reset fails', async () => {
@@ -139,14 +154,20 @@ describe('resetAccount', () => {
 
     await expect(resetAccount('alice', 'password-1234')).rejects.toMatchObject({ code: 'HTTP_ERROR' });
 
-    expect(bridge.__calls).toEqual(['resetAccount']);
+    expect(useStore.getState().authed).toBe(false);
+    expect(bridge.connectionState).toBe('disconnected');
   });
 });
 
 /** Let the flow under test reach its `count`th call to `method`. */
 async function waitForCall(method: string, count = 1): Promise<void> {
-  while (bridge.__calls.filter((call) => call === method).length < count) {
+  const maxTicks = 50;
+  for (let tick = 0; tick < maxTicks; tick += 1) {
+    if (bridge.__calls.filter((call) => call === method).length >= count) return;
     await new Promise((resolve) => setImmediate(resolve));
+  }
+  if (bridge.__calls.filter((call) => call === method).length < count) {
+    throw new Error(`Timed out waiting for ${method} (#${count})`);
   }
 }
 
@@ -154,8 +175,8 @@ describe('register', () => {
   it('registers, connects and signs in', async () => {
     await register('alice', 'password-1234');
 
-    expect(bridge.__calls).toEqual(['registerUser', 'connect']);
     expect(useStore.getState().authed).toBe(true);
+    expect(bridge.connectionState).toBe('connected');
   });
 });
 

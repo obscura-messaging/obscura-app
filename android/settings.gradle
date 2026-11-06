@@ -16,7 +16,7 @@ includeBuild('../node_modules/@react-native/gradle-plugin')
 //
 // OBSCURA_KIT_PATH can point at another checkout while developing coordinated
 // native changes; committed and CI builds use the pinned submodule.
-def obscuraKitPath = System.getenv('OBSCURA_KIT_PATH') ?: '../obscura-native/kotlin'
+def obscuraKitPath = System.getenv('OBSCURA_KIT_PATH') ?: '../kotlin'
 includeBuild(obscuraKitPath) {
     dependencySubstitution {
         substitute(module('dev.barrelmaker.obscura.kit:obscura-kit')).using(project(':lib'))

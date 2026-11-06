@@ -1,5 +1,4 @@
 import { clamp } from '../utils/gesture';
-import { logError } from '../utils/log';
 
 /**
  * Pure domain types and parser for styled media captions.
@@ -51,8 +50,7 @@ export function parseCaptionMeta(raw?: string | null): CaptionMeta | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch (e) {
-    logError('caption.parse', e);
+  } catch {
     return null;
   }
   if (!parsed || typeof parsed !== 'object') return null;
@@ -68,7 +66,7 @@ export function parseCaptionMeta(raw?: string | null): CaptionMeta | null {
     const rot = typeof m.rot === 'number' && Number.isFinite(m.rot) ? m.rot : 0;
     const scale = typeof m.scale === 'number' && Number.isFinite(m.scale) && m.scale > 0 ? m.scale : 1;
     const color = typeof m.color === 'string' && m.color !== '' ? m.color : CAPTION_COLORS[0];
-    const font = typeof m.font === 'number' && Number.isInteger(m.font) && m.font >= 0 && m.font < CAPTION_FONT_LABELS.length
+    const font = typeof m.font === 'number' && (CAPTION_FONT_LABELS as readonly string[])[m.font] !== undefined
       ? m.font
       : 0;
     return { style: 'bold', x, y, rot, scale, color, font };
@@ -79,3 +77,32 @@ export function parseCaptionMeta(raw?: string | null): CaptionMeta | null {
 export function serializeCaptionMeta(meta: CaptionMeta): string {
   return JSON.stringify(meta);
 }
+
+/**
+ * Build a normalized `CaptionMeta` from preview editor state, or `null` when `text` is blank.
+ */
+export function buildCaptionMeta(input: {
+  text: string;
+  style: CaptionStyle;
+  y: number;
+  x?: number;
+  scale?: number;
+  rot?: number;
+  colorIdx?: number;
+  fontIdx?: number;
+}): CaptionMeta | null {
+  if (input.text.trim().length === 0) return null;
+  const y = clamp01(input.y);
+  if (input.style === 'bar') {
+    return { style: 'bar', y };
+  }
+  const x = clamp01(input.x ?? 0.5);
+  const rot = input.rot ?? 0;
+  const scale = input.scale !== undefined && input.scale > 0 ? input.scale : 1;
+  const color = (CAPTION_COLORS as readonly string[])[input.colorIdx ?? 0] ?? CAPTION_COLORS[0];
+  const font = input.fontIdx !== undefined && (CAPTION_FONT_LABELS as readonly string[])[input.fontIdx] !== undefined
+    ? input.fontIdx
+    : 0;
+  return { style: 'bold', x, y, rot, scale, color, font };
+}
+

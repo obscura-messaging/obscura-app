@@ -1,16 +1,12 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { NavigatorScreenParams } from '@react-navigation/native';
-import type { ScreenEntry } from '../domain/seen';
-import type { ModelData } from '../models/schema';
-import type { Capture, MediaType } from '../state/sendMedia';
+import type { MediaType } from '../domain/viewer';
+import type { Capture } from '../state/sendMedia';
 
 export type MainTabParamList = {
   Camera: undefined;
   Chats: undefined;
 };
-
-/** The story viewer shows stories and pix alike. */
-export type ViewerEntry = ScreenEntry<Partial<ModelData<'story'> & ModelData<'pix'>>>;
 
 /** Normalized navigation target for `StoryViewer`: either live stories starting at a user, or specific view-once pix IDs. */
 export type StoryViewerParams =

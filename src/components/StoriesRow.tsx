@@ -3,8 +3,8 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-nati
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Avatar } from './Avatar';
-import { storyGroups } from '../domain/stories';
-import { useIdentity, useModelEntries } from '../state/store';
+import { storyGroups } from '../domain/viewer';
+import { useIdentity, useStories } from '../state/store';
 import type { RootStackParamList } from '../navigation/types';
 import { colors } from '../styles';
 
@@ -32,9 +32,8 @@ function StoryCircle({ label, username, empty, onPress }: {
 export function StoriesRow() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const identity = useIdentity();
-  const stories = useModelEntries('story');
-  // Stories past their age are hidden until the sweep erases them.
-  const { mine, others } = useMemo(() => storyGroups(stories, identity, Date.now()), [stories, identity]);
+  const stories = useStories();
+  const { mine, others } = useMemo(() => storyGroups(stories, identity), [stories, identity]);
 
   const open = (userId: string) => {
     nav.navigate('StoryViewer', { mode: 'stories', initialUserId: userId });

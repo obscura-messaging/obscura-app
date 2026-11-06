@@ -2,13 +2,13 @@ import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import {
   CAPTION_FONT_LABELS, CAPTION_COLORS, DEFAULT_BAR, clamp01,
-  parseCaptionMeta, serializeCaptionMeta,
+  buildCaptionMeta, parseCaptionMeta, serializeCaptionMeta,
   type CaptionMeta, type CaptionStyle, type BoldCaptionMeta,
 } from '../domain/caption';
 
 export {
   CAPTION_FONT_LABELS, CAPTION_COLORS, DEFAULT_BAR,
-  parseCaptionMeta, serializeCaptionMeta,
+  buildCaptionMeta, parseCaptionMeta, serializeCaptionMeta,
   type CaptionMeta, type CaptionStyle,
 };
 

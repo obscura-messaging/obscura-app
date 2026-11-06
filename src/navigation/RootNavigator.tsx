@@ -89,6 +89,8 @@ function headerOptions(title: string): NativeStackNavigationOptions {
     headerStyle: { backgroundColor: colors.bg },
     headerTintColor: colors.accent,
     headerTitleStyle: { color: colors.text, fontWeight: '700' },
+    gestureEnabled: true,
+    fullScreenGestureEnabled: true,
     title,
   };
 }

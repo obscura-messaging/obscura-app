@@ -1,0 +1,448 @@
+package dev.barrelmaker.obscura.kit
+
+import dev.barrelmaker.obscura.kit.crypto.LinkCrypto
+import dev.barrelmaker.obscura.kit.crypto.fromBase64
+import dev.barrelmaker.obscura.kit.stores.ConversationItemData
+import dev.barrelmaker.obscura.kit.stores.FriendData
+import dev.barrelmaker.obscura.kit.stores.FriendStatus
+import dev.barrelmaker.obscura.kit.stores.ProfileItemData
+import dev.barrelmaker.obscura.kit.stores.STORY_MAX_AGE_MS
+import dev.barrelmaker.obscura.kit.stores.StoryItemData
+import dev.barrelmaker.obscura.kit.stores.expiresAt
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import mockwebserver3.Dispatcher
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
+import mockwebserver3.RecordedRequest
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import org.json.JSONObject
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertArrayEquals
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import org.signal.libsignal.protocol.ecc.Curve
+import java.util.Collections
+import java.util.UUID
+
+/** Login outcomes, primary provisioning, reset and linking against a stand-in server. */
+class AccountTest {
+    private val newDeviceId = "019f025a-0000-7de6-84b6-0000000000d9"
+
+    /** The server's account state for one user. */
+    private class Account {
+        var devices = listOf(SELF_DEVICE_ID to true)
+        var loginDeviceId: String? = null
+        var loginStatus: Int? = null
+        var provisionUserId: String = SELF_USER_ID
+        var linkSessionStatus: Int = 200
+        var linkBody: ByteArray? = null
+        var linkStatus = 200
+        val attachments = Collections.synchronizedMap(mutableMapOf<String, ByteArray>())
+        val requests = Collections.synchronizedList(mutableListOf<RecordedRequest>())
+    }
+
+    private val account = Account()
+    private val server = MockWebServer().apply {
+        dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                account.requests.add(request)
+                val path = request.url.encodedPath
+                return when {
+                    path == "/v1/users" && request.method == "POST" ->
+                        MockResponse.Builder().code(201).body(authResponseJson(deviceId = SELF_DEVICE_ID).toString()).build()
+                    path == "/v1/session" -> {
+                        if (account.loginStatus != null) {
+                            return MockResponse.Builder().code(account.loginStatus!!).body("{}").build()
+                        }
+                        val reqDeviceId = JSONObject(request.body!!.utf8()).optString("deviceId")
+                        if (account.loginDeviceId != null) {
+                            json(authResponseJson(deviceId = account.loginDeviceId!!))
+                        } else if (reqDeviceId == SELF_DEVICE_ID) {
+                            MockResponse.Builder().code(409).body("""{"error":"Device does not belong to this account"}""").build()
+                        } else {
+                            MockResponse.Builder().code(409).build()
+                        }
+                    }
+                    path == "/v1/users/reset" ->
+                        json(authResponseJson(deviceId = newDeviceId))
+                    path == "/v1/devices" && request.method == "GET" -> json(JSONObject().put("devices",
+                        account.devices.map { (id, primary) -> JSONObject().put("deviceId", id).put("isPrimary", primary) }))
+                    path == "/v1/devices" -> json(authResponseJson(userId = account.provisionUserId, deviceId = newDeviceId))
+                    path == "/v1/link-sessions" -> if (account.linkSessionStatus != 200) {
+                        MockResponse.Builder().code(account.linkSessionStatus).body("{}").build()
+                    } else json(
+                        JSONObject().put("id", "ls-1").put("userId", SELF_USER_ID).put("expiresAt", System.currentTimeMillis() / 1000 + 600)
+                    )
+                    path == "/v1/link-sessions/ls-1" && request.method == "PUT" && account.linkStatus != 200 ->
+                        MockResponse.Builder().code(account.linkStatus).build()
+                    path == "/v1/link-sessions/ls-1" && request.method == "PUT" -> {
+                        account.linkBody = request.body!!.toByteArray()
+                        MockResponse.Builder().build()
+                    }
+                    path == "/v1/link-sessions/ls-1" -> when {
+                        account.linkStatus != 200 -> MockResponse.Builder().code(account.linkStatus).build()
+                        account.linkBody == null -> MockResponse.Builder().code(204).build()
+                        else -> MockResponse.Builder().body(okio.Buffer().write(account.linkBody!!)).build()
+                    }
+                    path == "/v1/attachments" -> {
+                        val id = UUID.randomUUID().toString()
+                        account.attachments[id] = request.body!!.toByteArray()
+                        json(JSONObject().put("id", id))
+                    }
+                    path.startsWith("/v1/attachments/") -> account.attachments[path.removePrefix("/v1/attachments/")]
+                        ?.let { MockResponse.Builder().body(okio.Buffer().write(it)).build() } ?: MockResponse.Builder().code(404).build()
+                    path == "/v1/gateway/ticket" -> json(JSONObject().put("ticket", "t"))
+                    path == "/v1/gateway" -> MockResponse.Builder().webSocketUpgrade(object : WebSocketListener() {
+                        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(1000, null) }
+                    }).build()
+                    else -> MockResponse.Builder().code(404).build()
+                }
+            }
+        }
+        start()
+    }
+    private val url = server.url("/").toString().trimEnd('/')
+
+    @AfterEach fun close() = server.close()
+
+    private fun json(body: JSONObject) = MockResponse.Builder().body(body.toString()).build()
+
+    private fun requestsTo(path: String) = account.requests.filter { it.url.encodedPath == path }
+
+    @Test fun `without a stored device login creates a link session and reuses it on beginLink`() = runBlocking {
+        val storage = MemoryStorage()
+        val c = newClient(url, storage)
+
+        assertEquals(LoginScenario.LINK_REQUIRED, c.login("self", "password"))
+        assertEquals(AuthState.LOGGED_OUT, c.authState.value)
+        assertNull(storage.data)
+        assertEquals(1, requestsTo("/v1/link-sessions").size)
+
+        val request = c.beginLink("self", "password", "Tablet")
+        assertEquals("ls-1", LinkCrypto.decodeCode(request.code).sessionId)
+        assertEquals(1, requestsTo("/v1/link-sessions").size, "beginLink reuses the link session from login")
+    }
+
+    @Test fun `a stored device the account no longer has is a device mismatch`() = runBlocking {
+        val c = sessionClient(url, MemoryStorage())
+
+        assertEquals(LoginScenario.DEVICE_MISMATCH, c.login("self", "password"))
+        assertEquals(AuthState.LOGGED_OUT, c.authState.value)
+
+        account.loginDeviceId = SELF_DEVICE_ID
+        assertEquals(LoginScenario.EXISTING_DEVICE, c.login("self", "password"))
+        assertEquals(SELF_DEVICE_ID, c.deviceId)
+        c.auth.end()
+        Unit
+    }
+
+    @Test fun `register stores a primary with a new identity once the server accepts it`() = runBlocking {
+        val storage = MemoryStorage()
+        val c = newClient(url, storage)
+
+        c.register("self", "password")
+
+        val body = JSONObject(requestsTo("/v1/users").single().body!!.utf8())
+        assertEquals("self", body.getString("username"))
+        assertEquals("password", body.getString("password"))
+        assertArrayEquals(c.signalStore.identityKeyPair.publicKey.serialize(), body.getString("identityKey").fromBase64())
+        assertEquals(100, body.getJSONArray("oneTimePreKeys").length())
+        assertEquals(1, body.getJSONObject("signedPreKey").getInt("keyId"))
+        assertTrue(c.isPrimary())
+        assertEquals(listOf(SELF_DEVICE_ID), c.devices.devicesOf(SELF_USER_ID))
+        assertEquals(SELF_DEVICE_ID, storage.data!!["deviceId"])
+        assertEquals(AuthState.AUTHENTICATED, c.authState.value)
+        c.auth.end()
+        Unit
+    }
+
+    @Test fun `resetAccount resets the account on the server, wipes old data, and provisions a new primary`() = runBlocking {
+        val storage = storedSession()
+        val c = sessionClient(url, storage)
+        assertTrue(c.auth.restore())
+        val oldIdentity = c.signalStore.identityKeyPair.publicKey
+        c.content.putConversation(
+            ConversationItemData("e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
+        )
+
+        c.resetAccount("self", "password")
+
+        val body = JSONObject(requestsTo("/v1/users/reset").single().body!!.utf8())
+        assertEquals("self", body.getString("username"))
+        assertEquals("password", body.getString("password"))
+        assertArrayEquals(c.signalStore.identityKeyPair.publicKey.serialize(), body.getString("identityKey").fromBase64())
+        assertFalse(oldIdentity.serialize().contentEquals(c.signalStore.identityKeyPair.publicKey.serialize()))
+        assertEquals(AuthState.AUTHENTICATED, c.authState.value)
+        assertEquals(newDeviceId, c.deviceId)
+        assertEquals(newDeviceId, storage.data!!["deviceId"])
+        assertTrue(c.isPrimary())
+        assertTrue(c.getMessages().isEmpty())
+        c.auth.end()
+        Unit
+    }
+
+    @Test fun `a linked device receives the account identity, friends and history and is not primary`() = runBlocking {
+        val primary = sessionClient(url, storedSession())
+        assertTrue(primary.auth.restore())
+        val peerId = "019f025a-0000-7de6-84b6-000000000002"
+        val friends = listOf(FriendData(peerId, "alice", FriendStatus.ACCEPTED))
+        primary.db.friendQueries.insert(friends[0].userId, friends[0].username, friends[0].status.value)
+        primary.db.friendQueries.incrementVersion()
+        val msg = ConversationItemData("dm_1", peerId, "message", SELF_USER_ID, 42, null, expiresAt(42, null), "hi", undelivered = true)
+        val story = StoryItemData("st_1", SELF_USER_ID, 100, 100 + STORY_MAX_AGE_MS, "my story", undelivered = true)
+        val profile = ProfileItemData(SELF_USER_ID, SELF_DEVICE_ID, 50, "Self", "Bio", undelivered = true)
+        primary.content.putConversation(msg)
+        primary.content.putStory(story)
+        primary.content.putProfile(profile)
+        val storage = MemoryStorage()
+        val tablet = newClient(url, storage)
+
+        val request = tablet.beginLink("self", "password", "Tablet")
+        val code = LinkCrypto.decodeCode(request.code)
+        assertEquals("ls-1", code.sessionId)
+        assertEquals("Tablet", code.deviceName)
+        assertEquals(33, Curve.decodePoint(code.ephemeralPublicKey.toByteArray(), 0).serialize().size)
+        primary.approveLink(request.code)
+        tablet.completeLink(request)
+
+        assertArrayEquals(primary.signalStore.identityKeyPair.serialize(), tablet.signalStore.identityKeyPair.serialize())
+        assertFalse(tablet.isPrimary())
+        assertEquals(newDeviceId, tablet.deviceId)
+        assertEquals(newDeviceId, storage.data!!["deviceId"])
+        assertEquals(friends, tablet.getFriends())
+        assertEquals(1L, tablet.db.friendQueries.selectVersion().executeAsOne())
+        assertEquals(listOf(msg.copy(undelivered = false)), tablet.getMessages())
+        assertEquals(listOf(story.copy(undelivered = false)), tablet.getStories(now = 0))
+        assertEquals(listOf(profile.copy(undelivered = false)), tablet.getProfiles())
+        assertEquals(ConnectionState.CONNECTED, tablet.connectionState.value)
+        val created = JSONObject(requestsTo("/v1/devices").single { it.method == "POST" }.body!!.utf8())
+        assertEquals("ls-1", created.getString("linkSessionId"))
+        assertEquals("Tablet", created.getString("name"))
+        assertArrayEquals(primary.signalStore.identityKeyPair.publicKey.serialize(), created.getString("identityKey").fromBase64())
+        assertTrue(primary.signalStore.identityKeyPair.publicKey.publicKey.verifySignature(
+            created.getJSONObject("signedPreKey").getString("publicKey").fromBase64(),
+            created.getJSONObject("signedPreKey").getString("signature").fromBase64()))
+        assertTrue(account.attachments.values.none { String(it).contains("hi") }, "history is uploaded encrypted")
+        tablet.disconnect()
+        primary.auth.end()
+        tablet.auth.end()
+        Unit
+    }
+
+    @Test fun `a history that cannot be imported throws but leaves the device linked and authenticated`() = runBlocking {
+        val primary = sessionClient(url, storedSession())
+        assertTrue(primary.auth.restore())
+        primary.content.putConversation(
+            ConversationItemData("e1", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
+        )
+        val storage = MemoryStorage()
+        val tablet = newClient(url, storage)
+        val request = tablet.beginLink("self", "password", "Tablet")
+        primary.approveLink(request.code)
+        account.attachments.clear()
+
+        val error = runCatching { tablet.completeLink(request) }.exceptionOrNull()
+
+        assertTrue(error is ObscuraError.Http && error.status == 404, "got $error")
+        assertEquals(AuthState.AUTHENTICATED, tablet.authState.value)
+        assertEquals(newDeviceId, storage.data!!["deviceId"])
+        assertArrayEquals(primary.signalStore.identityKeyPair.serialize(), tablet.signalStore.identityKeyPair.serialize())
+        assertTrue(tablet.getMessages().isEmpty())
+        primary.auth.end()
+        tablet.auth.end()
+        Unit
+    }
+
+    @Test fun `a bundle that decrypts but has invalid fields is a protocol violation and stores nothing`() = runBlocking {
+        val tablet = newClient(url, MemoryStorage())
+        val request = tablet.beginLink("self", "password", "Tablet")
+        val epk = Curve.decodePoint(LinkCrypto.decodeCode(request.code).ephemeralPublicKey.toByteArray(), 0)
+        val validIdentity = com.google.protobuf.ByteString.copyFrom(org.signal.libsignal.protocol.IdentityKeyPair.generate().serialize())
+
+        val invalidPayloads = listOf(
+            // Unparseable protobuf bytes
+            byteArrayOf(-1, -1, -1),
+            // Mismatched userId
+            obscura.client.v1.Client.LinkBundle.newBuilder()
+                .setIdentityKeyPair(validIdentity)
+                .setUserId("019f025a-0000-7de6-84b6-000000000777")
+                .setPrimaryDeviceId(SELF_DEVICE_ID)
+                .setUsername("self").build().toByteArray(),
+            // Non-UUID primaryDeviceId
+            obscura.client.v1.Client.LinkBundle.newBuilder()
+                .setIdentityKeyPair(validIdentity)
+                .setUserId(SELF_USER_ID)
+                .setPrimaryDeviceId("not-a-uuid")
+                .setUsername("self").build().toByteArray(),
+            // Invalid identityKeyPair bytes
+            obscura.client.v1.Client.LinkBundle.newBuilder()
+                .setIdentityKeyPair(com.google.protobuf.ByteString.copyFrom(byteArrayOf(1, 2, 3)))
+                .setUserId(SELF_USER_ID)
+                .setPrimaryDeviceId(SELF_DEVICE_ID)
+                .setUsername("self").build().toByteArray(),
+            // Invalid friend record in bundle
+            obscura.client.v1.Client.LinkBundle.newBuilder()
+                .setIdentityKeyPair(validIdentity)
+                .setUserId(SELF_USER_ID)
+                .setPrimaryDeviceId(SELF_DEVICE_ID)
+                .setUsername("self")
+                .addFriends(obscura.client.v1.Client.FriendRecord.newBuilder().setUserId("not-a-uuid").setUsername("bad"))
+                .build().toByteArray(),
+        )
+
+        for (payload in invalidPayloads) {
+            account.linkBody = LinkCrypto.seal(payload, epk).toByteArray()
+            val err = runCatching { tablet.completeLink(request) }.exceptionOrNull()
+            assertTrue(err is ObscuraError.ProtocolViolation, "Expected ProtocolViolation but got $err")
+            assertFalse(tablet.signalStore.hasIdentity())
+            assertTrue(requestsTo("/v1/devices").isEmpty())
+        }
+    }
+
+    @Test fun `an empty entry store links without a history snapshot`() = runBlocking {
+        val primary = sessionClient(url, storedSession())
+        assertTrue(primary.auth.restore())
+        val tablet = newClient(url, MemoryStorage())
+        val request = tablet.beginLink("self", "password", "Tablet")
+
+        primary.approveLink(request.code)
+        tablet.completeLink(request)
+
+        assertTrue(account.attachments.isEmpty())
+        assertTrue(tablet.getFriends().isEmpty())
+        tablet.disconnect()
+        primary.auth.end()
+        tablet.auth.end()
+        Unit
+    }
+
+    @Test fun `an envelope that does not decrypt fails the link and stores nothing`() = runBlocking {
+        val tablet = newClient(url, MemoryStorage())
+        val request = tablet.beginLink("self", "password", "Tablet")
+        account.linkBody = LinkCrypto.seal(ByteArray(8), Curve.generateKeyPair().publicKey).toByteArray()
+
+        val error = runCatching { tablet.completeLink(request) }.exceptionOrNull()
+
+        assertTrue(error is ObscuraError.LinkFailed, "got $error")
+        assertFalse(tablet.signalStore.hasIdentity())
+        assertNull(tablet.devices.getIdentity())
+        assertTrue(requestsTo("/v1/devices").isEmpty())
+    }
+
+    @Test fun `an expired or unknown link session fails the link`() = runBlocking {
+        val now = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+        val tablet = newClient(url, MemoryStorage(), clock = { now.get() })
+        val request = tablet.beginLink("self", "password", "Tablet")
+
+        // Polling gets 204 once, then clock advances past request.expiresAt -> LinkFailed
+        val expireJob = launch {
+            delay(50)
+            now.set(request.expiresAt * 1000 + 1_000)
+        }
+        assertTrue(runCatching { tablet.completeLink(request) }.exceptionOrNull() is ObscuraError.LinkFailed)
+        expireJob.join()
+
+        now.set(System.currentTimeMillis())
+        account.linkStatus = 404
+        assertTrue(runCatching { tablet.completeLink(request) }.exceptionOrNull() is ObscuraError.LinkFailed)
+
+        val primary = sessionClient(url, storedSession())
+        assertTrue(primary.auth.restore())
+        assertTrue(runCatching { primary.approveLink(request.code) }.exceptionOrNull() is ObscuraError.LinkFailed)
+
+        // Non-404 HTTP errors propagate as ObscuraError.Http
+        account.linkStatus = 500
+        assertTrue(runCatching { tablet.completeLink(request) }.exceptionOrNull() is ObscuraError.Http)
+        assertTrue(runCatching { primary.approveLink(request.code) }.exceptionOrNull() is ObscuraError.Http)
+        primary.auth.end()
+        Unit
+    }
+
+    @Test fun `a malformed link code is an invalid argument`() = runBlocking {
+        val primary = sessionClient(url, storedSession())
+        assertTrue(primary.auth.restore())
+        val key = com.google.protobuf.ByteString.copyFrom(Curve.generateKeyPair().publicKey.serialize())
+        val valid = LinkCrypto.encodeCode(obscura.client.v1.Client.LinkCode.newBuilder().setSessionId("s").setEphemeralPublicKey(key).build())
+        assertEquals("", ObscuraClient.linkCodeDeviceName(valid))
+        val notLinkCode = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(byteArrayOf(-1, -1, -1))
+        for (code in listOf(
+            "", "not base64!", notLinkCode, "$valid=",
+            LinkCrypto.encodeCode(obscura.client.v1.Client.LinkCode.newBuilder().setSessionId("s").build()),
+            LinkCrypto.encodeCode(obscura.client.v1.Client.LinkCode.newBuilder().setEphemeralPublicKey(key).build()),
+        )) {
+            assertTrue(runCatching { primary.approveLink(code) }.exceptionOrNull() is ObscuraError.InvalidArgument, code)
+            assertTrue(runCatching { ObscuraClient.linkCodeDeviceName(code) }.exceptionOrNull() is ObscuraError.InvalidArgument, code)
+        }
+        primary.auth.end()
+        Unit
+    }
+
+    @Test fun `linking requires an unprovisioned device`() = runBlocking {
+        val c = sessionClient(url, MemoryStorage())
+        assertTrue(runCatching { c.beginLink("self", "password", "Tablet") }.exceptionOrNull() is ObscuraError.InvalidArgument)
+        assertTrue(runCatching { newClient(url).beginLink("self", "password", " ") }.exceptionOrNull() is ObscuraError.InvalidArgument)
+        assertTrue(account.requests.isEmpty())
+
+        // Device without LocalDevice entry but with Signal identity is also rejected as already provisioned
+        val signalOnly = newClient(url, MemoryStorage()).also { it.signalStore.generateIdentity() }
+        assertTrue(runCatching { signalOnly.register("self", "password") }.exceptionOrNull() is ObscuraError.InvalidArgument)
+        assertTrue(runCatching { signalOnly.register(" ", "password") }.exceptionOrNull() is ObscuraError.InvalidArgument)
+        assertTrue(runCatching { signalOnly.register("self", " ") }.exceptionOrNull() is ObscuraError.InvalidArgument)
+    }
+
+    @Test fun `login link-session cache misses, unprovisioned login errors, device mismatch variants, and provision account mismatch`() = runBlocking {
+        val now = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+        val unprovisioned = newClient(url, MemoryStorage(), clock = { now.get() })
+
+        // Unprovisioned login with 401 returns INVALID_CREDENTIALS; 500 rethrows
+        account.linkSessionStatus = 401
+        assertEquals(LoginScenario.INVALID_CREDENTIALS, unprovisioned.login("self", "wrong"))
+        account.linkSessionStatus = 500
+        assertTrue(runCatching { unprovisioned.login("self", "wrong") }.exceptionOrNull() is ObscuraError.Http)
+        account.linkSessionStatus = 200
+
+        // Cached link session is discarded when username differs, password differs, or session is near expiry
+        assertEquals(LoginScenario.LINK_REQUIRED, unprovisioned.login("self", "password"))
+        unprovisioned.beginLink("other-user", "password", "Tablet")
+        assertEquals(4, requestsTo("/v1/link-sessions").size)
+
+        assertEquals(LoginScenario.LINK_REQUIRED, unprovisioned.login("self", "password"))
+        unprovisioned.beginLink("self", "other-password", "Tablet")
+        assertEquals(6, requestsTo("/v1/link-sessions").size)
+
+        assertEquals(LoginScenario.LINK_REQUIRED, unprovisioned.login("self", "password"))
+        now.addAndGet(600_000L)
+        unprovisioned.beginLink("self", "password", "Tablet")
+        assertEquals(8, requestsTo("/v1/link-sessions").size)
+
+        // Provisioned login: 500 rethrows; mismatched response.deviceId or missing Signal identity returns DEVICE_MISMATCH
+        val provisioned = sessionClient(url, MemoryStorage())
+        account.loginStatus = 500
+        assertTrue(runCatching { provisioned.login("self", "password") }.exceptionOrNull() is ObscuraError.Http)
+        account.loginStatus = null
+        account.loginDeviceId = newDeviceId
+        assertEquals(LoginScenario.DEVICE_MISMATCH, provisioned.login("self", "password"))
+
+        val noSignal = newClient(url, MemoryStorage()).also { it.storeLocalDevice() }
+        account.loginDeviceId = SELF_DEVICE_ID
+        assertEquals(LoginScenario.DEVICE_MISMATCH, noSignal.login("self", "password"))
+
+        // provisionLinked with default persist parameter and mismatched userId throws ProtocolViolation
+        unprovisioned.auth.publishAuthenticated()
+        assertEquals(AuthState.LOGGED_OUT, unprovisioned.authState.value)
+        account.provisionUserId = "019f025a-0000-7de6-84b6-000000000999"
+        val keys = dev.barrelmaker.obscura.kit.managers.SignalKeyUtils.generateProvisioningKeys(
+            org.signal.libsignal.protocol.IdentityKeyPair.generate(),
+        )
+        val err = runCatching {
+            unprovisioned.auth.provisionLinked(SELF_USER_ID, SELF_DEVICE_ID, "self", "Tablet", keys, "ls-1")
+        }.exceptionOrNull()
+        assertTrue(err is ObscuraError.ProtocolViolation)
+    }
+}

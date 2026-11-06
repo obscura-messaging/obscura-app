@@ -12,9 +12,6 @@
 
 jest.mock('react-native', () => require('./src/native/__fixtures__/reactNativeMock'));
 
-// State is shared across a file because the module registry is (jest resets modules per FILE, not
-// per test), so the bridge is cleared between tests rather than rebuilt. `__reset` mutates in
-// place — a fresh instance would leave `ObscuraModule`'s captured reference pointing at the old one.
 beforeEach(() => {
   const { getFakeBridge } = require('./src/native/__fixtures__/reactNativeMock');
   getFakeBridge().__reset();

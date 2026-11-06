@@ -3,32 +3,13 @@ import { getFakeBridge } from '../__fixtures__/reactNativeMock';
 
 const bridge = getFakeBridge();
 
-describe('the double is actually installed', () => {
-  it('resolves real values', async () => {
-    await Obscura.entryPut('directMessage', 'dm_1', JSON.stringify({ content: 'hi' }), 1_000, 'u_alice', 'device_a', null);
-
-    const stored = await Obscura.entryAll('directMessage');
-    expect(stored).toHaveLength(1);
-    expect(bridge.__calls).toContain('entryPut');
-  });
-
-  it('delivers events', () => {
+describe('onObscuraEvent', () => {
+  it('delivers native events and stops after unsubscribe', () => {
     const seen: ObscuraEvent[] = [];
     const off = onObscuraEvent((e) => seen.push(e));
 
-    bridge.__setConnectionState('connected');
-
-    expect(seen).toEqual([{ type: 'connectionChanged', state: 'connected' }]);
-    off();
-  });
-
-  it('stops delivering after unsubscribe, so a test cannot leak into the next', () => {
-    const seen: ObscuraEvent[] = [];
-    const off = onObscuraEvent((e) => seen.push(e));
-
-    // One delivery first, so the assertion below cannot pass vacuously.
     bridge.__setConnectionState('connecting');
-    expect(seen).toHaveLength(1);
+    expect(seen).toEqual([{ type: 'connectionChanged', state: 'connecting' }]);
 
     off();
     bridge.__setConnectionState('connected');
@@ -38,168 +19,200 @@ describe('the double is actually installed', () => {
   });
 });
 
-describe('the JSON boundary', () => {
-  it('round-trips a payload the kit never parses', async () => {
-    const data = { conversationId: 'a_b', content: 'hello' };
+describe('Obscura.getMessages', () => {
+  it('transforms RawConversationItem into DirectMessageItem | PixItem, parses captionMeta, and normalizes mediaType', async () => {
+    const boldMeta = {
+      style: 'bold' as const,
+      x: 0.5,
+      y: 0.5,
+      rot: 0,
+      scale: 1,
+      color: '#ffffff',
+      font: 0,
+    };
 
-    await Obscura.entryPut('directMessage', 'dm_1', JSON.stringify(data), 1_000, 'u_alice', 'device_a', null);
+    bridge.messages = [
+      {
+        kind: 'message',
+        id: 'dm_1',
+        peerUserId: 'u_bob',
+        authorUserId: 'u_bob',
+        sentAt: 100,
+        viewedAt: null,
+        content: 'hello',
+      },
+      {
+        kind: 'pix',
+        id: 'pix_nested',
+        peerUserId: 'u_bob',
+        authorUserId: 'u_bob',
+        sentAt: 200,
+        viewedAt: 250,
+        attachment: { id: 'att_1', contentKey: 'k1', nonce: 'n1', mediaType: 'video' },
+        caption: 'clip',
+        captionMeta: JSON.stringify(boldMeta),
+        displayDuration: 8,
+      },
+      {
+        kind: 'pix',
+        id: 'pix_photo_fallback',
+        peerUserId: 'u_bob',
+        authorUserId: 'u_self',
+        sentAt: 300,
+        viewedAt: null,
+        attachment: { id: 'att_2', contentKey: 'k2', nonce: 'n2', mediaType: 'image/jpeg' },
+        caption: null,
+        captionMeta: 'invalid-json',
+        displayDuration: 5,
+      },
+    ];
 
-    const [stored] = await Obscura.entryAll('directMessage');
-    expect(JSON.parse(stored.data)).toEqual(data);
-    expect(stored.authorUserId).toBe('u_alice');
-    expect(stored.authorDeviceId).toBe('device_a');
-  });
+    const items = await Obscura.getMessages();
 
-  it('round-trips nested and unicode payloads without mangling them', async () => {
-    const captionMeta = JSON.stringify({ style: 'bold', x: 0.5, colour: '#fff' });
-    const data = { content: 'sunset 🌅', captionMeta, tags: ['a', 'b'], meta: { nested: true } };
-
-    await Obscura.entryPut('story', 's_1', JSON.stringify(data), 2_000, 'u_alice', 'device_a', null);
-
-    const [stored] = await Obscura.entryAll('story');
-    expect(JSON.parse(stored.data)).toEqual(data);
-  });
-
-  it('rejects a non-string payload, so a forgotten stringify fails here not on device', async () => {
-    await expect(
-      // @ts-expect-error — deliberately passing the wrong type; TS would normally stop this, but the
-      // real bridge is untyped `any` at runtime, which is exactly why the double checks.
-      Obscura.entryPut('story', 's_1', { notAString: true }, 1_000, 'u_alice', 'device_a', null),
-    ).rejects.toThrow(/JSON string/);
-  });
-});
-
-describe('the entry store', () => {
-  it('keeps models separate', async () => {
-    await Obscura.entryPut('directMessage', 'a', '{}', 1, 'u', 'd', null);
-    await Obscura.entryPut('story', 'b', '{}', 1, 'u', 'd', null);
-
-    expect(await Obscura.entryAll('directMessage')).toHaveLength(1);
-    expect(await Obscura.entryAll('story')).toHaveLength(1);
-    expect(await Obscura.entryAll('profile')).toEqual([]);
-  });
-
-  it('reads exactly the named entries through the bridge', async () => {
-    await Obscura.entryPut('directMessage', 'a', '{}', 1, 'u', 'd', null);
-    await Obscura.entryPut('directMessage', 'b', '{}', 1, 'u', 'd', null);
-
-    expect((await Obscura.entryGet('directMessage', ['b', 'missing'])).map((e) => e.id)).toEqual(['b']);
-  });
-
-  it('erases the named entries through the bridge and leaves the rest', async () => {
-    await Obscura.entryPut('directMessage', 'keep', '{}', 1, 'u', 'd', null);
-    await Obscura.entryPut('directMessage', 'gone', '{}', 1, 'u', 'd', null);
-
-    await Obscura.entryErase('directMessage', ['gone']);
-
-    expect((await Obscura.entryAll('directMessage')).map((e) => e.id)).not.toContain('gone');
-    expect((await Obscura.entryAll('directMessage')).map((e) => e.id)).toContain('keep');
-    expect(bridge.__calls).toContain('entryErase');
-  });
-
-  /**
-   * `entryPut` is a blind upsert: an older write replaces a newer one. A double that merged here
-   * would hide an app that forgot to.
-   */
-  it('is a blind upsert — an older write overwrites a newer one', async () => {
-    await Obscura.entryPut('pix', 'p', JSON.stringify({ v: 'new' }), 9_000, 'u', 'd', null);
-    await Obscura.entryPut('pix', 'p', JSON.stringify({ v: 'old' }), 1_000, 'u', 'd', null);
-
-    const [stored] = await Obscura.entryAll('pix');
-    expect(JSON.parse(stored.data)).toEqual({ v: 'old' });
-    expect(stored.sentAt).toBe(1_000);
-  });
-
-});
-
-describe('the inbox', () => {
-  it('peeks without consuming, so a crash mid-drain reprocesses rather than loses', async () => {
-    bridge.__deliverInbox({ entryId: 'dm_1', payload: '{}' });
-
-    const first = await Obscura.inboxPeek(50);
-    const second = await Obscura.inboxPeek(50);
-
-    expect(first).toHaveLength(1);
-    expect(second).toEqual(first);
-    expect(await Obscura.inboxDepth()).toBe(1);
-  });
-
-  it('consumes only what it is given', async () => {
-    const a = bridge.__deliverInbox({ entryId: 'a', payload: '{}' });
-    bridge.__deliverInbox({ entryId: 'b', payload: '{}' });
-
-    await Obscura.inboxConsume([a.id]);
-
-    expect(await Obscura.inboxDepth()).toBe(1);
-  });
-
-  /** Data loss chosen out loud: the reason must reach the kit, which logs it as a security event. */
-  it('carries a reason into discard', async () => {
-    const row = bridge.__deliverInbox({ modelKey: 'unknownModel', payload: 'x' });
-
-    await Obscura.inboxDiscard([row.id], 'unknown-model');
-
-    expect(bridge.__discarded).toEqual([{ ids: [row.id], reason: 'unknown-model' }]);
-    expect(await Obscura.inboxDepth()).toBe(0);
-  });
-});
-
-describe('failures', () => {
-  /**
-   * Without an injectable failure every `.catch(...)` in the app is dead code under test, because
-   * every bridge call resolves.
-   */
-  it('rejects with a code the app can branch on', async () => {
-    bridge.__failNext('sendEntry', 'SEND_FAILED', 'reached nobody');
-
-    await expect(Obscura.sendEntry([], 'directMessage', 'x', 1, '{}'))
-      .rejects.toMatchObject({ code: 'SEND_FAILED' });
-  });
-
-  it('fails only the next call, so a suite is not poisoned by one injection', async () => {
-    bridge.__failNext('entryPut', 'ENTRY_PUT_ERROR');
-
-    await expect(Obscura.entryPut('story', 'a', '{}', 1, 'u', 'd', null)).rejects.toThrow();
-    await expect(Obscura.entryPut('story', 'b', '{}', 1, 'u', 'd', null)).resolves.toBeUndefined();
-  });
-});
-
-describe('multi-device', () => {
-  it('waits only on a link that beginLink opened, and only once', async () => {
-    await expect(Obscura.completeLink()).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
-
-    await Obscura.beginLink('alice', 'password-1234');
-    const waiting = Obscura.completeLink();
-    await expect(Obscura.completeLink()).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
-
-    bridge.__approvePendingLink();
-    await waiting;
-    expect(await Obscura.isPrimary()).toBe(false);
-  });
-
-  it('refuses primary-only calls on a linked device', async () => {
-    bridge.__authenticate();
-    bridge.__setPrimary(false);
-
-    for (const call of [
-      () => Obscura.approveLink('code'),
-      () => Obscura.addFriendByCode('u:name'),
-      () => Obscura.acceptFriend('u'),
-      () => Obscura.removeFriend('u'),
-      () => Obscura.unlinkDevice('device_other'),
-    ]) await expect(call()).rejects.toMatchObject({ code: 'NOT_PRIMARY' });
-  });
-
-  it('lets the primary unlink another device but not itself', async () => {
-    bridge.__authenticate();
-    bridge.__setDevices([
-      { deviceId: 'device_self', name: 'Phone', isPrimary: true, isThisDevice: true },
-      { deviceId: 'device_other', name: null, isPrimary: false, isThisDevice: false },
+    expect(items).toEqual([
+      {
+        kind: 'message',
+        id: 'dm_1',
+        peerUserId: 'u_bob',
+        authorUserId: 'u_bob',
+        sentAt: 100,
+        viewedAt: null,
+        content: 'hello',
+      },
+      {
+        kind: 'pix',
+        id: 'pix_nested',
+        peerUserId: 'u_bob',
+        authorUserId: 'u_bob',
+        sentAt: 200,
+        viewedAt: 250,
+        attachment: { id: 'att_1', contentKey: 'k1', nonce: 'n1', mediaType: 'video' },
+        caption: 'clip',
+        captionMeta: boldMeta,
+        displayDuration: 8,
+      },
+      {
+        kind: 'pix',
+        id: 'pix_photo_fallback',
+        peerUserId: 'u_bob',
+        authorUserId: 'u_self',
+        sentAt: 300,
+        viewedAt: null,
+        attachment: { id: 'att_2', contentKey: 'k2', nonce: 'n2', mediaType: 'photo' },
+        caption: null,
+        captionMeta: null,
+        displayDuration: 5,
+      },
     ]);
-
-    await expect(Obscura.unlinkDevice('device_self')).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
-    await Obscura.unlinkDevice('device_other');
-
-    expect((await Obscura.getDevices()).map((d) => d.deviceId)).toEqual(['device_self']);
   });
 });
+
+describe('Obscura.getStories', () => {
+  it('transforms RawStoryItem into StoryItem, parses captionMeta, and handles null vs non-null attachments', async () => {
+    const barMeta = { style: 'bar' as const, y: 0.4 };
+
+    bridge.stories = [
+      {
+        id: 's_nested',
+        authorUserId: 'u_bob',
+        sentAt: 100,
+        content: 'sunset',
+        attachment: { id: 'att_1', contentKey: 'k', nonce: 'n', mediaType: 'photo' },
+        captionMeta: JSON.stringify(barMeta),
+      },
+      {
+        id: 's_video',
+        authorUserId: 'u_bob',
+        sentAt: 200,
+        content: 'movie',
+        attachment: { id: 'att_2', contentKey: 'k2', nonce: 'n2', mediaType: 'video' },
+        captionMeta: null,
+      },
+      {
+        id: 's_null_att',
+        authorUserId: 'u_bob',
+        sentAt: 300,
+        content: 'text only',
+        attachment: null,
+        captionMeta: null,
+      },
+      {
+        id: 's_omitted_att',
+        authorUserId: 'u_bob',
+        sentAt: 400,
+        content: 'also text only',
+        captionMeta: null,
+      },
+    ];
+
+    const stories = await Obscura.getStories();
+
+    expect(stories).toEqual([
+      {
+        id: 's_nested',
+        authorUserId: 'u_bob',
+        sentAt: 100,
+        content: 'sunset',
+        attachment: { id: 'att_1', contentKey: 'k', nonce: 'n', mediaType: 'photo' },
+        captionMeta: barMeta,
+      },
+      {
+        id: 's_video',
+        authorUserId: 'u_bob',
+        sentAt: 200,
+        content: 'movie',
+        attachment: { id: 'att_2', contentKey: 'k2', nonce: 'n2', mediaType: 'video' },
+        captionMeta: null,
+      },
+      {
+        id: 's_null_att',
+        authorUserId: 'u_bob',
+        sentAt: 300,
+        content: 'text only',
+        attachment: null,
+        captionMeta: null,
+      },
+      {
+        id: 's_omitted_att',
+        authorUserId: 'u_bob',
+        sentAt: 400,
+        content: 'also text only',
+        attachment: null,
+        captionMeta: null,
+      },
+    ]);
+  });
+});
+
+describe('Obscura.sendPix & Obscura.postStory', () => {
+  it('serializes CaptionMeta objects to JSON strings before calling the native bridge', async () => {
+    bridge.__setFriends([{ userId: 'u_bob', username: 'bob', status: 'accepted' }]);
+    const meta = { style: 'bar' as const, y: 0.72 };
+
+    await Obscura.sendPix('u_bob', 'att_1', 'k', 'n', 'photo', 'hi', meta, 5);
+    await Obscura.postStory('story', 'att_1', 'k', 'n', 'photo', meta);
+    await Obscura.postStory('preencoded', null, null, null, null, '{"style":"bar","y":0.2}');
+
+    expect(bridge.messages).toEqual([
+      expect.objectContaining({ kind: 'pix', captionMeta: JSON.stringify(meta) }),
+    ]);
+    expect(bridge.stories).toEqual([
+      expect.objectContaining({ content: 'story', captionMeta: JSON.stringify(meta) }),
+      expect.objectContaining({ content: 'preencoded', captionMeta: '{"style":"bar","y":0.2}' }),
+    ]);
+  });
+});
+
+describe('error code propagation', () => {
+  it('propagates native rejection codes on one-shot failures without poisoning subsequent calls', async () => {
+    bridge.__failNext('sendMessage', 'SEND_FAILED', 'reached nobody');
+
+    await expect(Obscura.sendMessage('u_bob', 'hi')).rejects.toMatchObject({ code: 'SEND_FAILED' });
+    await expect(Obscura.sendMessage('u_bob', 'hi again')).resolves.toEqual(expect.any(String));
+  });
+
+  it('forwards non-function property reads through the Obscura proxy', () => {
+    expect((Obscura as unknown as { clipboard: string | null }).clipboard).toBeNull();
+  });
+});
+

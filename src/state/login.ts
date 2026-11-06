@@ -72,6 +72,11 @@ export function cancelLink(): Promise<void> {
   return Obscura.cancelLink();
 }
 
+export function cancelPendingLinkOnUnmount(): Promise<void> {
+  if (useStore.getState().authed) return Promise.resolve();
+  return cancelLink();
+}
+
 /** For a lost primary: delete every device of the account and start over with this phone as primary. */
 export async function resetAccount(username: string, password: string): Promise<void> {
   await Obscura.resetAccount(username, password);

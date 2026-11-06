@@ -7,16 +7,17 @@ import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.ConnectionState
+import dev.barrelmaker.obscura.kit.ConversationItem
 import dev.barrelmaker.obscura.kit.DeviceInfo
 import dev.barrelmaker.obscura.kit.LinkRequest
+import dev.barrelmaker.obscura.kit.LoginScenario
+import dev.barrelmaker.obscura.kit.MediaAttachment
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraError
-import dev.barrelmaker.obscura.kit.SendReport
-import dev.barrelmaker.obscura.kit.SubmissionResult
+import dev.barrelmaker.obscura.kit.ProfileItem
+import dev.barrelmaker.obscura.kit.StoryItem
 import dev.barrelmaker.obscura.kit.TypingState
-import dev.barrelmaker.obscura.kit.LoginScenario
-import dev.barrelmaker.obscura.kit.stores.FriendData
-import dev.barrelmaker.obscura.kit.stores.StoredEntry
+import dev.barrelmaker.obscura.kit.stores.Friend
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.sync.Mutex
@@ -108,11 +109,17 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         override fun onConnectionChanged(state: ConnectionState) = emit(BridgeEvent.CONNECTION_CHANGED) {
             putString("state", state.toJsString())
         }
-        override fun onAuthStateChanged(state: AuthState) = emit(BridgeEvent.AUTH_STATE_CHANGED) {
-            putString("state", when (state) {
-                AuthState.LOGGED_OUT -> "loggedOut"
-                AuthState.AUTHENTICATED -> "authenticated"
-            })
+        override fun onAuthStateChanged(state: AuthState) {
+            if (state == AuthState.LOGGED_OUT) {
+                typingJobs.values.forEach { it.cancel() }
+                typingJobs.clear()
+            }
+            emit(BridgeEvent.AUTH_STATE_CHANGED) {
+                putString("state", when (state) {
+                    AuthState.LOGGED_OUT -> "loggedOut"
+                    AuthState.AUTHENTICATED -> "authenticated"
+                })
+            }
         }
         override fun onFriendsChanged() = emit(BridgeEvent.FRIENDS_CHANGED)
         override fun onMessageReceived(model: String) =
@@ -479,16 +486,12 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     // ─── Signals ────────────────────────────────────────────────────────────
-    //
+
     @ReactMethod
-    fun sendTyping(recipientUserIds: ReadableArray, conversationId: String, promise: Promise) {
+    fun sendTyping(peerUserId: String, promise: Promise) {
         scope.launch {
             try {
-                requireClient().sendTyping(
-                    recipientUserIds.toStringList(),
-                    conversationId,
-                    TypingState.STARTED,
-                )
+                requireClient().sendTyping(peerUserId, TypingState.STARTED)
                 promise.resolve(null)
             } catch (e: Exception) {
                 promise.rejectKit("TYPING_ERROR", e)
@@ -497,14 +500,10 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun stopTyping(recipientUserIds: ReadableArray, conversationId: String, promise: Promise) {
+    fun stopTyping(peerUserId: String, promise: Promise) {
         scope.launch {
             try {
-                requireClient().sendTyping(
-                    recipientUserIds.toStringList(),
-                    conversationId,
-                    TypingState.STOPPED,
-                )
+                requireClient().sendTyping(peerUserId, TypingState.STOPPED)
                 promise.resolve(null)
             } catch (e: Exception) {
                 promise.rejectKit("STOP_TYPING_ERROR", e)
@@ -513,20 +512,20 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun observeTyping(conversationId: String, promise: Promise) {
-        if (typingJobs.containsKey(conversationId)) { promise.resolve(null); return }
-        val c = try {
-            requireClient()
+    fun observeTyping(peerUserId: String, promise: Promise) {
+        if (typingJobs.containsKey(peerUserId)) { promise.resolve(null); return }
+        val flow = try {
+            requireClient().observePeerTyping(peerUserId)
         } catch (e: Exception) {
             promise.rejectKit("OBSERVE_TYPING_ERROR", e)
             return
         }
 
-        typingJobs[conversationId] = scope.launch {
-            c.observeTyping(conversationId).collectLatest { userIds ->
+        typingJobs[peerUserId] = scope.launch {
+            flow.collectLatest { isTyping ->
                 emit(BridgeEvent.TYPING_CHANGED) {
-                    putString("conversationId", conversationId)
-                    putArray("userIds", Arguments.createArray().apply { userIds.forEach(::pushString) })
+                    putString("peerUserId", peerUserId)
+                    putBoolean("typing", isTyping)
                 }
             }
         }
@@ -534,8 +533,8 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun stopObservingTyping(conversationId: String, promise: Promise) {
-        typingJobs.remove(conversationId)?.cancel()
+    fun stopObservingTyping(peerUserId: String, promise: Promise) {
+        typingJobs.remove(peerUserId)?.cancel()
         promise.resolve(null)
     }
 
@@ -548,9 +547,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun uploadAttachment(filePath: String, promise: Promise) {
         scope.launch {
             try {
-                val bytes = java.io.File(filePath).readBytes()
-                // The kit encrypts + uploads and returns the reference triple.
-                val ref = requireClient().uploadAttachment(bytes)
+                val ref = requireClient().uploadAttachmentFile(java.io.File(filePath))
                 promise.resolve(Arguments.createMap().apply {
                     putString("id", ref.id)
                     putString("contentKey", Base64.encodeToString(ref.contentKey, Base64.NO_WRAP))
@@ -562,50 +559,11 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    private fun attachmentDir() = java.io.File(reactApplicationContext.cacheDir, "attachments")
-
-    /** Cache file stem for an attachment id. Ids come from the server, so never trust them as a path. */
-    private fun attachmentStem(id: String) = id.replace(Regex("[^A-Za-z0-9_-]"), "_")
-
-    private val attachmentExtensions = listOf("jpg", "mp4", "mov")
-
     @ReactMethod
     fun downloadAttachment(id: String, contentKey: String, nonce: String, promise: Promise) {
         scope.launch {
             try {
-                val dir = attachmentDir().apply { mkdirs() }
-                val safe = attachmentStem(id)
-                for (ext in attachmentExtensions) {
-                    val c = java.io.File(dir, "$safe.$ext")
-                    if (c.exists() && c.length() > 0L) { promise.resolve(c.absolutePath); return@launch }
-                }
-
-                val keyBytes = Base64.decode(contentKey, Base64.DEFAULT)
-                val nonceBytes = Base64.decode(nonce, Base64.DEFAULT)
-                val data = requireClient().downloadDecryptedAttachment(id, keyBytes, nonceBytes)
-
-                // Pick the extension from the content so players that key off it
-                // (ExoPlayer / AVPlayer) can decode. Video is ISO-BMFF with an
-                // "ftyp" box at offset 4; brand "qt  " => QuickTime .mov.
-                val ext = if (data.size >= 12 &&
-                    data[4] == 0x66.toByte() && data[5] == 0x74.toByte() &&
-                    data[6] == 0x79.toByte() && data[7] == 0x70.toByte()) {
-                    if (String(data, 8, 4, Charsets.US_ASCII) == "qt  ") "mov" else "mp4"
-                } else "jpg"
-                val dest = java.io.File(dir, "$safe.$ext")
-
-                // Atomic publish: write to a tmp file then rename into place so a
-                // concurrent reader never sees a partially-written file.
-                val tmp = java.io.File(dir, "$safe.$ext.tmp")
-                try {
-                    tmp.writeBytes(data)
-                    if (!tmp.renameTo(dest)) {
-                        // Fallback for the (unlikely) cross-mount rename failure.
-                        tmp.copyTo(dest, overwrite = true)
-                    }
-                } finally {
-                    tmp.delete()
-                }
+                val dest = requireClient().downloadAttachmentToCache(id, contentKey, nonce)
                 promise.resolve(dest.absolutePath)
             } catch (t: Throwable) {
                 promise.rejectKit("DOWNLOAD_ERROR", t)
@@ -613,142 +571,34 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    /** Delete this device's decrypted copy of an attachment. The server's ciphertext is untouched. */
-    @ReactMethod
-    fun purgeAttachment(id: String, promise: Promise) {
-        val dir = attachmentDir()
-        val stem = attachmentStem(id)
-        for (ext in attachmentExtensions) {
-            java.io.File(dir, "$stem.$ext").delete()
-            java.io.File(dir, "$stem.$ext.tmp").delete()
-        }
-        promise.resolve(null)
-    }
-
     // ─── Image processing (native, path-in/path-out) ────────────────────────
 
-    /**
-     * Resize the image at [srcPath] so its largest side is at most [maxDim] px,
-     * re-encoded as JPEG at [quality] (1-100). Honors the JPEG's EXIF
-     * `Orientation` tag — the output pixels are already in display orientation
-     * (front-camera selfies don't render rotated). Returns the new file path
-     * plus its post-rotation dimensions. The original file is left untouched.
-     *
-     * Memory: uses `inSampleSize` two-pass decoding so a 12 MP source doesn't
-     * allocate a 48 MB intermediate bitmap on low-memory devices.
-     */
     @ReactMethod
     fun resizeImage(srcPath: String, maxDim: Int, quality: Int, promise: Promise) {
         scope.launch {
             try {
-                require(maxDim > 0) { "maxDim must be positive (got $maxDim)" }
-
-                // Pass 1: read bounds only.
-                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                android.graphics.BitmapFactory.decodeFile(srcPath, bounds)
-                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-                    throw IllegalArgumentException("Could not decode image at $srcPath")
-                }
-
-                // Pass 2: sub-sampled decode keeps peak memory bounded.
-                val srcLargest = maxOf(bounds.outWidth, bounds.outHeight)
-                var sample = 1
-                while (sample * 2 <= srcLargest / maxDim) sample *= 2
-                val decoded = android.graphics.BitmapFactory.decodeFile(
-                    srcPath,
-                    android.graphics.BitmapFactory.Options().apply { inSampleSize = sample },
-                ) ?: throw IllegalArgumentException("Could not decode image at $srcPath")
-
-                // EXIF orientation — both the rotation and the flip variants used by
-                // Android front cameras. We bake the transform into the bitmap so the
-                // output JPEG has display-orientation pixels and no orientation tag.
-                val orientation = try {
-                    android.media.ExifInterface(srcPath).getAttributeInt(
-                        android.media.ExifInterface.TAG_ORIENTATION,
-                        android.media.ExifInterface.ORIENTATION_NORMAL,
-                    )
-                } catch (_: Throwable) { android.media.ExifInterface.ORIENTATION_NORMAL }
-
-                val matrix = android.graphics.Matrix()
-                when (orientation) {
-                    android.media.ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
-                    android.media.ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
-                    android.media.ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
-                    android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
-                    android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
-                    android.media.ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.postRotate(90f); matrix.postScale(-1f, 1f) }
-                    android.media.ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.postRotate(-90f); matrix.postScale(-1f, 1f) }
-                }
-
-                // 90°/270° orientations swap apparent width/height for the scale check.
-                val swap = orientation == android.media.ExifInterface.ORIENTATION_ROTATE_90 ||
-                           orientation == android.media.ExifInterface.ORIENTATION_ROTATE_270 ||
-                           orientation == android.media.ExifInterface.ORIENTATION_TRANSPOSE ||
-                           orientation == android.media.ExifInterface.ORIENTATION_TRANSVERSE
-                val rotW = if (swap) decoded.height else decoded.width
-                val rotH = if (swap) decoded.width else decoded.height
-                val rotLargest = maxOf(rotW, rotH)
-                val scale = if (rotLargest <= maxDim) 1.0 else maxDim.toDouble() / rotLargest
-                if (scale != 1.0) matrix.postScale(scale.toFloat(), scale.toFloat())
-
-                val output = android.graphics.Bitmap.createBitmap(
-                    decoded, 0, 0, decoded.width, decoded.height, matrix, true,
-                )
-                if (output !== decoded) decoded.recycle()
-
-                val dir = java.io.File(reactApplicationContext.cacheDir, "resized").apply { mkdirs() }
-                val dest = java.io.File(dir, "img_${System.currentTimeMillis()}.jpg")
-                java.io.FileOutputStream(dest).use { out ->
-                    output.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality.coerceIn(1, 100), out)
-                }
-                val outW = output.width
-                val outH = output.height
-                output.recycle()
-
+                val res = ImageProcessor.resize(reactApplicationContext.cacheDir, srcPath, maxDim, quality)
                 promise.resolve(Arguments.createMap().apply {
-                    putString("path", dest.absolutePath)
-                    putInt("width", outW)
-                    putInt("height", outH)
+                    putString("path", res.path)
+                    putInt("width", res.width)
+                    putInt("height", res.height)
                 })
             } catch (t: Throwable) {
-                // Catch Throwable, not Exception — Bitmap allocations can throw OOM
-                // (an Error, not an Exception); silently dropping that would leave
-                // the JS promise hanging forever.
                 Log.e(TAG, "resizeImage failed: ${t.message}")
                 promise.rejectKit("RESIZE_ERROR", t)
             }
         }
     }
 
-    /**
-     * Write a solid-color JPEG of the requested size to the cache and return
-     * the path. Replaces the JS-side BMP/base64 dance used by CameraScreen on
-     * emulators with no camera.
-     */
     @ReactMethod
     fun writeTestImage(width: Int, height: Int, promise: Promise) {
         scope.launch {
             try {
-                require(width in 1..8192 && height in 1..8192) {
-                    "dimensions out of range (got ${width}x${height})"
-                }
-                val color = android.graphics.Color.argb(
-                    255,
-                    (Math.random() * 256).toInt(),
-                    (Math.random() * 256).toInt(),
-                    (Math.random() * 256).toInt(),
-                )
-                val bmp = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
-                bmp.eraseColor(color)
-                val dest = java.io.File(reactApplicationContext.cacheDir, "test_${System.currentTimeMillis()}.jpg")
-                java.io.FileOutputStream(dest).use { out ->
-                    bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
-                }
-                bmp.recycle()
+                val res = ImageProcessor.writeTestImage(reactApplicationContext.cacheDir, width, height)
                 promise.resolve(Arguments.createMap().apply {
-                    putString("path", dest.absolutePath)
-                    putInt("width", width)
-                    putInt("height", height)
+                    putString("path", res.path)
+                    putInt("width", res.width)
+                    putInt("height", res.height)
                 })
             } catch (t: Throwable) {
                 promise.rejectKit("TEST_IMAGE_ERROR", t)
@@ -939,7 +789,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
             putBoolean("isThisDevice", d.isThisDevice)
         }
 
-    private fun friendToMap(f: FriendData, status: String): WritableMap =
+    private fun friendToMap(f: Friend, status: String): WritableMap =
         Arguments.createMap().apply {
             putString("userId", f.userId)
             putString("username", f.username)
@@ -947,203 +797,211 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
 
     // ─────────────────────────────────────────────────────────────────────────────────────────
-    // Kit data surface.
-    //
-    // Drain the inbox, store application entries, and send application writes.
-    // Payload data crosses as an opaque JSON string and is never re-encoded.
+    // Typed content surface.
     // ─────────────────────────────────────────────────────────────────────────────────────────
 
     @ReactMethod
-    fun inboxPeek(limit: Double, promise: Promise) {
+    fun getMessages(promise: Promise) {
         scope.launch {
             try {
-                val rows = requireClient().inbox.peek(limit.toInt())
                 val arr = Arguments.createArray()
-                for (r in rows) arr.pushMap(inboxRowToMap(r))
+                for (m in requireClient().getMessages()) arr.pushMap(messageToMap(m))
                 promise.resolve(arr)
             } catch (e: Exception) {
-                promise.rejectKit("INBOX_PEEK_ERROR", e)
+                promise.rejectKit("GET_MESSAGES_ERROR", e)
             }
         }
     }
 
     @ReactMethod
-    fun inboxConsume(ids: ReadableArray, promise: Promise) {
+    fun sendMessage(peerUserId: String, content: String, promise: Promise) {
         scope.launch {
             try {
-                requireClient().inbox.consume(ids.toLongList())
-                promise.resolve(null)
+                promise.resolve(requireClient().sendMessage(peerUserId, content))
             } catch (e: Exception) {
-                promise.rejectKit("INBOX_CONSUME_ERROR", e)
-            }
-        }
-    }
-
-    /** Permanent data loss; the kit logs `reason` as a security event, so it is required. */
-    @ReactMethod
-    fun inboxDiscard(ids: ReadableArray, reason: String, promise: Promise) {
-        scope.launch {
-            try {
-                requireClient().inbox.discard(ids.toLongList(), reason)
-                promise.resolve(null)
-            } catch (e: Exception) {
-                promise.rejectKit("INBOX_DISCARD_ERROR", e)
+                promise.rejectKit("SEND_MESSAGE_ERROR", e)
             }
         }
     }
 
     @ReactMethod
-    fun inboxDepth(promise: Promise) {
-        scope.launch {
-            try {
-                promise.resolve(requireClient().inbox.depth().toDouble())
-            } catch (e: Exception) {
-                promise.rejectKit("INBOX_DEPTH_ERROR", e)
-            }
-        }
-    }
-
-    @ReactMethod
-    fun entryPut(
-        model: String,
-        id: String,
-        dataJson: String,
-        sentAt: Double,
-        authorUserId: String,
-        authorDeviceId: String,
-        localMetadataJson: String?,
+    fun sendPix(
+        peerUserId: String,
+        mediaRef: String,
+        contentKey: String,
+        nonce: String,
+        mediaType: String,
+        caption: String,
+        captionMeta: String?,
+        displayDuration: Double,
         promise: Promise,
     ) {
         scope.launch {
             try {
-                requireClient().entries.put(
-                    model,
-                    StoredEntry(
-                        id = id,
-                        data = dataJson,
-                        sentAt = sentAt.toLong(),
-                        authorUserId = authorUserId,
-                        authorDeviceId = authorDeviceId,
-                        localMetadata = localMetadataJson,
-                    )
+                val id = requireClient().sendPix(
+                    peerUserId = peerUserId,
+                    mediaRef = mediaRef,
+                    contentKey = contentKey,
+                    nonce = nonce,
+                    mediaType = mediaType,
+                    caption = caption,
+                    captionMeta = captionMeta,
+                    displayDuration = displayDuration.toInt(),
                 )
+                promise.resolve(id)
+            } catch (e: Exception) {
+                promise.rejectKit("SEND_PIX_ERROR", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun markSeen(entryId: String, promise: Promise) {
+        scope.launch {
+            try {
+                requireClient().markSeen(entryId)
                 promise.resolve(null)
             } catch (e: Exception) {
-                promise.rejectKit("ENTRY_PUT_ERROR", e)
+                promise.rejectKit("MARK_SEEN_ERROR", e)
             }
         }
     }
 
-    /** Securely remove local entries. The app decides when. */
     @ReactMethod
-    fun entryErase(model: String, ids: ReadableArray, promise: Promise) {
+    fun getStories(promise: Promise) {
         scope.launch {
             try {
-                requireClient().entries.erase(model, ids.toStringList())
-                promise.resolve(null)
+                val arr = Arguments.createArray()
+                for (s in requireClient().getStories()) arr.pushMap(storyToMap(s))
+                promise.resolve(arr)
             } catch (e: Exception) {
-                promise.rejectKit("ENTRY_ERASE_ERROR", e)
-            }
-        }
-    }
-
-    /** The named entries that exist. */
-    @ReactMethod
-    fun entryGet(model: String, ids: ReadableArray, promise: Promise) {
-        scope.launch {
-            try {
-                promise.resolve(entriesToArray(requireClient().entries.get(model, ids.toStringList())))
-            } catch (e: Exception) {
-                promise.rejectKit("ENTRY_GET_ERROR", e)
+                promise.rejectKit("GET_STORIES_ERROR", e)
             }
         }
     }
 
     @ReactMethod
-    fun entryAll(model: String, promise: Promise) {
-        scope.launch {
-            try {
-                promise.resolve(entriesToArray(requireClient().entries.all(model)))
-            } catch (e: Exception) {
-                promise.rejectKit("ENTRY_ALL_ERROR", e)
-            }
-        }
-    }
-
-    private fun entriesToArray(entries: List<StoredEntry>): WritableArray =
-        Arguments.createArray().apply {
-            for (e in entries) pushMap(Arguments.createMap().apply {
-                putString("id", e.id)
-                putString("data", e.data)
-                putDouble("sentAt", e.sentAt.toDouble())
-                putString("authorUserId", e.authorUserId)
-                putString("authorDeviceId", e.authorDeviceId)
-                putString("localMetadata", e.localMetadata)
-            })
-        }
-
-    /** Per-device results: `{userId, deviceId, status, error}`, status `accepted|rejected|unknown`. */
-    private fun sendReportToMap(report: SendReport): WritableMap {
-        fun results(list: List<SubmissionResult>) = Arguments.createArray().apply {
-            for (r in list) pushMap(Arguments.createMap().apply {
-                putString("userId", r.userId)
-                putString("deviceId", r.deviceId)
-                putString("status", r.status.name.lowercase())
-                putString("error", r.error)
-            })
-        }
-        return Arguments.createMap().apply {
-            putArray("recipients", results(report.recipients))
-            putArray("selfSync", results(report.selfSync))
-        }
-    }
-
-    /** The caller names recipients; the kit resolves no audience. */
-    @ReactMethod
-    fun sendEntry(
-        recipientUserIds: ReadableArray,
-        modelKey: String,
-        entryId: String,
-        sentAt: Double,
-        payloadJson: String,
+    fun postStory(
+        content: String,
+        mediaRef: String?,
+        contentKey: String?,
+        nonce: String?,
+        mediaType: String?,
+        captionMeta: String?,
         promise: Promise,
     ) {
         scope.launch {
             try {
-                val report = requireClient().send(
-                    recipientUserIds = recipientUserIds.toStringList(),
-                    modelKey = modelKey,
-                    entryId = entryId,
-                    sentAt = sentAt.toLong(),
-                    payload = payloadJson.toByteArray(),
+                val id = requireClient().postStory(
+                    content = content,
+                    mediaRef = mediaRef,
+                    contentKey = contentKey,
+                    nonce = nonce,
+                    mediaType = mediaType,
+                    captionMeta = captionMeta,
                 )
-                promise.resolve(sendReportToMap(report))
+                promise.resolve(id)
             } catch (e: Exception) {
-                promise.rejectKit("SEND_ERROR", e)
+                promise.rejectKit("POST_STORY_ERROR", e)
             }
         }
     }
 
-    /** `payload` crosses as a UTF-8 string. */
-    private fun inboxRowToMap(r: dev.barrelmaker.obscura.kit.stores.InboxRecord): WritableMap =
+    @ReactMethod
+    fun getProfiles(promise: Promise) {
+        scope.launch {
+            try {
+                val arr = Arguments.createArray()
+                for (p in requireClient().getProfiles()) arr.pushMap(profileToMap(p))
+                promise.resolve(arr)
+            } catch (e: Exception) {
+                promise.rejectKit("GET_PROFILES_ERROR", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun updateProfile(displayName: String, bio: String, promise: Promise) {
+        scope.launch {
+            try {
+                requireClient().updateProfile(displayName, bio)
+                promise.resolve(null)
+            } catch (e: Exception) {
+                promise.rejectKit("UPDATE_PROFILE_ERROR", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun flushOutbox(promise: Promise) {
+        scope.launch {
+            try {
+                promise.resolve(requireClient().flushOutbox())
+            } catch (e: Exception) {
+                promise.rejectKit("FLUSH_OUTBOX_ERROR", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun sweepExpired(promise: Promise) {
+        scope.launch {
+            try {
+                val touched = requireClient().sweepExpired()
+                val arr = Arguments.createArray()
+                for (model in touched) arr.pushString(model)
+                promise.resolve(arr)
+            } catch (e: Exception) {
+                promise.rejectKit("SWEEP_EXPIRED_ERROR", e)
+            }
+        }
+    }
+
+    private fun attachmentToMap(att: MediaAttachment): WritableMap =
         Arguments.createMap().apply {
-            putDouble("id", r.id.toDouble())
-            putString("senderUserId", r.senderUserId)
-            putString("senderDeviceId", r.senderDeviceId)
-            putString("modelKey", r.modelKey)
-            putString("entryId", r.entryId)
-            putDouble("sentAt", r.sentAt.toDouble())
-            putString("payload", String(r.payload))
+            putString("id", att.id)
+            putString("contentKey", Base64.encodeToString(att.contentKey, Base64.NO_WRAP))
+            putString("nonce", Base64.encodeToString(att.nonce, Base64.NO_WRAP))
+            putString("mediaType", att.mediaType)
         }
 
-    /**
-     * Inbox ids are `Long`, and the RN bridge has no integer type — everything numeric arrives as a
-     * double. That is exact up to 2^53, and these are per-install row counters, so the conversion is
-     * safe for any inbox that could physically exist.
-     */
-    private fun ReadableArray.toLongList(): List<Long> =
-        (0 until size()).map { getDouble(it).toLong() }
+    private fun messageToMap(m: ConversationItem): WritableMap =
+        Arguments.createMap().apply {
+            putString("id", m.id)
+            putString("peerUserId", m.peerUserId)
+            putString("kind", m.kind)
+            putString("authorUserId", m.authorUserId)
+            putDouble("sentAt", m.sentAt.toDouble())
+            val viewedAt = m.viewedAt
+            if (viewedAt != null) putDouble("viewedAt", viewedAt.toDouble()) else putNull("viewedAt")
+            if (m.kind == "pix") {
+                val att = m.attachment
+                if (att != null) putMap("attachment", attachmentToMap(att)) else putNull("attachment")
+                putString("caption", m.caption)
+                putString("captionMeta", m.captionMeta)
+                putInt("displayDuration", m.displayDuration)
+            } else {
+                putString("content", m.content)
+            }
+        }
 
-    private fun ReadableArray.toStringList(): List<String> =
-        (0 until size()).mapNotNull { getString(it) }
+    private fun storyToMap(s: StoryItem): WritableMap =
+        Arguments.createMap().apply {
+            putString("id", s.id)
+            putString("authorUserId", s.authorUserId)
+            putDouble("sentAt", s.sentAt.toDouble())
+            putString("content", s.content)
+            putString("captionMeta", s.captionMeta)
+            val att = s.attachment
+            if (att != null) putMap("attachment", attachmentToMap(att)) else putNull("attachment")
+        }
+
+    private fun profileToMap(p: ProfileItem): WritableMap =
+        Arguments.createMap().apply {
+            putString("userId", p.userId)
+            putString("authorDeviceId", p.authorDeviceId)
+            putDouble("updatedAt", p.updatedAt.toDouble())
+            putString("displayName", p.displayName)
+            putString("bio", p.bio)
+        }
 }

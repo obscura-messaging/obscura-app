@@ -1,10 +1,14 @@
 import { NativeEventEmitter, TurboModuleRegistry, type TurboModule } from 'react-native';
+import { parseCaptionMeta, serializeCaptionMeta, type CaptionMeta } from '../domain/caption';
+import type { ConversationItem, DirectMessageItem, PixItem } from '../domain/chats';
+import type { DeviceInfo } from '../domain/devices';
+import type { Friend, ProfileItem } from '../domain/friends';
+import type { MediaAttachment, MediaType, StoryItem } from '../domain/viewer';
 
-export interface Friend {
-  userId: string;
-  username: string;
-  status: 'pending_sent' | 'pending_received' | 'accepted';
-}
+export type {
+  CaptionMeta, ConversationItem, DeviceInfo, DirectMessageItem,
+  Friend, MediaAttachment, MediaType, PixItem, ProfileItem, StoryItem,
+};
 
 export interface ResizedImage {
   path: string;
@@ -18,41 +22,42 @@ export interface AttachmentRef {
   nonce: string;
 }
 
-/** One row of the kit's durable inbox. */
-export interface InboxRow {
-  /** Monotonic per install: the drain order, not a message id. */
-  id: number;
-  /** Server-stamped sender. */
-  senderUserId: string;
-  /** The device whose Signal session decrypted the row: attribution and the merge tie-break. */
-  senderDeviceId: string;
-  modelKey: string;
-  entryId: string;
-  sentAt: number;
-  payload: string;
+export interface RawAttachment extends AttachmentRef {
+  mediaType: string;
 }
 
-export interface StoredEntry {
+export interface RawDirectMessageItem {
+  kind: 'message';
   id: string;
-  data: string;
-  sentAt: number;
+  peerUserId: string;
   authorUserId: string;
-  authorDeviceId: string;
-  localMetadata: string | null;
+  sentAt: number;
+  viewedAt: number | null;
+  content: string;
 }
 
-/** `accepted` means queued by the server. A null `deviceId` is a user-level result. */
-export interface SubmissionResult {
-  userId: string;
-  deviceId: string | null;
-  status: 'accepted' | 'rejected' | 'unknown';
-  error: string | null;
+export interface RawPixItem {
+  kind: 'pix';
+  id: string;
+  peerUserId: string;
+  authorUserId: string;
+  sentAt: number;
+  viewedAt: number | null;
+  attachment: RawAttachment;
+  caption: string | null;
+  captionMeta: string | null;
+  displayDuration: number;
 }
 
-export interface SendReport {
-  recipients: SubmissionResult[];
-  /** The author's own other devices. */
-  selfSync: SubmissionResult[];
+export type RawConversationItem = RawDirectMessageItem | RawPixItem;
+
+export interface RawStoryItem {
+  id: string;
+  authorUserId: string;
+  sentAt: number;
+  content: string;
+  attachment?: RawAttachment | null;
+  captionMeta: string | null;
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'reconnecting' | 'connected';
@@ -68,14 +73,6 @@ export type LoginScenario =
   | 'linkRequired'
   | 'deviceMismatch'
   | 'invalidCredentials';
-
-/** One device of the signed-in account. */
-export interface DeviceInfo {
-  deviceId: string;
-  name: string | null;
-  isPrimary: boolean;
-  isThisDevice: boolean;
-}
 
 /** The `code` of a kit rejection, mirroring `ObscuraError.kt`. Other failures use a per-method code. */
 export type ObscuraErrorCode =
@@ -127,35 +124,31 @@ export interface ObscuraBridge extends TurboModule, EventModule {
   addFriendByCode(code: string): Promise<void>;
   getFriends(): Promise<Friend[]>;
 
-  /** Oldest first, without side effects. */
-  inboxPeek(limit: number): Promise<InboxRow[]>;
-  inboxConsume(ids: number[]): Promise<void>;
-  /** Permanent data loss; the kit logs `reason`. */
-  inboxDiscard(ids: number[], reason: string): Promise<void>;
-  inboxDepth(): Promise<number>;
+  getMessages(): Promise<RawConversationItem[]>;
+  sendMessage(peerUserId: string, content: string): Promise<string>;
+  sendPix(
+    peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
+    mediaType: string, caption: string, captionMeta: string | null, displayDuration: number,
+  ): Promise<string>;
+  markSeen(entryId: string): Promise<void>;
+  getStories(): Promise<RawStoryItem[]>;
+  postStory(
+    content: string, mediaRef: string | null, contentKey: string | null,
+    nonce: string | null, mediaType: string | null, captionMeta: string | null,
+  ): Promise<string>;
+  getProfiles(): Promise<ProfileItem[]>;
+  updateProfile(displayName: string, bio: string): Promise<void>;
+  flushOutbox(): Promise<number>;
+  sweepExpired(): Promise<string[]>;
 
-  /** A blind upsert. */
-  entryPut(
-    model: string, id: string, dataJson: string, sentAt: number,
-    authorUserId: string, authorDeviceId: string, localMetadataJson: string | null,
-  ): Promise<void>;
-  entryGet(model: string, ids: string[]): Promise<StoredEntry[]>;
-  entryAll(model: string): Promise<StoredEntry[]>;
-  entryErase(model: string, ids: string[]): Promise<void>;
-  sendEntry(
-    recipientUserIds: string[], modelKey: string, entryId: string,
-    sentAt: number, payloadJson: string,
-  ): Promise<SendReport>;
-
-  sendTyping(recipientUserIds: string[], conversationId: string): Promise<void>;
-  stopTyping(recipientUserIds: string[], conversationId: string): Promise<void>;
-  observeTyping(conversationId: string): Promise<void>;
-  stopObservingTyping(conversationId: string): Promise<void>;
+  sendTyping(peerUserId: string): Promise<void>;
+  stopTyping(peerUserId: string): Promise<void>;
+  observeTyping(peerUserId: string): Promise<void>;
+  stopObservingTyping(peerUserId: string): Promise<void>;
 
   uploadAttachment(filePath: string): Promise<AttachmentRef>;
   /** Decrypts to a cache file and resolves its absolute path. */
   downloadAttachment(id: string, contentKey: string, nonce: string): Promise<string>;
-  purgeAttachment(id: string): Promise<void>;
   resizeImage(srcPath: string, maxDim: number, quality: number): Promise<ResizedImage>;
   writeTestImage(width: number, height: number): Promise<ResizedImage>;
 
@@ -170,7 +163,108 @@ export interface ObscuraBridge extends TurboModule, EventModule {
   getLaunchIntent(): Promise<LaunchIntent | null>;
 }
 
-export const Obscura = TurboModuleRegistry.getEnforcing<ObscuraBridge>('ObscuraBridge');
+export interface ObscuraClient extends Omit<ObscuraBridge, 'getMessages' | 'getStories' | 'sendPix' | 'postStory'> {
+  getMessages(): Promise<ConversationItem[]>;
+  sendPix(
+    peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
+    mediaType: MediaType | string, caption: string, captionMeta: CaptionMeta | string | null, displayDuration: number,
+  ): Promise<string>;
+  getStories(): Promise<StoryItem[]>;
+  postStory(
+    content: string, mediaRef: string | null, contentKey: string | null,
+    nonce: string | null, mediaType: MediaType | string | null, captionMeta: CaptionMeta | string | null,
+  ): Promise<string>;
+}
+
+function normalizeMediaType(mediaType: string | null | undefined): MediaType {
+  return mediaType === 'video' ? 'video' : 'photo';
+}
+
+function normalizeAttachment(raw: RawAttachment): MediaAttachment {
+  return {
+    id: raw.id,
+    contentKey: raw.contentKey,
+    nonce: raw.nonce,
+    mediaType: normalizeMediaType(raw.mediaType),
+  };
+}
+
+function toConversationItem(raw: RawConversationItem): ConversationItem {
+  if (raw.kind === 'message') {
+    return {
+      kind: 'message',
+      id: raw.id,
+      peerUserId: raw.peerUserId,
+      authorUserId: raw.authorUserId,
+      sentAt: raw.sentAt,
+      viewedAt: raw.viewedAt,
+      content: raw.content,
+    };
+  }
+  return {
+    kind: 'pix',
+    id: raw.id,
+    peerUserId: raw.peerUserId,
+    authorUserId: raw.authorUserId,
+    sentAt: raw.sentAt,
+    viewedAt: raw.viewedAt,
+    attachment: normalizeAttachment(raw.attachment),
+    caption: raw.caption,
+    captionMeta: parseCaptionMeta(raw.captionMeta),
+    displayDuration: raw.displayDuration,
+  };
+}
+
+function toStoryItem(raw: RawStoryItem): StoryItem {
+  return {
+    id: raw.id,
+    authorUserId: raw.authorUserId,
+    sentAt: raw.sentAt,
+    content: raw.content,
+    attachment: raw.attachment ? normalizeAttachment(raw.attachment) : null,
+    captionMeta: parseCaptionMeta(raw.captionMeta),
+  };
+}
+
+function encodeCaptionMeta(meta: CaptionMeta | string | null | undefined): string | null {
+  if (meta == null) return null;
+  return typeof meta === 'string' ? meta : serializeCaptionMeta(meta);
+}
+
+const rawBridge = TurboModuleRegistry.getEnforcing<ObscuraBridge>('ObscuraBridge');
+
+export const Obscura: ObscuraClient = new Proxy(rawBridge, {
+  get(target, prop, receiver) {
+    switch (prop) {
+      case 'getMessages':
+        return async (): Promise<ConversationItem[]> => (await target.getMessages()).map(toConversationItem);
+      case 'getStories':
+        return async (): Promise<StoryItem[]> => (await target.getStories()).map(toStoryItem);
+      case 'sendPix':
+        return (
+          peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
+          mediaType: MediaType | string, caption: string, captionMeta: CaptionMeta | string | null, displayDuration: number,
+        ): Promise<string> =>
+          target.sendPix(
+            peerUserId, mediaRef, contentKey, nonce,
+            mediaType, caption, encodeCaptionMeta(captionMeta), displayDuration,
+          );
+      case 'postStory':
+        return (
+          content: string, mediaRef: string | null, contentKey: string | null,
+          nonce: string | null, mediaType: MediaType | string | null, captionMeta: CaptionMeta | string | null,
+        ): Promise<string> =>
+          target.postStory(
+            content, mediaRef, contentKey,
+            nonce, mediaType, encodeCaptionMeta(captionMeta),
+          );
+      default: {
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    }
+  },
+}) as unknown as ObscuraClient;
 
 /** The payloads of the native `ObscuraEvent` stream; must match each bridge's `BridgeEvent` enum. */
 export type ObscuraEvent =
@@ -180,10 +274,10 @@ export type ObscuraEvent =
   | { type: 'launchedFrom'; screen: string }
   | { type: 'friendsChanged' }
   | { type: 'messageReceived'; model: string }
-  | { type: 'typingChanged'; conversationId: string; userIds: string[] }
+  | { type: 'typingChanged'; peerUserId: string; typing: boolean }
   | { type: 'pushTokenReceived'; token: string };
 
-const emitter = new NativeEventEmitter(Obscura);
+const emitter = new NativeEventEmitter(rawBridge);
 
 /** Subscribe to Obscura events. Returns an unsubscribe function. */
 export function onObscuraEvent(handler: (event: ObscuraEvent) => void): () => void {

@@ -54,7 +54,48 @@ lint:
 
 # Run every JavaScript CI gate.
 check: test typecheck lint
-    ./scripts/check-native-doc-links.sh
+
+# Lint the client-to-client protocol.
+protocol-lint:
+    buf lint protocol
+
+# Validate protocol conformance fixtures.
+protocol-vectors:
+    python3 protocol/conformance/validate.py
+
+# Run Kotlin unit tests.
+kotlin-unit:
+    cd kotlin && ../scripts/run-with-java-21.sh ./gradlew :lib:test --no-daemon
+
+# Run the Kotlin CI tasks in one Gradle process.
+kotlin-ci:
+    cd kotlin && ../scripts/run-with-java-21.sh ./gradlew :lib:test :lib:koverHtmlReport :lib:koverXmlReport :lib:koverVerify --no-daemon
+
+# Run the full fast Kotlin CI gate.
+kotlin-check: protocol-vectors kotlin-ci
+
+# Run Kotlin server-dependent tests against an explicit local endpoint.
+kotlin-integration api="http://localhost:3000":
+    @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
+    cd kotlin && OBSCURA_TEST_API="{{ api }}" ../scripts/run-with-java-21.sh ./gradlew :lib:integrationTest --no-daemon
+
+# Fetch and build the pinned host libsignal FFI.
+[private]
+swift-bootstrap:
+    ./swift/scripts/bootstrap-libsignal.sh host
+
+# Build the Swift package.
+swift-build: swift-bootstrap
+    cd swift && ./dev.sh build
+
+# Run Swift unit tests.
+swift-unit: swift-bootstrap
+    cd swift && ./dev.sh test --filter UnitTests
+
+# Run Swift server-dependent tests against an explicit local endpoint.
+swift-integration api="http://localhost:3000": swift-bootstrap
+    @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
+    cd swift && OBSCURA_TEST_API="{{ api }}" ./dev.sh test --filter ScenarioTests
 
 # Create or refresh the compile-only Firebase stub when no real config exists.
 android-config:
@@ -84,8 +125,8 @@ android-clean: ensure-node-modules
 # Prepare all native iOS dependencies.
 [private]
 ios-prepare libsignal_target="ios-sim": ensure-node-modules
-    ./obscura-native/swift/scripts/bootstrap-libsignal.sh {{quote(libsignal_target)}}
-    ./obscura-native/swift/dev.sh prepare
+    ./swift/scripts/bootstrap-libsignal.sh {{quote(libsignal_target)}}
+    ./swift/dev.sh prepare
     cd ios && pod install
 
 # Build the iOS app for a generic simulator (env: dev or prod). Pass an

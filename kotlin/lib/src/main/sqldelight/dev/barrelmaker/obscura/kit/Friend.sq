@@ -1,0 +1,49 @@
+CREATE TABLE IF NOT EXISTS Friend (
+    user_id TEXT NOT NULL PRIMARY KEY,
+    username TEXT NOT NULL,
+    status TEXT NOT NULL
+);
+
+-- Incremented with every change to Friend on the primary; set from FriendListSync on a linked
+-- device. No row means version 0.
+CREATE TABLE IF NOT EXISTS FriendListVersion (
+    id INTEGER NOT NULL PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    version INTEGER NOT NULL
+);
+
+selectAll:
+SELECT user_id, username, status FROM Friend ORDER BY username, user_id;
+
+selectById:
+SELECT user_id, username, status FROM Friend WHERE user_id = ?;
+
+insert:
+INSERT OR REPLACE INTO Friend(user_id, username, status) VALUES (?, ?, ?);
+
+updateStatus:
+UPDATE Friend SET status = :status WHERE user_id = :userId AND status != :status;
+
+deleteById:
+DELETE FROM Friend WHERE user_id = ?;
+
+deleteIfStatus:
+DELETE FROM Friend WHERE user_id = ? AND status = ?;
+
+deleteAll:
+DELETE FROM Friend;
+
+selectVersion:
+SELECT version FROM FriendListVersion WHERE id = 1;
+
+incrementVersion:
+INSERT INTO FriendListVersion(id, version) VALUES (1, 1)
+ON CONFLICT(id) DO UPDATE SET version = version + 1;
+
+setVersion:
+INSERT OR REPLACE INTO FriendListVersion(id, version) VALUES (1, ?);
+
+deleteVersion:
+DELETE FROM FriendListVersion;
+
+changes:
+SELECT changes();

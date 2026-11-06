@@ -34,3 +34,14 @@ export class NativeEventEmitter {
 }
 
 export const Platform = { OS: 'ios', select: (o: Record<string, unknown>) => o.ios ?? o.default };
+
+export const Alert = {
+  alert(
+    _title: string,
+    _message?: string,
+    _buttons?: Array<{ text?: string; style?: string; onPress?: () => void }>,
+    _options?: { cancelable?: boolean; onDismiss?: () => void },
+  ): void {},
+};
+
+

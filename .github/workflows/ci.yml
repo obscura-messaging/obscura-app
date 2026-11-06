@@ -31,6 +31,159 @@ jobs:
       - run: just check
       - run: python3 scripts/test-verify-release-build.py -q
 
+  kotlin-unit:
+    name: Kotlin Kit (unit tests + coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: extractions/setup-just@v4
+
+      - uses: actions/setup-java@v6.1.0
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6.4.1
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lint client protocol
+        run: just protocol-lint
+
+      - name: Validate client protocol vectors and run Kotlin unit tests + coverage
+        run: just kotlin-check
+
+      - name: Upload unit-test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: kotlin-unit-test-report
+          path: kotlin/lib/build/reports/tests/test/
+          retention-days: 7
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: kotlin-coverage-report
+          path: |
+            kotlin/lib/build/reports/kover/html/
+            kotlin/lib/build/reports/kover/report.xml
+          retention-days: 14
+
+  kotlin-integration:
+    name: Kotlin Kit (integration, native server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: extractions/setup-just@v4
+
+      - uses: actions/setup-java@v6.1.0
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6.4.1
+
+      - name: Resolve latest obscura-server commit
+        id: server-ref
+        run: |
+          for i in 1 2 3; do
+            sha=$(git ls-remote https://github.com/obscura-messaging/obscura-server.git HEAD | cut -f1) && break
+            sleep 15
+          done
+          [ -n "$sha" ] || { echo "could not resolve server HEAD" >&2; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Cache obscura-server binary
+        id: server-bin
+        uses: actions/cache@v6
+        with:
+          path: ~/obscura-server-bin
+          key: obscura-server-${{ steps.server-ref.outputs.sha }}-ubuntu
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.server-bin.outputs.cache-hit != 'true'
+
+      - name: Install protobuf when building Rust dependencies
+        if: steps.server-bin.outputs.cache-hit != 'true'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Clone obscura-server
+        run: |
+          for i in 1 2 3; do
+            git clone --depth 1 --recurse-submodules \
+              https://github.com/obscura-messaging/obscura-server /tmp/obscura-server && break
+            rm -rf /tmp/obscura-server; sleep 15
+          done
+
+      - name: Build obscura-server (only when upstream changed)
+        if: steps.server-bin.outputs.cache-hit != 'true'
+        run: |
+          cd /tmp/obscura-server
+          cargo build --release
+          mkdir -p ~/obscura-server-bin
+          cp target/release/obscura-server ~/obscura-server-bin/
+
+      - name: Start backing services
+        run: |
+          cd /tmp/obscura-server
+          docker compose up -d --wait db minio valkey
+          docker compose exec -T db sh -c 'until pg_isready -h 127.0.0.1 -U user -d signal_server; do sleep 1; done'
+          AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin \
+            aws --endpoint-url http://localhost:9000 --region us-east-1 \
+            s3api create-bucket --bucket test-bucket
+
+      - name: Start obscura-server
+        env:
+          OBSCURA_DATABASE_URL: "postgres://user:password@localhost:5432/signal_server"
+          OBSCURA_PUBSUB_URL: redis://localhost:6379
+          OBSCURA_AUTH_JWT_SECRET: test_secret
+          OBSCURA_STORAGE_BUCKET: test-bucket
+          OBSCURA_STORAGE_ENDPOINT: http://localhost:9000
+          OBSCURA_STORAGE_ACCESS_KEY: minioadmin
+          OBSCURA_STORAGE_SECRET_KEY: minioadmin
+          OBSCURA_STORAGE_FORCE_PATH_STYLE: "true"
+          OBSCURA_RATE_LIMIT_PER_SECOND: 1000
+          OBSCURA_RATE_LIMIT_BURST: 2000
+          OBSCURA_RATE_LIMIT_AUTH_PER_SECOND: 1000
+          OBSCURA_RATE_LIMIT_AUTH_BURST: 2000
+          RUST_LOG: info
+        run: |
+          ~/obscura-server-bin/obscura-server > /tmp/obscura-server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null http://localhost:3000/; then echo "server up"; exit 0; fi
+            sleep 2
+          done
+          echo "server did not become ready" >&2
+          tail -100 /tmp/obscura-server.log
+          exit 1
+
+      - name: Integration tests
+        env:
+          OBSCURA_TEST_API: http://localhost:3000
+        run: just kotlin-integration http://localhost:3000
+
+      - name: Server log on failure
+        if: failure()
+        run: tail -200 /tmp/obscura-server.log 2>/dev/null || true
+
+      - name: Upload integration-test report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: kotlin-integration-test-report
+          path: kotlin/lib/build/reports/tests/integrationTest/
+          retention-days: 14
+
   android:
     name: Android Release Build
     if: github.event_name == 'pull_request'

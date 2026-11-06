@@ -1,24 +1,40 @@
-import { Obscura, type Friend } from '../native/ObscuraModule';
-import { conversationId } from '../domain/conversation';
-import { attachmentOf, type Attachment } from '../domain/pix';
+import type { CaptionMeta } from '../domain/caption';
+import type { MediaAttachment, MediaType } from '../domain/viewer';
+import { Obscura, type AttachmentRef, type Friend } from '../native/ObscuraModule';
 import { fileUri } from '../utils/files';
 import { logError } from '../utils/log';
-import { saveEntry, useStore } from './store';
+import { refreshMessages, refreshStories } from './store';
 
-export { attachmentOf, type Attachment };
-export type MediaType = 'photo' | 'video';
+export type { AttachmentRef, MediaAttachment, MediaType };
+
+const inFlightByCache = new WeakMap<Map<string, string>, Map<string, Promise<string>>>();
 
 /**
- * Decrypt an attachment to the native cache and remember its `file://` URI by `mediaRef`. The
- * native side returns the cached file when it already has one, so repeating this is cheap.
+ * Decrypt an attachment to the native cache and remember its `file://` URI by `id`. Concurrent
+ * requests against the same `cache` share one in-flight download.
  */
-export async function loadAttachmentUri(att: Attachment, cache: Map<string, string>): Promise<string> {
-  const cached = cache.get(att.mediaRef);
+export async function loadAttachmentUri(att: AttachmentRef, cache: Map<string, string>): Promise<string> {
+  const cached = cache.get(att.id);
   if (cached) return cached;
-  const path = await Obscura.downloadAttachment(att.mediaRef, att.contentKey, att.nonce);
-  const uri = fileUri(path);
-  cache.set(att.mediaRef, uri);
-  return uri;
+  let inFlight = inFlightByCache.get(cache);
+  if (!inFlight) {
+    inFlight = new Map();
+    inFlightByCache.set(cache, inFlight);
+  }
+  const existing = inFlight.get(att.id);
+  if (existing) return existing;
+  const promise = (async () => {
+    try {
+      const path = await Obscura.downloadAttachment(att.id, att.contentKey, att.nonce);
+      const uri = fileUri(path);
+      cache.set(att.id, uri);
+      return uri;
+    } finally {
+      inFlight.delete(att.id);
+    }
+  })();
+  inFlight.set(att.id, promise);
+  return promise;
 }
 
 export function discardCapture(path: string): void {
@@ -38,8 +54,7 @@ export interface Capture {
   path: string;
   mediaType: MediaType;
   caption: string;
-  /** A serialized `CaptionMeta`, absent without a caption. */
-  captionMeta?: string;
+  captionMeta?: CaptionMeta | null;
   displayDuration: number;
 }
 
@@ -58,25 +73,44 @@ export async function sendCapture(capture: Capture, recipients: readonly Friend[
     ? await Obscura.resizeImage(path, PHOTO_MAX_DIMENSION, PHOTO_QUALITY).catch((e) => { logError('resize', e); return null; })
     : null;
   const attachment = await Obscura.uploadAttachment(resized?.path ?? path);
-  const media = { mediaRef: attachment.id, contentKey: attachment.contentKey, nonce: attachment.nonce, mediaType, captionMeta };
+  const meta = captionMeta ?? null;
 
-  const { myUserId } = useStore.getState();
   const undelivered: string[] = [];
   for (const friend of recipients) {
     try {
-      await saveEntry('pix', { conversationId: conversationId(myUserId, friend.userId), ...media, caption, displayDuration });
+      await Obscura.sendPix(
+        friend.userId,
+        attachment.id,
+        attachment.contentKey,
+        attachment.nonce,
+        mediaType,
+        caption,
+        meta,
+        displayDuration,
+      );
     } catch (e) {
       undelivered.push(friend.username);
       logError('send.pix:' + friend.username, e);
     }
   }
+  if (recipients.length > 0) {
+    await refreshMessages();
+  }
   if (toStory) {
     try {
-      await saveEntry('story', { content: caption, ...media });
+      await Obscura.postStory(
+        caption,
+        attachment.id,
+        attachment.contentKey,
+        attachment.nonce,
+        mediaType,
+        meta,
+      );
     } catch (e) {
       undelivered.push('My story');
       logError('send.story', e);
     }
+    await refreshStories();
   }
 
   for (const temp of new Set([path, resized?.path ?? path])) {

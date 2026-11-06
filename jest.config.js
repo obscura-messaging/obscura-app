@@ -22,10 +22,27 @@ module.exports = {
   },
   roots: [
     '<rootDir>/src/domain',
-    '<rootDir>/src/models',
     '<rootDir>/src/native',
     '<rootDir>/src/state',
   ],
   testMatch: ['**/__tests__/**/*.test.ts'],
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
+  collectCoverageFrom: [
+    'src/domain/**/*.ts',
+    'src/native/ObscuraModule.ts',
+    'src/state/**/*.ts',
+    'src/utils/**/*.ts',
+    'src/navigation/openPixViewer.ts',
+    'src/components/confirm.ts',
+    '!src/**/__tests__/**',
+    '!src/**/__fixtures__/**',
+  ],
+  coverageThreshold: {
+    global: {
+      lines: 100,
+      statements: 100,
+      branches: 100,
+      functions: 98,
+    },
+  },
 };

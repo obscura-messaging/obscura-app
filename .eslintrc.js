@@ -3,7 +3,7 @@ module.exports = {
   extends: '@react-native',
   // The native submodule has its own language-specific gates. Its generated build output and
   // vendored dependencies must not become inputs to the app's JavaScript lint.
-  ignorePatterns: ['obscura-native/**', 'ios/build/**'],
+  ignorePatterns: ['kotlin/**', 'swift/**', 'ios/build/**', 'coverage/**'],
   rules: {
     // Ban silently-swallowed errors. Empty catches hid two real bugs
     // (pix view-once, camera file:// path). Route errors through
@@ -47,15 +47,22 @@ module.exports = {
     },
     {
       files: ['src/domain/**/*.{ts,tsx}'],
-      excludedFiles: ['src/domain/__tests__/**'],
       rules: {
         'no-restricted-imports': [
           'error',
           {
             patterns: [
               {
-                group: ['react', 'react-native', '**/state/**', '**/screens/**', '**/components/**'],
-                message: 'src/domain/ must remain pure and independent of React, UI, and stateful orchestration.',
+                group: [
+                  'react',
+                  'react-native',
+                  '**/native/**',
+                  '**/state/**',
+                  '**/screens/**',
+                  '**/components/**',
+                  '**/navigation/**',
+                ],
+                message: 'src/domain/ must remain pure and independent of React, native, state, and UI.',
               },
             ],
           },

@@ -5,17 +5,18 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Video from 'react-native-video';
-import { CaptionView, parseCaptionMeta } from '../components/Caption';
+import { CaptionView } from '../components/Caption';
 import { CloseIcon } from '../components/icons';
 import { Avatar } from '../components/Avatar';
-import { attachmentOf, displayMs } from '../domain/pix';
-import { storyGroups, type StoryGroup } from '../domain/stories';
-import { stepViewer } from '../domain/viewer';
+import {
+  displayMs, pixViewerGroups, stepViewer, storyViewerGroups,
+  type StoryGroup, type ViewerSlide,
+} from '../domain/viewer';
 import { loadAttachmentUri } from '../state/sendMedia';
-import { useIdentity, useModelEntries, markSeen } from '../state/store';
+import { useIdentity, useMessages, useStories, markSeen } from '../state/store';
 import { timeAgo } from '../utils/format';
 import { logError } from '../utils/log';
-import type { RootStackScreenProps, ViewerEntry } from '../navigation/types';
+import type { RootStackScreenProps } from '../navigation/types';
 import { colors } from '../styles';
 
 /** How long one turn of the 3D cube transition takes. */
@@ -41,11 +42,11 @@ function cubeFace(width: number, angle: Animated.AnimatedInterpolation<string>) 
 }
 
 /** A group's story as it was when the cube started turning. */
-interface Face { group: StoryGroup<ViewerEntry>; storyIdx: number; mediaUri: string | null }
+interface Face { group: StoryGroup<ViewerSlide>; storyIdx: number; mediaUri: string | null }
 interface Transition { outgoing: Face; direction: 1 | -1 }
 
 interface StoryFaceProps {
-  group: StoryGroup<ViewerEntry>;
+  group: StoryGroup<ViewerSlide>;
   storyIdx: number;
   mediaUri: string | null;
   mediaLoading: boolean;
@@ -62,10 +63,9 @@ function StoryFace({
 }: StoryFaceProps) {
   const { width: W, height: H } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const story = group.stories[storyIdx];
-  const isVideo = story.data.mediaType === 'video';
-  const text = story.data.content || story.data.caption || '';
-  const meta = parseCaptionMeta(story.data.captionMeta);
+  const slide = group.stories[storyIdx];
+  const isVideo = slide.attachment?.mediaType === 'video';
+  const { text, captionMeta } = slide;
 
   return (
     <Animated.View style={[styles.face, style]}>
@@ -101,7 +101,7 @@ function StoryFace({
       <View style={styles.header}>
         <Avatar name={group.username} size={32} background={colors.surfaceMuted} color={colors.text} />
         <Text style={styles.headerName}>{group.username}</Text>
-        <Text style={styles.headerTime}>{timeAgo(story.sentAt)}</Text>
+        <Text style={styles.headerTime}>{timeAgo(slide.sentAt)}</Text>
         <TouchableOpacity onPress={onClose} disabled={!onClose} style={styles.closeBtn}>
           <CloseIcon size={22} color={colors.text} />
         </TouchableOpacity>
@@ -110,14 +110,14 @@ function StoryFace({
       <View style={styles.content}>
         {mediaLoading && <ActivityIndicator color={colors.text} size="large" />}
         {!mediaUri && text !== '' && <Text style={styles.contentText}>{text}</Text>}
-        {!mediaLoading && !mediaUri && text === '' && attachmentOf(story) !== null && (
+        {!mediaLoading && !mediaUri && text === '' && slide.attachment !== null && (
           <Text style={styles.unavailableText}>Media unavailable</Text>
         )}
       </View>
 
       {mediaUri && text !== '' ? (
-        meta
-          ? <CaptionView meta={meta} text={text} width={W} height={H} />
+        captionMeta
+          ? <CaptionView meta={captionMeta} text={text} width={W} height={H} />
           : <Text style={[styles.captionOverlay, { bottom: insets.bottom + 48 }]}>{text}</Text>
       ) : null}
     </Animated.View>
@@ -129,31 +129,19 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const params = route.params;
   const markViewed = params.mode === 'pix';
   const identity = useIdentity();
-  const allStories = useModelEntries('story');
-  const allPix = useModelEntries('pix');
-  const [openedAt] = useState(() => Date.now());
+  const allStories = useStories();
+  const allMessages = useMessages();
 
-  const { groups, initialGroupIdx } = useMemo((): { groups: StoryGroup<ViewerEntry>[]; initialGroupIdx: number } => {
-    if (params.mode === 'pix') {
-      const wanted = new Set(params.entryIds);
-      const stories = allPix
-        .filter((p) => wanted.has(p.id))
-        .sort((a, b) => a.sentAt - b.sentAt);
-      const username = identity.friends.find((f) => f.userId === params.userId)?.username ?? params.username;
-      return {
-        groups: stories.length > 0 ? [{ userId: params.userId, username, stories }] : [],
-        initialGroupIdx: 0,
-      };
-    }
-    const { mine, others } = storyGroups(allStories, identity, openedAt);
-    const populated = [mine, ...others].filter((g) => g.stories.length > 0);
-    const idx = populated.findIndex((g) => g.userId === params.initialUserId);
-    return { groups: populated, initialGroupIdx: Math.max(0, idx) };
-  }, [params, allStories, allPix, identity, openedAt]);
+  const { groups, initialGroupIdx } = useMemo(
+    () => (params.mode === 'pix'
+      ? pixViewerGroups(allMessages, params.userId, params.username, params.entryIds, identity.friends)
+      : storyViewerGroups(allStories, identity, params.initialUserId)),
+    [params, allStories, allMessages, identity],
+  );
 
   const [groupIdx, setGroupIdx] = useState(initialGroupIdx);
   const [storyIdx, setStoryIdx] = useState(0);
-  const [mediaUri, setMediaUri] = useState<string | null>(null);
+  const [loadedMedia, setLoadedMedia] = useState<{ id: string; uri: string } | null>(null);
   const [mediaLoading, setMediaLoading] = useState(false);
   const [transition, setTransition] = useState<Transition | null>(null);
   const { width: W } = useWindowDimensions();
@@ -162,18 +150,32 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const mediaUris = useRef(new Map<string, string>()).current;
 
   const group = groups[groupIdx];
-  const story = group?.stories[storyIdx];
+  const slide = group?.stories[storyIdx];
+  const rawAtt = slide?.attachment ?? null;
+  const attId = rawAtt?.id;
+  const attKey = rawAtt?.contentKey;
+  const attNonce = rawAtt?.nonce;
+  const attMediaType = rawAtt?.mediaType;
+  const attachment = useMemo(
+    () => (attId !== undefined && attKey !== undefined && attNonce !== undefined && attMediaType !== undefined
+      ? { id: attId, contentKey: attKey, nonce: attNonce, mediaType: attMediaType }
+      : null),
+    [attId, attKey, attNonce, attMediaType],
+  );
+  const mediaUri = attachment
+    ? (loadedMedia?.id === attachment.id ? loadedMedia.uri : mediaUris.get(attachment.id) ?? null)
+    : null;
 
   useEffect(() => {
-    if (!group || !story) navigation.goBack();
-  }, [group, story, navigation]);
+    if (!group || !slide) navigation.goBack();
+  }, [group, slide, navigation]);
 
   const viewedIds = useRef(new Set<string>());
   const markCurrentViewed = useCallback(() => {
-    if (!story || !markViewed || viewedIds.current.has(story.id)) return;
-    viewedIds.current.add(story.id);
-    markSeen('pix', story).catch((e) => logError('seen.pix:' + story.id, e));
-  }, [markViewed, story]);
+    if (!slide || !markViewed || viewedIds.current.has(slide.id)) return;
+    viewedIds.current.add(slide.id);
+    markSeen(slide.id).catch((e) => logError('seen.pix:' + slide.id, e));
+  }, [markViewed, slide]);
 
   useEffect(() => navigation.addListener('beforeRemove', markCurrentViewed), [navigation, markCurrentViewed]);
 
@@ -213,20 +215,17 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const advance = useCallback(() => applyStep('advance'), [applyStep]);
   const rewind = useCallback(() => applyStep('rewind'), [applyStep]);
 
-  const attachment = useMemo(() => attachmentOf(story), [story]);
-
   useEffect(() => {
-    setMediaLoading(false);
-    if (!attachment) { setMediaUri(null); return; }
-    const cached = mediaUris.get(attachment.mediaRef);
-    if (cached) { setMediaUri(cached); return; }
-    setMediaUri(null);
+    if (!attachment || mediaUris.has(attachment.id)) {
+      setMediaLoading(false);
+      return;
+    }
     let cancelled = false;
+    setMediaLoading(true);
     (async () => {
       try {
-        setMediaLoading(true);
         const uri = await loadAttachmentUri(attachment, mediaUris);
-        if (!cancelled) setMediaUri(uri);
+        if (!cancelled) setLoadedMedia({ id: attachment.id, uri });
       } catch (e) {
         logError('storyMedia.load', e);
       } finally {
@@ -237,17 +236,22 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   }, [attachment, mediaUris]);
 
   useEffect(() => {
-    for (const neighbour of [groups[groupIdx + 1], groups[groupIdx - 1]]) {
-      const att = attachmentOf(neighbour?.stories[0]);
-      if (att && !mediaUris.has(att.mediaRef)) {
+    const candidates = [
+      group?.stories[storyIdx + 1],
+      groups[groupIdx + 1]?.stories[0],
+      groups[groupIdx - 1]?.stories[0],
+    ];
+    for (const candidate of candidates) {
+      const att = candidate?.attachment;
+      if (att && !mediaUris.has(att.id)) {
         loadAttachmentUri(att, mediaUris).catch((e) => logError('storyMedia.prefetch', e));
       }
     }
-  }, [groups, groupIdx, mediaUris]);
+  }, [group, storyIdx, groups, groupIdx, mediaUris]);
 
   const hasMedia = attachment !== null;
-  const isVideo = story?.data.mediaType === 'video';
-  const durationMs = displayMs(story?.data.displayDuration);
+  const isVideo = attachment?.mediaType === 'video';
+  const durationMs = displayMs(slide?.displayDuration);
   const readyToPlay = (!hasMedia || (!!mediaUri && !mediaLoading)) && !transition;
 
   useEffect(() => {
@@ -267,7 +271,7 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
     return () => anim.stop();
   }, [groupIdx, storyIdx, readyToPlay, isVideo, durationMs, advance, progress]);
 
-  if (!group || !story) return <View style={styles.container} />;
+  if (!group || !slide) return <View style={styles.container} />;
 
   const incomingTransform = transition ? {
     transform: cubeFace(W, cube.interpolate({

@@ -62,3 +62,12 @@ AuthKey_*.p8
 
 # Jest coverage output
 /coverage
+
+# Native kit build outputs
+kotlin/.gradle/
+kotlin/build/
+kotlin/lib/build/
+swift/.build/
+swift/.swiftpm/
+swift/vendored/
+protocol/**/__pycache__/

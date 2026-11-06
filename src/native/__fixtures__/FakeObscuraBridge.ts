@@ -1,14 +1,14 @@
 /**
- * An in-memory `ObscuraBridge` for Jest. It models the bridge contract, not the kit: no crypto,
- * network or authentication. What the app relies on is faithful: `inboxPeek` has no side effects,
- * inbox ids are never reused, `entryPut` is a blind upsert, `sendEntry` stores no local row, friend
- * and device changes are primary only, and `completeLink` waits until the test approves, expires or
- * cancels the pending link.
+ * Dumb Tier-2 `ObscuraBridge` stub for testing `ObscuraModule.ts` and `src/state/`.
+ * Holds plain arrays and state fields, records calls, and emits events on demand.
  */
 
-import type { AuthState, ConnectionState, DeviceInfo, Friend, ObscuraBridge, InboxRow, LoginScenario, SendReport, StoredEntry, SubmissionResult } from '../ObscuraModule';
-
-type FakeInboxRow = InboxRow & { envelopeId: string };
+import { serializeCaptionMeta, type CaptionMeta } from '../../domain/caption';
+import type {
+  AuthState, ConnectionState, DeviceInfo, Friend, LaunchIntent,
+  LoginScenario, ObscuraBridge, ProfileItem, RawAttachment,
+  RawConversationItem, RawDirectMessageItem, RawPixItem, RawStoryItem,
+} from '../ObscuraModule';
 
 export interface FakeBridgeOptions {
   userId?: string;
@@ -16,284 +16,52 @@ export interface FakeBridgeOptions {
   deviceId?: string;
 }
 
+export const FAKE_LINK_DEVICE_NAME = 'Test phone';
+
+const rejection = (code: string, message: string): Error & { code: string } =>
+  Object.assign(new Error(message), { code });
+
 export class FakeObscuraBridge implements ObscuraBridge {
-  // ─── Session ───────────────────────────────────────────
-  userId: string;
-  username: string;
-  deviceId: string;
+  userId = 'user_self';
+  username = 'self';
+  deviceId = 'device_self';
   authState: AuthState = 'loggedOut';
   connectionState: ConnectionState = 'disconnected';
+  primary = true;
+  loginScenario: LoginScenario = 'existingDevice';
+  pushToken: string | null = null;
+  clipboard: string | null = null;
+  launchIntent: LaunchIntent | null = null;
+  debugLog: string[] = [];
+  deletedFiles: string[] = [];
 
-  // ─── Stores ────────────────────────────────────────────
-  private friends: Friend[] = [];
-  private listeners = new Set<(event: any) => void>();
-  private debugLog: string[] = [];
-  private pushToken: string | null = null;
-  private loginScenario: LoginScenario = 'existingDevice';
-  private primary = true;
-  private devices: DeviceInfo[] = [];
-  private linkCode: string | null = null;
-  private linkWait: { resolve: () => void; reject: (e: Error) => void } | null = null;
+  messages: RawConversationItem[] = [];
+  stories: RawStoryItem[] = [];
+  profiles: ProfileItem[] = [];
+  friends: Friend[] = [];
+  devices: DeviceInfo[] = [];
 
-  /** Codes `approveLink` accepted, in order. */
+  readonly __calls: string[] = [];
   readonly __approved: string[] = [];
 
-  /** Strictly increasing timestamps, so same-tick writes never tie. */
-  private clock = 1_700_000_000_000;
-  private nextTimestamp(): number {
-    return ++this.clock;
-  }
-
-  /** Every bridge call, in order. */
-  readonly __calls: string[] = [];
+  private listeners = new Set<(event: any) => void>();
+  private failures = new Map<string, { code: string; message: string }>();
+  private unreachable = new Set<string>();
+  private sweepResult: string[] = ['directMessage', 'pix', 'story'];
+  private linkCode: string | null = null;
+  private linkWait: { resolve: () => void; reject: (e: Error) => void } | null = null;
+  private seq = 1_700_000_000_000;
 
   constructor(opts: FakeBridgeOptions = {}) {
-    this.userId = opts.userId ?? 'user_self';
-    this.username = opts.username ?? 'self';
-    this.deviceId = opts.deviceId ?? 'device_self';
+    if (opts.userId) this.userId = opts.userId;
+    if (opts.username) this.username = opts.username;
+    if (opts.deviceId) this.deviceId = opts.deviceId;
   }
 
-  private record(method: string): void {
+  private async step<T>(method: string, fn: () => T): Promise<T> {
     this.__calls.push(method);
-  }
-
-  // ─── The thin kit surface ──────────────────────────────────────────────
-
-  private inbox: FakeInboxRow[] = [];
-  /** Never reused, exactly like the kits' `AUTOINCREMENT`: a drained inbox must not reissue ids. */
-  private nextInboxId = 1;
-  private storedEntries = new Map<string, Map<string, StoredEntry>>();
-
-  /** What `sendEntry` put on the wire, in order. */
-  readonly __sent: Array<{
-    recipientUserIds: string[]; modelKey: string; entryId: string;
-    sentAt: number; payloadJson: string;
-  }> = [];
-
-  /** Rows the app discarded, with the reason. */
-  readonly __discarded: Array<{ ids: number[]; reason: string }> = [];
-
-  private entryTable(model: string): Map<string, StoredEntry> {
-    let t = this.storedEntries.get(model);
-    if (!t) {
-      t = new Map();
-      this.storedEntries.set(model, t);
-    }
-    return t;
-  }
-
-  async inboxPeek(limit: number): Promise<InboxRow[]> {
-    this.record('inboxPeek');
-    this.checkFailure('inboxPeek');
-    // Copies, so a test mutating a row cannot corrupt the inbox.
-    return this.inbox.slice(0, limit).map(({ envelopeId: _envelopeId, ...row }) => ({ ...row }));
-  }
-
-  async inboxConsume(ids: number[]): Promise<void> {
-    this.record('inboxConsume');
-    this.checkFailure('inboxConsume');
-    const drop = new Set(ids);
-    this.inbox = this.inbox.filter((r) => !drop.has(r.id));
-  }
-
-  async inboxDiscard(ids: number[], reason: string): Promise<void> {
-    this.record('inboxDiscard');
-    this.checkFailure('inboxDiscard');
-    if (ids.length === 0) return; // an empty discard is not a data-loss event
-    this.__discarded.push({ ids, reason });
-    // Not via `inboxConsume`, which would record a consume in `__calls`.
-    const drop = new Set(ids);
-    this.inbox = this.inbox.filter((r) => !drop.has(r.id));
-  }
-
-  async inboxDepth(): Promise<number> {
-    this.record('inboxDepth');
-    this.checkFailure('inboxDepth');
-    return this.inbox.length;
-  }
-
-  async entryPut(
-    model: string,
-    id: string,
-    dataJson: string,
-    sentAt: number,
-    authorUserId: string,
-    authorDeviceId: string,
-    localMetadata: string | null,
-  ): Promise<void> {
-    this.record('entryPut');
-    this.checkFailure('entryPut');
-    if (typeof dataJson !== 'string') {
-      throw new Error('entryPut expects a JSON string across the bridge, got ' + typeof dataJson);
-    }
-    this.entryTable(model).set(id, {
-      id, data: dataJson, sentAt, authorUserId, authorDeviceId, localMetadata,
-    });
-  }
-
-  async entryAll(model: string): Promise<StoredEntry[]> {
-    this.record('entryAll');
-    this.checkFailure('entryAll');
-    return [...this.entryTable(model).values()].map((e) => ({ ...e }));
-  }
-
-  async entryGet(model: string, ids: string[]): Promise<StoredEntry[]> {
-    this.record('entryGet');
-    this.checkFailure('entryGet');
-    const table = this.entryTable(model);
-    return ids.flatMap((id) => {
-      const e = table.get(id);
-      return e === undefined ? [] : [{ ...e }];
-    });
-  }
-
-  async entryErase(model: string, ids: string[]): Promise<void> {
-    this.record('entryErase');
-    this.checkFailure('entryErase');
-    // Missing ids are a no-op, like the kits.
-    for (const id of ids) this.entryTable(model).delete(id);
-  }
-
-  /** Users whose sends the kit reports rejected, as it does for a user with no devices. */
-  private unreachable = new Set<string>();
-  __setUnreachable(userIds: string[]): void {
-    this.unreachable = new Set(userIds);
-  }
-
-  async sendEntry(
-    recipientUserIds: string[], modelKey: string, entryId: string,
-    sentAt: number, payloadJson: string,
-  ): Promise<SendReport> {
-    this.record('sendEntry');
-    this.checkFailure('sendEntry');
-    this.__sent.push({ recipientUserIds, modelKey, entryId, sentAt, payloadJson });
-    return {
-      recipients: recipientUserIds.map((userId): SubmissionResult => this.unreachable.has(userId)
-        ? { userId, deviceId: null, status: 'rejected', error: 'No devices found' }
-        : { userId, deviceId: `${userId}-device`, status: 'accepted', error: null }),
-      selfSync: [],
-    };
-  }
-
-  // ─── Test controls (not part of the native surface) ───
-
-  /** Emit a raw event exactly as the native side would. */
-  __emit(event: Record<string, unknown>): void {
-    for (const l of [...this.listeners]) l(event);
-  }
-
-  /** Persist an inbox row and notify, as the kit does. Deduped on `envelopeId`. */
-  __deliverInbox(
-    row: Partial<InboxRow> & { payload: string; envelopeId?: string },
-  ): FakeInboxRow {
-    const id = this.nextInboxId;
-    const full: FakeInboxRow = {
-      id,
-      envelopeId: `env_${id}`,
-      senderUserId: 'user_peer',
-      senderDeviceId: 'device_peer',
-      modelKey: 'directMessage',
-      entryId: `entry_${id}`,
-      sentAt: this.nextTimestamp(),
-      ...row,
-    };
-    const existing = this.inbox.find((r) => r.envelopeId === full.envelopeId);
-    if (existing) return { ...existing };
-    this.nextInboxId += 1;
-    this.inbox.push(full);
-    this.__emit({ type: 'messageReceived', model: full.modelKey });
-    return full;
-  }
-
-  /** An authenticated session; without one, `getUserId()` is null and the drain stores nothing. */
-  __authenticate(opts: FakeBridgeOptions = {}): void {
-    if (opts.userId !== undefined) this.userId = opts.userId;
-    if (opts.username !== undefined) this.username = opts.username;
-    if (opts.deviceId !== undefined) this.deviceId = opts.deviceId;
-    this.__setAuthState('authenticated');
-  }
-
-  /** Set the friend graph and emit its payload-free wake event. */
-  __setFriends(friends: Friend[]): void {
-    this.friends = friends;
-    this.__emit({ type: 'friendsChanged' });
-  }
-
-  /** Flip auth state and emit, as login/logout does. */
-  __setAuthState(state: AuthState): void {
-    this.authState = state;
-    this.__emit({ type: 'authStateChanged', state });
-  }
-
-  /** What the next `login` calls resolve to. Only `existingDevice` authenticates, as in the kits. */
-  __setLoginScenario(scenario: LoginScenario): void {
-    this.loginScenario = scenario;
-  }
-
-  /** Whether this device is the account's primary. */
-  __setPrimary(primary: boolean): void {
-    this.primary = primary;
-  }
-
-  /** The account's devices as `getDevices` reports them. */
-  __setDevices(devices: DeviceInfo[]): void {
-    this.devices = devices;
-  }
-
-  /** The primary approves the pending link: `completeLink` provisions this device and resolves. */
-  __approvePendingLink(): void {
-    this.settleLink(null);
-  }
-
-  /** The pending link session expires: `completeLink` rejects `LINK_FAILED`. */
-  __expirePendingLink(): void {
-    this.settleLink(rejection('LINK_FAILED', 'Link session expired'));
-  }
-
-  /** Flip connection state and emit. */
-  __setConnectionState(state: ConnectionState): void {
-    this.connectionState = state;
-    this.__emit({ type: 'connectionChanged', state });
-  }
-
-  /** Clear all state in place: `ObscuraModule` holds this instance from import time. */
-  __reset(): void {
-    this.inbox.length = 0;
-    this.nextInboxId = 1;
-    this.storedEntries.clear();
-    this.__sent.length = 0;
-    this.__discarded.length = 0;
-    this.__purged.length = 0;
-    this.friends = [];
-    this.listeners.clear();
-    this.debugLog.length = 0;
-    this.failures.clear();
-    this.unreachable.clear();
-    this.__calls.length = 0;
-    this.pushToken = null;
-    this.loginScenario = 'existingDevice';
-    this.primary = true;
-    this.devices = [];
-    this.linkCode = null;
-    this.linkWait = null;
-    this.__approved.length = 0;
-    this.userId = 'user_self';
-    this.username = 'self';
-    this.deviceId = 'device_self';
-    this.authState = 'loggedOut';
-    this.connectionState = 'disconnected';
-    this.clock = 1_700_000_000_000;
-  }
-
-  /** How many handlers are subscribed. */
-  __listenerCount(): number {
-    return this.listeners.size;
-  }
-
-  /** Make the next call to `method` reject with `code`, as a native failure would. */
-  private failures = new Map<string, { code: string; message: string }>();
-  __failNext(method: string, code: string, message = 'fake failure'): void {
-    this.failures.set(method, { code, message });
+    this.checkFailure(method);
+    return fn();
   }
 
   private checkFailure(method: string): void {
@@ -307,303 +75,311 @@ export class FakeObscuraBridge implements ObscuraBridge {
     if (!this.primary) throw rejection('NOT_PRIMARY', 'Only the primary device can do this');
   }
 
-  // ─── Event subscription (what `NativeEventEmitter` drives) ───
-
   addListener(_eventName: string, handler?: (event: any) => void): { remove: () => void } {
     if (handler) this.listeners.add(handler);
-    return {
-      remove: () => {
-        if (handler) this.listeners.delete(handler);
-      },
-    };
+    return { remove: () => { if (handler) this.listeners.delete(handler); } };
   }
 
-  removeListeners(_count: number): void {
-    // RN calls this on teardown; the per-subscription `remove()` above does the real work.
+  removeListeners(_count: number): void {}
+
+  getMessages(): Promise<RawConversationItem[]> { return this.step('getMessages', () => [...this.messages]); }
+  getStories(): Promise<RawStoryItem[]> { return this.step('getStories', () => [...this.stories]); }
+  getProfiles(): Promise<ProfileItem[]> { return this.step('getProfiles', () => [...this.profiles]); }
+  flushOutbox(): Promise<number> { return this.step('flushOutbox', () => 0); }
+  sweepExpired(): Promise<string[]> { return this.step('sweepExpired', () => [...this.sweepResult]); }
+
+  async sendMessage(peerUserId: string, content: string): Promise<string> {
+    this.__calls.push('sendMessage');
+    if (peerUserId.trim() === '') throw rejection('INVALID_ARGUMENT', 'peerUserId is required');
+    const sentAt = ++this.seq, id = `dm_${sentAt}`;
+    this.messages.push({ kind: 'message', id, peerUserId, authorUserId: this.userId, sentAt, viewedAt: null, content });
+    this.checkFailure('sendMessage');
+    if (this.unreachable.has(peerUserId)) throw rejection('SEND_FAILED', 'directMessage reached none of its recipients');
+    return id;
   }
 
-  // ─── Auth ──────────────────────────────────────────────
-
-  async registerUser(username: string, _password: string): Promise<void> {
-    this.record('registerUser');
-    this.checkFailure('registerUser');
-    this.username = username;
-    this.__setAuthState('authenticated');
+  async sendPix(
+    peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
+    mediaType: string, caption: string, captionMeta: string | null, displayDuration: number,
+  ): Promise<string> {
+    this.__calls.push('sendPix');
+    if (peerUserId.trim() === '') throw rejection('INVALID_ARGUMENT', 'peerUserId is required');
+    const sentAt = ++this.seq, id = `pix_${sentAt}`;
+    this.messages.push({
+      kind: 'pix', id, peerUserId, authorUserId: this.userId, sentAt, viewedAt: null,
+      attachment: { id: mediaRef, contentKey, nonce, mediaType }, caption, captionMeta, displayDuration,
+    });
+    this.checkFailure('sendPix');
+    if (this.unreachable.has(peerUserId)) throw rejection('SEND_FAILED', 'pix reached none of its recipients');
+    return id;
   }
 
-  async login(username: string, _password: string): Promise<LoginScenario> {
-    this.record('login');
-    this.checkFailure('login');
-    if (this.loginScenario === 'existingDevice') {
-      this.username = username;
-      this.__setAuthState('authenticated');
+  markSeen(entryId: string): Promise<void> {
+    return this.step('markSeen', () => {
+      const item = this.messages.find((m) => m.id === entryId);
+      if (!item || item.authorUserId === this.userId || item.viewedAt !== null) return;
+      item.viewedAt = ++this.seq;
+    });
+  }
+
+  async postStory(
+    content: string, mediaRef: string | null, contentKey: string | null,
+    nonce: string | null, mediaType: string | null, captionMeta: string | null,
+  ): Promise<string> {
+    this.__calls.push('postStory');
+    const sentAt = ++this.seq, id = `story_${sentAt}`;
+    const attachment: RawAttachment | null = mediaRef && contentKey && nonce
+      ? { id: mediaRef, contentKey, nonce, mediaType: mediaType ?? 'photo' } : null;
+    this.stories.push({ id, authorUserId: this.userId, sentAt, content, attachment, captionMeta });
+    this.checkFailure('postStory');
+    if (this.friends.some((f) => this.unreachable.has(f.userId))) {
+      throw rejection('SEND_FAILED', 'story reached none of its recipients');
     }
-    return this.loginScenario;
+    return id;
   }
 
-  async resetAccount(username: string, _password: string): Promise<void> {
-    this.record('resetAccount');
-    this.checkFailure('resetAccount');
-    this.clearLocalState();
-    this.username = username;
-    this.primary = true;
-    this.__setAuthState('authenticated');
+  async updateProfile(displayName: string, bio: string): Promise<void> {
+    this.__calls.push('updateProfile');
+    const updatedAt = ++this.seq;
+    const profile: ProfileItem = { userId: this.userId, authorDeviceId: this.deviceId, updatedAt, displayName, bio };
+    this.profiles = [...this.profiles.filter((p) => p.userId !== this.userId), profile];
+    this.checkFailure('updateProfile');
+    if (this.friends.some((f) => this.unreachable.has(f.userId))) {
+      throw rejection('SEND_FAILED', 'profile reached none of its recipients');
+    }
   }
 
-  async beginLink(username: string, _password: string): Promise<string> {
-    this.record('beginLink');
-    this.checkFailure('beginLink');
-    this.username = username;
-    this.linkCode = `link_${this.nextTimestamp()}`;
-    return this.linkCode;
+  registerUser(username: string, _password: string): Promise<void> {
+    return this.step('registerUser', () => { this.username = username; this.__setAuthState('authenticated'); });
+  }
+
+  login(username: string, _password: string): Promise<LoginScenario> {
+    return this.step('login', () => {
+      if (this.loginScenario === 'existingDevice') { this.username = username; this.__setAuthState('authenticated'); }
+      return this.loginScenario;
+    });
+  }
+
+  resetAccount(username: string, _password: string): Promise<void> {
+    return this.step('resetAccount', () => {
+      this.clearLocalState(); this.username = username; this.primary = true; this.__setAuthState('authenticated');
+    });
+  }
+
+  beginLink(username: string, _password: string): Promise<string> {
+    return this.step('beginLink', () => { this.username = username; return (this.linkCode = `link_${++this.seq}`); });
   }
 
   async completeLink(): Promise<void> {
-    this.record('completeLink');
-    this.checkFailure('completeLink');
+    this.__calls.push('completeLink'); this.checkFailure('completeLink');
     if (this.linkCode === null) throw rejection('INVALID_ARGUMENT', 'No link in progress');
     this.linkCode = null;
     await new Promise<void>((resolve, reject) => { this.linkWait = { resolve, reject }; });
-    this.primary = false;
-    this.__setAuthState('authenticated');
-    this.__setConnectionState('connected');
+    this.primary = false; this.__setAuthState('authenticated'); this.__setConnectionState('connected');
   }
 
-  async cancelLink(): Promise<void> {
-    this.record('cancelLink');
-    this.linkCode = null;
-    this.settleLink(rejection('CANCELLED', 'Link cancelled'));
+  cancelLink(): Promise<void> {
+    return this.step('cancelLink', () => { this.linkCode = null; this.settleLink(rejection('CANCELLED', 'Link cancelled')); });
   }
 
   private settleLink(error: Error | null): void {
-    const wait = this.linkWait;
-    this.linkWait = null;
-    if (error === null) wait?.resolve();
-    else wait?.reject(error);
+    const wait = this.linkWait; this.linkWait = null;
+    if (error === null) wait?.resolve(); else wait?.reject(error);
   }
 
-  async connect(): Promise<void> {
-    this.record('connect');
-    this.checkFailure('connect');
-    this.__setConnectionState('connected');
-  }
-
-  async logout(): Promise<void> {
-    this.record('logout');
-    this.checkFailure('logout');
-    this.clearLocalState();
-  }
-
-  async wipeDevice(): Promise<void> {
-    this.record('wipeDevice');
-    this.checkFailure('wipeDevice');
-    this.clearLocalState();
-  }
+  connect(): Promise<void> { return this.step('connect', () => this.__setConnectionState('connected')); }
+  logout(): Promise<void> { return this.step('logout', () => this.clearLocalState()); }
+  wipeDevice(): Promise<void> { return this.step('wipeDevice', () => this.clearLocalState()); }
 
   private clearLocalState(): void {
-    this.inbox.length = 0;
-    this.nextInboxId = 1;
-    this.storedEntries.clear();
-    this.__sent.length = 0;
-    this.__discarded.length = 0;
-    this.friends = [];
-    this.__setConnectionState('disconnected');
-    this.__setAuthState('loggedOut');
+    this.messages = []; this.stories = []; this.profiles = []; this.friends = [];
+    this.__setConnectionState('disconnected'); this.__setAuthState('loggedOut');
   }
 
-  // ─── State ─────────────────────────────────────────────
+  getConnectionState(): Promise<ConnectionState> { return this.step('getConnectionState', () => this.connectionState); }
+  getAuthState(): Promise<AuthState> { return this.step('getAuthState', () => this.authState); }
+  getUserId(): Promise<string | null> { return this.step('getUserId', () => (this.authState === 'authenticated' ? this.userId : null)); }
+  getUsername(): Promise<string | null> { return this.step('getUsername', () => (this.authState === 'authenticated' ? this.username : null)); }
+  getDeviceId(): Promise<string | null> { return this.step('getDeviceId', () => (this.authState === 'authenticated' ? this.deviceId : null)); }
+  isPrimary(): Promise<boolean> { return this.step('isPrimary', () => this.authState === 'authenticated' && this.primary); }
 
-  async getConnectionState(): Promise<ConnectionState> {
-    this.record('getConnectionState');
-    return this.connectionState;
-  }
-  async getAuthState(): Promise<AuthState> {
-    this.record('getAuthState');
-    return this.authState;
-  }
-  async getUserId(): Promise<string | null> {
-    this.record('getUserId');
-    return this.authState === 'authenticated' ? this.userId : null;
-  }
-  async getUsername(): Promise<string | null> {
-    this.record('getUsername');
-    return this.authState === 'authenticated' ? this.username : null;
-  }
-  async getDeviceId(): Promise<string | null> {
-    this.record('getDeviceId');
-    return this.authState === 'authenticated' ? this.deviceId : null;
-  }
-  async isPrimary(): Promise<boolean> {
-    this.record('isPrimary');
-    return this.authState === 'authenticated' && this.primary;
+  linkCodeDeviceName(code: string): Promise<string> {
+    return this.step('linkCodeDeviceName', () => {
+      if (!code.startsWith('link_')) throw rejection('INVALID_ARGUMENT', 'Invalid link code');
+      return FAKE_LINK_DEVICE_NAME;
+    });
   }
 
-  // ─── Devices ───────────────────────────────────────────
-
-  /** Accepts the codes `beginLink` issues, named after `FAKE_LINK_DEVICE_NAME`. */
-  async linkCodeDeviceName(code: string): Promise<string> {
-    this.record('linkCodeDeviceName');
-    this.checkFailure('linkCodeDeviceName');
-    if (!code.startsWith('link_')) throw rejection('INVALID_ARGUMENT', 'Invalid link code');
-    return FAKE_LINK_DEVICE_NAME;
+  approveLink(code: string): Promise<void> {
+    return this.step('approveLink', () => { this.requirePrimary(); this.__approved.push(code); });
   }
 
-  async approveLink(code: string): Promise<void> {
-    this.record('approveLink');
-    this.checkFailure('approveLink');
-    this.requirePrimary();
-    this.__approved.push(code);
+  getDevices(): Promise<DeviceInfo[]> { return this.step('getDevices', () => this.devices.map((d) => ({ ...d }))); }
+
+  unlinkDevice(deviceId: string): Promise<void> {
+    return this.step('unlinkDevice', () => {
+      if (deviceId === this.deviceId) {
+        if (this.primary) throw rejection('INVALID_ARGUMENT', 'The primary device cannot unlink itself');
+        this.clearLocalState();
+        return;
+      }
+      this.requirePrimary();
+      this.devices = this.devices.filter((d) => d.deviceId !== deviceId);
+    });
   }
 
-  async getDevices(): Promise<DeviceInfo[]> {
-    this.record('getDevices');
-    this.checkFailure('getDevices');
-    return this.devices.map((d) => ({ ...d }));
+  removeFriend(userId: string): Promise<void> {
+    return this.step('removeFriend', () => { this.requirePrimary(); this.__setFriends(this.friends.filter((f) => f.userId !== userId)); });
   }
 
-  async unlinkDevice(deviceId: string): Promise<void> {
-    this.record('unlinkDevice');
-    this.checkFailure('unlinkDevice');
-    if (deviceId === this.deviceId) {
-      if (this.primary) throw rejection('INVALID_ARGUMENT', 'The primary device cannot unlink itself');
-      this.clearLocalState();
-      return;
-    }
-    this.requirePrimary();
-    this.devices = this.devices.filter((d) => d.deviceId !== deviceId);
+  acceptFriend(userId: string): Promise<void> {
+    return this.step('acceptFriend', () => {
+      this.requirePrimary();
+      const existing = this.friends.find((f) => f.userId === userId);
+      if (!existing) throw new Error(`Unknown friend ${userId}`);
+      this.__setFriends([...this.friends.filter((f) => f.userId !== userId), { ...existing, status: 'accepted' }]);
+    });
   }
 
-  // ─── Friends ───────────────────────────────────────────
+  getFriendCode(): Promise<string> { return this.step('getFriendCode', () => `${this.userId}:${this.username}`); }
 
-  async removeFriend(userId: string): Promise<void> {
-    this.record('removeFriend');
-    this.checkFailure('removeFriend');
-    this.requirePrimary();
-    this.__setFriends(this.friends.filter((f) => f.userId !== userId));
+  addFriendByCode(code: string): Promise<void> {
+    return this.step('addFriendByCode', () => {
+      this.requirePrimary();
+      const [userId, username] = code.split(':');
+      this.__setFriends([...this.friends, { userId, username: username ?? userId, status: 'pending_sent' }]);
+    });
   }
 
-  async acceptFriend(userId: string): Promise<void> {
-    this.record('acceptFriend');
-    this.checkFailure('acceptFriend');
-    this.requirePrimary();
-    const existing = this.friends.find((f) => f.userId === userId);
-    if (!existing) throw new Error(`Unknown friend ${userId}`);
-    const rest = this.friends.filter((f) => f.userId !== userId);
-    this.__setFriends([...rest, { ...existing, status: 'accepted' }]);
+  getFriends(): Promise<Friend[]> { return this.step('getFriends', () => [...this.friends]); }
+  sendTyping(_peerUserId: string): Promise<void> { return this.step('sendTyping', () => {}); }
+  stopTyping(_peerUserId: string): Promise<void> { return this.step('stopTyping', () => {}); }
+  observeTyping(_peerUserId: string): Promise<void> { return this.step('observeTyping', () => {}); }
+  stopObservingTyping(_peerUserId: string): Promise<void> { return this.step('stopObservingTyping', () => {}); }
+
+  uploadAttachment(filePath: string): Promise<{ id: string; contentKey: string; nonce: string }> {
+    return this.step('uploadAttachment', () => ({ id: `att_${++this.seq}`, contentKey: 'key_' + filePath.length, nonce: 'nonce' }));
   }
 
-  async getFriendCode(): Promise<string> {
-    this.record('getFriendCode');
-    return `${this.userId}:${this.username}`;
+  downloadAttachment(id: string, _contentKey: string, _nonce: string): Promise<string> {
+    return this.step('downloadAttachment', () => `/fake/cache/${id}`);
   }
 
-  async addFriendByCode(code: string): Promise<void> {
-    this.record('addFriendByCode');
-    this.checkFailure('addFriendByCode');
-    this.requirePrimary();
-    const [userId, username] = code.split(':');
-    this.__setFriends([
-      ...this.friends,
-      { userId, username: username ?? userId, status: 'pending_sent' },
-    ]);
+  resizeImage(srcPath: string, maxDim: number, _quality: number): Promise<{ path: string; width: number; height: number }> {
+    return this.step('resizeImage', () => ({ path: srcPath, width: maxDim, height: maxDim }));
   }
 
-  async getFriends(): Promise<Friend[]> {
-    this.record('getFriends');
-    return [...this.friends];
+  writeTestImage(width: number, height: number): Promise<{ path: string; width: number; height: number }> {
+    return this.step('writeTestImage', () => ({ path: '/fake/test.jpg', width, height }));
   }
 
-  // ─── Signals ───────────────────────────────────────────
+  requestPushPermission(): Promise<boolean> { return this.step('requestPushPermission', () => true); }
+  registerPushToken(token: string): Promise<void> { return this.step('registerPushToken', () => { this.pushToken = token; }); }
+  __registeredPushToken(): string | null { return this.pushToken; }
+  getDebugLog(): Promise<string[]> { return this.step('getDebugLog', () => [...this.debugLog]); }
+  prewarmAudioSession(): Promise<void> { return this.step('prewarmAudioSession', () => {}); }
+  deleteFile(path: string): Promise<void> { return this.step('deleteFile', () => { this.deletedFiles.push(path); }); }
+  setClipboard(text: string): Promise<void> { return this.step('setClipboard', () => { this.clipboard = text; }); }
+  getLaunchIntent(): Promise<LaunchIntent | null> { return this.step('getLaunchIntent', () => this.launchIntent); }
 
-  async sendTyping(_recipientUserIds: string[], _conversationId: string): Promise<void> {
-    this.record('sendTyping');
-  }
-  async stopTyping(_recipientUserIds: string[], _conversationId: string): Promise<void> {
-    this.record('stopTyping');
-  }
-  async observeTyping(_conversationId: string): Promise<void> {
-    this.record('observeTyping');
-  }
-  async stopObservingTyping(_conversationId: string): Promise<void> {
-    this.record('stopObservingTyping');
-  }
+  __emit(event: Record<string, unknown>): void { for (const l of [...this.listeners]) l(event); }
+  __listenerCount(): number { return this.listeners.size; }
+  __failNext(method: string, code: string, message = 'fake failure'): void { this.failures.set(method, { code, message }); }
+  __setUnreachable(userIds: string[]): void { this.unreachable = new Set(userIds); }
+  __setSweepResult(models: string[]): void { this.sweepResult = models; }
 
-  // ─── Attachments and media ─────────────────────────────
-
-  async uploadAttachment(filePath: string): Promise<{ id: string; contentKey: string; nonce: string }> {
-    this.record('uploadAttachment');
-    this.checkFailure('uploadAttachment');
-    return { id: `att_${this.nextTimestamp()}`, contentKey: 'key_' + filePath.length, nonce: 'nonce' };
-  }
-
-  async downloadAttachment(id: string, _contentKey: string, _nonce: string): Promise<string> {
-    this.record('downloadAttachment');
-    this.checkFailure('downloadAttachment');
-    return `/fake/cache/${id}`;
-  }
-
-  /** Attachment ids passed to `purgeAttachment`, in order. */
-  __purged: string[] = [];
-
-  async purgeAttachment(id: string): Promise<void> {
-    this.record('purgeAttachment');
-    this.checkFailure('purgeAttachment');
-    this.__purged.push(id);
+  __deliverMessage(input: Partial<RawDirectMessageItem> = {}): RawDirectMessageItem {
+    const sentAt = input.sentAt ?? ++this.seq;
+    const authorUserId = input.authorUserId ?? input.peerUserId ?? 'user_peer';
+    const item: RawDirectMessageItem = {
+      kind: 'message', id: input.id ?? `dm_${sentAt}`,
+      peerUserId: input.peerUserId ?? (authorUserId === this.userId ? 'user_peer' : authorUserId),
+      authorUserId, sentAt, viewedAt: input.viewedAt ?? null, content: input.content ?? 'hello',
+    };
+    this.messages.push(item);
+    this.__emit({ type: 'messageReceived', model: 'directMessage' });
+    return item;
   }
 
-  async resizeImage(srcPath: string, maxDim: number, _quality: number): Promise<{ path: string; width: number; height: number }> {
-    this.record('resizeImage');
-    return { path: srcPath, width: maxDim, height: maxDim };
+  __deliverPix(input: {
+    id?: string; peerUserId?: string; authorUserId?: string; sentAt?: number; viewedAt?: number | null;
+    attachment?: RawAttachment; caption?: string | null; captionMeta?: CaptionMeta | string | null; displayDuration?: number;
+  } = {}): RawPixItem {
+    const sentAt = input.sentAt ?? ++this.seq;
+    const authorUserId = input.authorUserId ?? input.peerUserId ?? 'user_peer';
+    const item: RawPixItem = {
+      kind: 'pix', id: input.id ?? `pix_${sentAt}`,
+      peerUserId: input.peerUserId ?? (authorUserId === this.userId ? 'user_peer' : authorUserId),
+      authorUserId, sentAt, viewedAt: input.viewedAt ?? null,
+      attachment: input.attachment ?? { id: 'att_1', contentKey: 'key', nonce: 'nonce', mediaType: 'photo' },
+      caption: input.caption ?? null,
+      captionMeta: typeof input.captionMeta === 'object' && input.captionMeta !== null ? serializeCaptionMeta(input.captionMeta) : (input.captionMeta ?? null),
+      displayDuration: input.displayDuration ?? 5,
+    };
+    this.messages.push(item);
+    this.__emit({ type: 'messageReceived', model: 'pix' });
+    return item;
   }
 
-  async writeTestImage(width: number, height: number): Promise<{ path: string; width: number; height: number }> {
-    this.record('writeTestImage');
-    return { path: '/fake/test.jpg', width, height };
+  __deliverSeen(input: string | { entryId: string; senderUserId?: string; viewedAt?: number; sentAt?: number }, viewedAtArg?: number): void {
+    const opts = typeof input === 'string' ? { entryId: input, viewedAt: viewedAtArg } : input;
+    const item = this.messages.find((m) => m.id === opts.entryId);
+    if (item && item.viewedAt === null) item.viewedAt = opts.viewedAt ?? opts.sentAt ?? ++this.seq;
+    this.__emit({ type: 'messageReceived', model: 'seen' });
   }
 
-  // ─── Push ──────────────────────────────────────────────
-
-  async requestPushPermission(): Promise<boolean> {
-    this.record('requestPushPermission');
-    this.checkFailure('requestPushPermission');
-    return true;
+  __deliverStory(input: {
+    id?: string; authorUserId?: string; sentAt?: number; content?: string; attachment?: RawAttachment | null;
+    captionMeta?: CaptionMeta | string | null;
+  } = {}): RawStoryItem {
+    const sentAt = input.sentAt ?? ++this.seq;
+    const story: RawStoryItem = {
+      id: input.id ?? `story_${sentAt}`, authorUserId: input.authorUserId ?? 'user_peer',
+      sentAt, content: input.content ?? '', attachment: input.attachment,
+      captionMeta: typeof input.captionMeta === 'object' && input.captionMeta !== null ? serializeCaptionMeta(input.captionMeta) : (input.captionMeta ?? null),
+    };
+    this.stories.push(story);
+    this.__emit({ type: 'messageReceived', model: 'story' });
+    return story;
   }
 
-  async registerPushToken(token: string): Promise<void> {
-    this.record('registerPushToken');
-    this.checkFailure('registerPushToken');
-    this.pushToken = token;
+  __deliverProfile(input: { userId: string; authorDeviceId?: string; updatedAt?: number; displayName: string; bio?: string }): ProfileItem {
+    const profile: ProfileItem = {
+      userId: input.userId, authorDeviceId: input.authorDeviceId ?? 'device_peer',
+      updatedAt: input.updatedAt ?? ++this.seq, displayName: input.displayName, bio: input.bio ?? '',
+    };
+    this.profiles = [...this.profiles.filter((p) => p.userId !== input.userId), profile];
+    this.__emit({ type: 'messageReceived', model: 'profile' });
+    return profile;
   }
 
-  /** The token the app last registered, or null. */
-  __registeredPushToken(): string | null {
-    return this.pushToken;
+  __authenticate(opts: FakeBridgeOptions = {}): void {
+    if (opts.userId !== undefined) this.userId = opts.userId;
+    if (opts.username !== undefined) this.username = opts.username;
+    if (opts.deviceId !== undefined) this.deviceId = opts.deviceId;
+    this.__setAuthState('authenticated');
   }
 
-  // ─── Misc ──────────────────────────────────────────────
+  __setFriends(friends: Friend[]): void { this.friends = friends; this.__emit({ type: 'friendsChanged' }); }
+  __setAuthState(state: AuthState): void { this.authState = state; this.__emit({ type: 'authStateChanged', state }); }
+  __setConnectionState(state: ConnectionState): void { this.connectionState = state; this.__emit({ type: 'connectionChanged', state }); }
+  __setLoginScenario(scenario: LoginScenario): void { this.loginScenario = scenario; }
+  __setPrimary(primary: boolean): void { this.primary = primary; }
+  __setDevices(devices: DeviceInfo[]): void { this.devices = devices; }
+  __approvePendingLink(): void { this.settleLink(null); }
+  __expirePendingLink(): void { this.settleLink(rejection('LINK_FAILED', 'Link session expired')); }
 
-  async getDebugLog(): Promise<string[]> {
-    this.record('getDebugLog');
-    return [...this.debugLog];
+  __reset(): void {
+    this.messages = []; this.stories = []; this.profiles = []; this.friends = []; this.devices = [];
+    this.__calls.length = 0; this.__approved.length = 0;
+    this.listeners.clear(); this.failures.clear(); this.unreachable.clear();
+    this.sweepResult = ['directMessage', 'pix', 'story'];
+    this.debugLog = []; this.deletedFiles = [];
+    this.pushToken = null; this.clipboard = null; this.launchIntent = null;
+    this.loginScenario = 'existingDevice'; this.primary = true;
+    this.linkCode = null; this.linkWait = null;
+    this.userId = 'user_self'; this.username = 'self'; this.deviceId = 'device_self';
+    this.authState = 'loggedOut'; this.connectionState = 'disconnected';
+    this.seq = 1_700_000_000_000;
   }
-  async prewarmAudioSession(): Promise<void> {
-    this.record('prewarmAudioSession');
-  }
-  async deleteFile(_path: string): Promise<void> {
-    this.record('deleteFile');
-  }
-  async setClipboard(_text: string): Promise<void> {
-    this.record('setClipboard');
-  }
-  async getLaunchIntent(): Promise<{ screen: string } | null> {
-    this.record('getLaunchIntent');
-    return null;
-  }
-}
-
-export const FAKE_LINK_DEVICE_NAME = 'Test phone';
-
-/** A rejection as the native side delivers it: an `Error` with a `code`. */
-function rejection(code: string, message: string): Error & { code: string } {
-  return Object.assign(new Error(message), { code });
 }

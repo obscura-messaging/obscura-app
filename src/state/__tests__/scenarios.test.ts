@@ -1,14 +1,11 @@
 import {
-  useStore, loadSession, loadEntries, drainAndRefresh, flushOutboxFromStore, sweepAndRefresh,
-  applyObscuraEvent, addFriend, acceptFriend, removeFriend, saveEntry, markSeen, resetSession,
+  useStore, loadSession, refreshMessages, flushOutboxFromStore, sweepAndRefresh,
+  applyObscuraEvent, addFriend, acceptFriend, removeFriend, markSeen, resetSession,
 } from '../store';
-import { notifyTyping } from '../chat';
+import { nextPeerTypingState, notifyTyping, sendChatMessage } from '../chat';
 import { logIn, linkThisDevice } from '../login';
 import { sendCapture, type Capture } from '../sendMedia';
-import { activityPreview, friendActivities } from '../../domain/chats';
-import { conversationId } from '../../domain/conversation';
-import { EXPIRE_AFTER_MS } from '../../domain/expiry';
-import { SEEN_MODEL, seenEntryId } from '../../domain/seen';
+import { activityPreview, chatTimeline, friendActivities } from '../../domain/chats';
 import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
@@ -17,16 +14,14 @@ const bridge = getFakeBridge();
 const ALICE = '11111111-1111-4111-8111-111111111111';
 const DEVICE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const BOB: Friend = { userId: '22222222-2222-4222-8222-222222222222', username: 'bob', status: 'accepted' };
-const CONV = conversationId(ALICE, BOB.userId);
-
-async function flush(): Promise<void> {
-  for (let i = 0; i < 8; i += 1) await Promise.resolve();
-  await new Promise((r) => setImmediate(r));
-}
 
 beforeEach(() => {
   resetSession();
   bridge.__authenticate({ userId: ALICE, username: 'alice', deviceId: DEVICE });
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 describe('Scenario 1: device relink + friend handshake', () => {
@@ -43,7 +38,7 @@ describe('Scenario 1: device relink + friend handshake', () => {
 
     const codes: string[] = [];
     const linking = linkThisDevice('alice', 'password-1234', (code) => codes.push(code));
-    await flush();
+    await Promise.resolve();
     expect(codes).toHaveLength(1);
     bridge.__approvePendingLink();
     await linking;
@@ -76,175 +71,171 @@ describe('Scenario 1: device relink + friend handshake', () => {
   });
 });
 
-describe('Scenario 2: offline capture -> outbox flush -> view-once receipt -> 15m expiry & replay block', () => {
-  it('queues an offline capture, flushes on reconnect, tracks seen state, and sweeps after 15m', async () => {
+describe('Scenario 2: offline capture -> reconnect sync -> peer seen receipt -> expiry sweep refresh', () => {
+  it('reports undelivered capture targets, deletes temp files, updates activity on seen receipt, and refreshes slices touched by sweepExpired', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__setFriends([BOB]);
     await loadSession();
-    await loadEntries('directMessage');
-    await loadEntries('pix');
-    await loadEntries('story');
 
     // 1. Alice captures a photo while Bob is unreachable.
     bridge.__setUnreachable([BOB.userId]);
-    const capture: Capture = { path: '/tmp/shot.jpg', mediaType: 'photo', caption: 'secret', displayDuration: 5 };
+    const capture: Capture = { path: '/fake/shot.jpg', mediaType: 'photo', caption: 'secret', displayDuration: 5 };
     const undelivered = await sendCapture(capture, [BOB], true);
 
     expect(undelivered).toEqual(['bob', 'My story']);
-    expect(bridge.__calls).toContain('deleteFile');
-    expect(useStore.getState().entries.pix).toHaveLength(1);
-    expect(useStore.getState().entries.story).toHaveLength(1);
+    expect(bridge.deletedFiles).toContain('/fake/shot.jpg');
+    expect(useStore.getState().messages).toHaveLength(1);
+    expect(useStore.getState().stories).toHaveLength(1);
 
-    const [pixEntry] = useStore.getState().entries.pix!;
-    let [bobActivity] = friendActivities(useStore.getState().friends, ALICE, [], useStore.getState().entries.pix!);
+    const [pixEntry] = useStore.getState().messages;
+    if (pixEntry.kind !== 'pix') throw new Error('Expected pix entry');
+    let [bobActivity] = friendActivities(useStore.getState().friends, ALICE, useStore.getState().messages);
     expect(activityPreview(bobActivity, ALICE)).toEqual({ text: 'Pix delivered', highlight: false });
 
-    // 2. Network reconnects: outbox flushes both the pix and the story to Bob.
+    // 2. Network reconnects: store triggers flushOutbox and sweepExpired.
     bridge.__setUnreachable([]);
-    applyObscuraEvent({ type: 'connectionChanged', state: 'connected' });
-    await flush();
+    bridge.__calls.length = 0;
+    await applyObscuraEvent({ type: 'connectionChanged', state: 'connected' });
 
-    expect(bridge.__sent.filter((s) => s.modelKey === 'pix' && s.recipientUserIds.includes(BOB.userId))).toHaveLength(2);
-    expect(bridge.__sent.filter((s) => s.modelKey === 'story' && s.recipientUserIds.includes(BOB.userId))).toHaveLength(2);
+    expect(bridge.__calls).toContain('flushOutbox');
+    expect(bridge.__calls).toContain('sweepExpired');
 
-    // 3. Bob opens the pix and his seen receipt arrives in Alice's inbox.
+    // 3. Bob opens the pix and his seen receipt arrives for Alice.
     const viewedAt = pixEntry.sentAt + 5_000;
-    bridge.__deliverInbox({
+    bridge.__deliverSeen({
+      entryId: pixEntry.id,
       senderUserId: BOB.userId,
-      modelKey: SEEN_MODEL,
-      entryId: seenEntryId('pix', pixEntry.id),
+      viewedAt,
       sentAt: viewedAt,
-      payload: JSON.stringify({ conversationId: CONV, viewedAt }),
     });
-    await drainAndRefresh();
+    await applyObscuraEvent({ type: 'messageReceived', model: 'seen' });
 
-    expect(useStore.getState().entries.pix?.[0].viewedAt).toBe(viewedAt);
-    [bobActivity] = friendActivities(useStore.getState().friends, ALICE, [], useStore.getState().entries.pix!);
+    expect(useStore.getState().messages[0].viewedAt).toBe(viewedAt);
+    [bobActivity] = friendActivities(useStore.getState().friends, ALICE, useStore.getState().messages);
     expect(activityPreview(bobActivity, ALICE)).toEqual({ text: 'Pix opened', highlight: false });
 
-    // 4. 15 minutes pass after viewing: the sweep erases the pix, its receipt, and its decrypted media,
-    //    and writes an `_erased` tombstone that blocks any replayed copy.
-    await Obscura.entryErase('pix', []); // no-op sanity
-    const expiredNow = viewedAt + EXPIRE_AFTER_MS + 1;
-    const touched = await (await import('../expiry')).sweepExpired(expiredNow);
-    expect(touched).toContain('pix');
+    // 4. Native sweep erases the expired pix and reports 'pix' as touched; sweepAndRefresh reloads the slice.
+    bridge.messages = [];
+    bridge.__setSweepResult(['pix']);
     await sweepAndRefresh();
-    await loadEntries('pix');
 
-    expect(useStore.getState().entries.pix).toEqual([]);
-    expect(bridge.__purged).toContain(pixEntry.data.mediaRef);
-
-    // 5. A replayed envelope for the erased pix is ignored and never resurrected.
-    bridge.__deliverInbox({
-      senderUserId: ALICE,
-      modelKey: 'pix',
-      entryId: pixEntry.id,
-      sentAt: pixEntry.sentAt,
-      payload: JSON.stringify(pixEntry.data),
-    });
-    await drainAndRefresh();
-    expect(useStore.getState().entries.pix).toEqual([]);
-
+    expect(useStore.getState().messages).toEqual([]);
     warn.mockRestore();
   });
 });
 
-describe('Scenario 3: incoming pix viewed locally + concurrent first-load race', () => {
-  it('keeps refreshes that complete while the initial loadEntries call is still in flight', async () => {
+describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat sending', () => {
+  it('coalesces concurrent refreshMessages calls so in-flight arrivals are not lost', async () => {
     bridge.__setFriends([BOB]);
     await loadSession();
 
-    // Start loading `directMessage` (marks `openedModels` immediately) while draining a new message.
-    const firstLoad = loadEntries('directMessage');
-    bridge.__deliverInbox({
-      senderUserId: BOB.userId,
-      modelKey: 'directMessage',
-      entryId: 'dm_race',
-      payload: JSON.stringify({ conversationId: CONV, content: 'arrived during mount' }),
+    const firstRefresh = refreshMessages();
+    bridge.__deliverMessage({
+      id: 'dm_race',
+      peerUserId: BOB.userId,
+      authorUserId: BOB.userId,
+      content: 'arrived during refresh',
     });
-    await Promise.all([firstLoad, drainAndRefresh()]);
+    await Promise.all([firstRefresh, refreshMessages()]);
 
-    expect(useStore.getState().entries.directMessage?.map((m) => m.id)).toEqual(['dm_race']);
+    expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_race']);
   });
 
   it('highlights an incoming unopened pix in activityPreview until markSeen marks it viewed', async () => {
     bridge.__setFriends([BOB]);
     await loadSession();
-    await loadEntries('pix');
 
-    bridge.__deliverInbox({
-      senderUserId: BOB.userId,
-      modelKey: 'pix',
-      entryId: 'pix_in_1',
-      payload: JSON.stringify({
-        conversationId: CONV,
-        mediaRef: 'att_1',
-        contentKey: 'k',
-        nonce: 'n',
-        mediaType: 'photo',
-        caption: 'look!',
-        displayDuration: 5,
-      }),
+    bridge.__deliverPix({
+      id: 'pix_in_1',
+      peerUserId: BOB.userId,
+      authorUserId: BOB.userId,
+      attachment: { id: 'att_1', contentKey: 'k', nonce: 'n', mediaType: 'photo' },
+      caption: 'look!',
+      displayDuration: 5,
     });
-    await drainAndRefresh();
+    await applyObscuraEvent({ type: 'messageReceived', model: 'pix' });
 
-    let [activity] = friendActivities(useStore.getState().friends, ALICE, [], useStore.getState().entries.pix!);
+    let [activity] = friendActivities(useStore.getState().friends, ALICE, useStore.getState().messages);
     expect(activity.unopenedPix).toHaveLength(1);
     expect(activityPreview(activity, ALICE)).toEqual({ text: 'New pix · tap to view', highlight: true });
+    expect(chatTimeline(useStore.getState().messages, BOB.userId, ALICE)).toEqual([
+      { kind: 'pix', id: 'pix_in_1', sentAt: expect.any(Number), authorUserId: BOB.userId, status: 'received_new' },
+    ]);
 
-    await markSeen('pix', activity.unopenedPix[0]);
+    await markSeen(activity.unopenedPix[0].id);
 
-    [activity] = friendActivities(useStore.getState().friends, ALICE, [], useStore.getState().entries.pix!);
+    [activity] = friendActivities(useStore.getState().friends, ALICE, useStore.getState().messages);
     expect(activity.unopenedPix).toHaveLength(0);
     expect(activityPreview(activity, ALICE)).toEqual({ text: 'Pix viewed', highlight: false });
+    // Once a received pix is seen, the chat timeline hides it immediately even before the 15m sweep.
+    expect(chatTimeline(useStore.getState().messages, BOB.userId, ALICE)).toEqual([]);
   });
 
-  it('re-projects viewedAt in memory on markSeen without re-reading directMessage or pix from SQLite', async () => {
+  it('stops typing, sends a chat message, and refreshes messages', async () => {
     bridge.__setFriends([BOB]);
     await loadSession();
-    await Obscura.entryPut(
-      'directMessage', 'dm_mem', JSON.stringify({ conversationId: CONV, content: 'hi' }), 1_000, BOB.userId, 'd', null,
-    );
-    await loadEntries('directMessage');
-    await loadEntries('pix');
 
-    const callsBefore = bridge.__calls.length;
-    await markSeen('directMessage', useStore.getState().entries.directMessage![0]);
-    const recentCalls = bridge.__calls.slice(callsBefore);
+    await sendChatMessage(BOB.userId, 'hello bob');
 
-    expect(useStore.getState().entries.directMessage?.[0].viewedAt).not.toBeNull();
-    // Only `seen` is read from SQLite; `directMessage` and `pix` are updated in memory.
-    expect(recentCalls.filter((c) => c === 'entryAll')).toHaveLength(1);
+    expect(bridge.__calls).toContain('stopTyping');
+    expect(await Obscura.getMessages()).toEqual([
+      expect.objectContaining({ peerUserId: BOB.userId, kind: 'message', content: 'hello bob' }),
+    ]);
+    expect(useStore.getState().messages).toEqual([
+      expect.objectContaining({ peerUserId: BOB.userId, kind: 'message', content: 'hello bob' }),
+    ]);
   });
 
   it('coalesces concurrent flushOutboxFromStore triggers and gates foreground outbox flush on connected state', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__setFriends([BOB]);
     await loadSession();
 
-    bridge.__failNext('sendEntry', 'SEND_FAILED', 'offline');
-    await expect(saveEntry('story', { content: 'once' })).rejects.toThrow('offline');
-    expect(bridge.__sent).toHaveLength(0);
-
-    // Foregrounding while disconnected drains/sweeps, but does NOT flush the outbox yet.
+    // Foregrounding while disconnected refreshes/sweeps, but does NOT flush the outbox yet.
     useStore.setState({ connState: 'disconnected' });
-    applyObscuraEvent({ type: 'appStateChanged', state: 'active' });
-    await flush();
-    expect(bridge.__sent).toHaveLength(0);
+    bridge.__calls.length = 0;
+    await applyObscuraEvent({ type: 'appStateChanged', state: 'active' });
+    expect(bridge.__calls).not.toContain('flushOutbox');
 
-    // Concurrent outbox flushes coalesce so the entry is sent once, not duplicated.
+    // Concurrent outbox flushes coalesce into at most one in-flight + one trailing call.
+    bridge.__calls.length = 0;
     await Promise.all([flushOutboxFromStore(), flushOutboxFromStore(), flushOutboxFromStore()]);
-    expect(bridge.__sent.filter((s) => s.modelKey === 'story')).toHaveLength(1);
-    warn.mockRestore();
+    expect(bridge.__calls.filter((c) => c === 'flushOutbox')).toHaveLength(2);
   });
 
   it('sends sendTyping on non-empty input and stopTyping when cleared to empty', async () => {
-    notifyTyping(BOB.userId, CONV, '', 'h');
-    notifyTyping(BOB.userId, CONV, 'h', 'hi');
-    notifyTyping(BOB.userId, CONV, 'hi', '');
-    await flush();
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    await notifyTyping(BOB.userId, '', '');
+    await notifyTyping(BOB.userId, '', 'h');
+    await notifyTyping(BOB.userId, 'h', 'hi');
+    await notifyTyping(BOB.userId, 'hi', '');
 
     expect(bridge.__calls.filter((c) => c === 'sendTyping')).toHaveLength(2);
     expect(bridge.__calls.filter((c) => c === 'stopTyping')).toHaveLength(1);
+
+    bridge.__failNext('sendTyping', 'SEND_FAILED');
+    bridge.__failNext('stopTyping', 'SEND_FAILED');
+    await notifyTyping(BOB.userId, '', 'h');
+    await notifyTyping(BOB.userId, 'h', '');
+    warn.mockRestore();
+
+    expect(nextPeerTypingState(false, BOB.userId, {
+      type: 'typingChanged', peerUserId: BOB.userId, typing: true,
+    })).toBe(true);
+    expect(nextPeerTypingState(true, BOB.userId, {
+      type: 'typingChanged', peerUserId: 'other-peer', typing: false,
+    })).toBe(true);
+    expect(nextPeerTypingState(false, BOB.userId, {
+      type: 'typingChanged', peerUserId: 'other-peer', typing: true,
+    })).toBe(false);
+    expect(nextPeerTypingState(true, BOB.userId, {
+      type: 'messageReceived', model: 'story',
+    })).toBe(true);
+    expect(nextPeerTypingState(true, BOB.userId, {
+      type: 'messageReceived', model: 'directMessage',
+    })).toBe(false);
+    expect(nextPeerTypingState(true, BOB.userId, {
+      type: 'friendsChanged',
+    })).toBe(true);
   });
 });
+

@@ -1,0 +1,158 @@
+-- Deduplication of incoming envelope IDs so redelivered envelopes are idempotently ignored and acked.
+CREATE TABLE IF NOT EXISTS ProcessedEnvelope (
+    envelope_id TEXT NOT NULL PRIMARY KEY
+);
+
+CREATE TABLE IF NOT EXISTS ConversationEntry (
+    id TEXT NOT NULL PRIMARY KEY,
+    peer_user_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    author_user_id TEXT NOT NULL,
+    sent_at INTEGER NOT NULL,
+    viewed_at INTEGER,
+    expires_at INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    media_ref TEXT,
+    content_key BLOB,
+    nonce BLOB,
+    media_type TEXT,
+    caption TEXT,
+    caption_meta TEXT,
+    display_duration INTEGER NOT NULL,
+    undelivered INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS StoryEntry (
+    id TEXT NOT NULL PRIMARY KEY,
+    author_user_id TEXT NOT NULL,
+    sent_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    media_ref TEXT,
+    content_key BLOB,
+    nonce BLOB,
+    media_type TEXT,
+    caption_meta TEXT,
+    undelivered INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS ProfileEntry (
+    user_id TEXT NOT NULL PRIMARY KEY,
+    author_device_id TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    display_name TEXT NOT NULL,
+    bio TEXT NOT NULL,
+    undelivered INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS ErasedEntry (
+    id TEXT NOT NULL PRIMARY KEY,
+    erased_at INTEGER NOT NULL
+);
+
+existsEnvelope:
+SELECT EXISTS(SELECT 1 FROM ProcessedEnvelope WHERE envelope_id = ?);
+
+insertEnvelope:
+INSERT OR IGNORE INTO ProcessedEnvelope(envelope_id) VALUES (?);
+
+deleteAllEnvelopes:
+DELETE FROM ProcessedEnvelope;
+
+selectAllMessages:
+SELECT * FROM ConversationEntry ORDER BY sent_at ASC, id ASC;
+
+selectMessageById:
+SELECT * FROM ConversationEntry WHERE id = ?;
+
+existsMessage:
+SELECT EXISTS(SELECT 1 FROM ConversationEntry WHERE id = ?);
+
+insertMessage:
+INSERT OR REPLACE INTO ConversationEntry(
+    id, peer_user_id, kind, author_user_id, sent_at, viewed_at, expires_at,
+    content, media_ref, content_key, nonce, media_type, caption, caption_meta,
+    display_duration, undelivered
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateMessageViewed:
+UPDATE ConversationEntry
+SET viewed_at = :viewedAt, expires_at = :expiresAt
+WHERE id = :id AND viewed_at IS NULL;
+
+setMessageUndelivered:
+UPDATE ConversationEntry SET undelivered = :undelivered WHERE id = :id;
+
+selectUndeliveredMessages:
+SELECT * FROM ConversationEntry WHERE undelivered = 1 ORDER BY sent_at ASC, id ASC;
+
+selectExpiredMessages:
+SELECT * FROM ConversationEntry WHERE expires_at <= :now;
+
+deleteMessagesByIds:
+DELETE FROM ConversationEntry WHERE id IN ?;
+
+deleteAllMessages:
+DELETE FROM ConversationEntry;
+
+selectActiveStories:
+SELECT * FROM StoryEntry WHERE expires_at > :now ORDER BY sent_at ASC, id ASC;
+
+selectAllStories:
+SELECT * FROM StoryEntry ORDER BY sent_at ASC, id ASC;
+
+existsStory:
+SELECT EXISTS(SELECT 1 FROM StoryEntry WHERE id = ?);
+
+insertStory:
+INSERT OR REPLACE INTO StoryEntry(
+    id, author_user_id, sent_at, expires_at, content,
+    media_ref, content_key, nonce, media_type, caption_meta, undelivered
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+setStoryUndelivered:
+UPDATE StoryEntry SET undelivered = :undelivered WHERE id = :id;
+
+selectUndeliveredStories:
+SELECT * FROM StoryEntry WHERE undelivered = 1 ORDER BY sent_at ASC, id ASC;
+
+selectExpiredStories:
+SELECT * FROM StoryEntry WHERE expires_at <= :now;
+
+deleteStoriesByIds:
+DELETE FROM StoryEntry WHERE id IN ?;
+
+deleteAllStories:
+DELETE FROM StoryEntry;
+
+selectAllProfiles:
+SELECT * FROM ProfileEntry ORDER BY user_id ASC;
+
+selectProfileByUserId:
+SELECT * FROM ProfileEntry WHERE user_id = ?;
+
+insertProfile:
+INSERT OR REPLACE INTO ProfileEntry(
+    user_id, author_device_id, updated_at, display_name, bio, undelivered
+) VALUES (?, ?, ?, ?, ?, ?);
+
+setProfileUndelivered:
+UPDATE ProfileEntry SET undelivered = :undelivered WHERE user_id = :userId AND updated_at = :updatedAt;
+
+selectUndeliveredProfiles:
+SELECT * FROM ProfileEntry WHERE undelivered = 1 ORDER BY user_id ASC;
+
+deleteAllProfiles:
+DELETE FROM ProfileEntry;
+
+existsErased:
+SELECT EXISTS(SELECT 1 FROM ErasedEntry WHERE id = ?);
+
+insertErased:
+INSERT OR REPLACE INTO ErasedEntry(id, erased_at) VALUES (?, ?);
+
+deleteExpiredErased:
+DELETE FROM ErasedEntry WHERE erased_at <= :cutoff;
+
+deleteAllErased:
+DELETE FROM ErasedEntry;

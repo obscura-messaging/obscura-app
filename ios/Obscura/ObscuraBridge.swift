@@ -434,189 +434,217 @@ extension ObscuraBridge {
 
 extension ObscuraBridge {
 
-    // ─────────────────────────────────────────────────────────────────────────────────────────
-    // Kit data surface.
-    //
-    // Drain the inbox, store application entries, and send application writes.
-    // Payload data crosses as an opaque JSON string and is never re-encoded.
-    // ─────────────────────────────────────────────────────────────────────────────────────────
-
-    @objc(inboxPeek:resolver:rejecter:)
-    func inboxPeek(_ limit: NSNumber,
-                   resolver resolve: @escaping RCTPromiseResolveBlock,
-                   rejecter reject: @escaping RCTPromiseRejectBlock) {
+    @objc(getMessages:rejecter:)
+    func getMessages(_ resolve: @escaping RCTPromiseResolveBlock,
+                     rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let rows = try await client.inbox.peek(limit: limit.intValue)
-                resolve(rows.map { ObscuraBridge.inboxRowDict($0) })
+                let items = try await client.getMessages()
+                resolve(items.map(ObscuraBridge.conversationItemDict))
             } catch {
-                rejectKit(reject, "INBOX_PEEK_ERROR", error)
+                rejectKit(reject, "GET_MESSAGES_ERROR", error)
             }
         }
     }
 
-    @objc(inboxConsume:resolver:rejecter:)
-    func inboxConsume(_ ids: [NSNumber],
-                      resolver resolve: @escaping RCTPromiseResolveBlock,
-                      rejecter reject: @escaping RCTPromiseRejectBlock) {
+    @objc(sendMessage:content:resolver:rejecter:)
+    func sendMessage(_ peerUserId: String, content: String,
+                     resolver resolve: @escaping RCTPromiseResolveBlock,
+                     rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                try await client.inbox.consume(ids.map { $0.int64Value })
-                resolve(nil)
+                resolve(try await client.sendMessage(peerUserId: peerUserId, content: content))
             } catch {
-                rejectKit(reject, "INBOX_CONSUME_ERROR", error)
+                rejectKit(reject, "SEND_MESSAGE_ERROR", error)
             }
         }
     }
 
-    /// Permanent data loss; the kit logs `reason` as a security event, so it is required.
-    @objc(inboxDiscard:reason:resolver:rejecter:)
-    func inboxDiscard(_ ids: [NSNumber], reason: String,
-                      resolver resolve: @escaping RCTPromiseResolveBlock,
-                      rejecter reject: @escaping RCTPromiseRejectBlock) {
+    @objc(sendPix:mediaRef:contentKey:nonce:mediaType:caption:captionMeta:displayDuration:resolver:rejecter:)
+    func sendPix(_ peerUserId: String, mediaRef: String, contentKey: String, nonce: String,
+                 mediaType: String, caption: String, captionMeta: String?, displayDuration: NSNumber,
+                 resolver resolve: @escaping RCTPromiseResolveBlock,
+                 rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                try await client.inbox.discard(ids.map { $0.int64Value }, reason: reason)
-                resolve(nil)
-            } catch {
-                rejectKit(reject, "INBOX_DISCARD_ERROR", error)
-            }
-        }
-    }
-
-    @objc(inboxDepth:rejecter:)
-    func inboxDepth(_ resolve: @escaping RCTPromiseResolveBlock,
-                    rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do {
-                resolve(try await client.inbox.depth())
-            } catch {
-                rejectKit(reject, "INBOX_DEPTH_ERROR", error)
-            }
-        }
-    }
-
-    @objc(entryPut:id:dataJson:sentAt:authorUserId:authorDeviceId:localMetadataJson:resolver:rejecter:)
-    func entryPut(_ model: String, id: String, dataJson: String, sentAt: NSNumber,
-                  authorUserId: String, authorDeviceId: String, localMetadataJson: String?,
-                  resolver resolve: @escaping RCTPromiseResolveBlock,
-                  rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do {
-                try await client.entries.put(model: model, entry: StoredEntry(
-                    id: id, data: dataJson,
-                    sentAt: sentAt.uint64Value, authorUserId: authorUserId, authorDeviceId: authorDeviceId,
-                    localMetadata: localMetadataJson
-                ))
-                resolve(nil)
-            } catch {
-                rejectKit(reject, "ENTRY_PUT_ERROR", error)
-            }
-        }
-    }
-
-    /// Securely remove local entries. The app decides when.
-    @objc(entryErase:ids:resolver:rejecter:)
-    func entryErase(_ model: String, ids: [String],
-                    resolver resolve: @escaping RCTPromiseResolveBlock,
-                    rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do {
-                try await client.entries.erase(model: model, ids: ids)
-                resolve(nil)
-            } catch {
-                rejectKit(reject, "ENTRY_ERASE_ERROR", error)
-            }
-        }
-    }
-
-    /// The named entries that exist.
-    @objc(entryGet:ids:resolver:rejecter:)
-    func entryGet(_ model: String, ids: [String],
-                  resolver resolve: @escaping RCTPromiseResolveBlock,
-                  rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do {
-                resolve(try await client.entries.get(model: model, ids: ids).map(ObscuraBridge.entryDict))
-            } catch {
-                rejectKit(reject, "ENTRY_GET_ERROR", error)
-            }
-        }
-    }
-
-    @objc(entryAll:resolver:rejecter:)
-    func entryAll(_ model: String,
-                  resolver resolve: @escaping RCTPromiseResolveBlock,
-                  rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do {
-                resolve(try await client.entries.all(model: model).map(ObscuraBridge.entryDict))
-            } catch {
-                rejectKit(reject, "ENTRY_ALL_ERROR", error)
-            }
-        }
-    }
-
-    static func entryDict(_ e: StoredEntry) -> [String: Any] {
-        ["id": e.id, "data": e.data, "sentAt": Double(e.sentAt),
-         "authorUserId": e.authorUserId, "authorDeviceId": e.authorDeviceId,
-         "localMetadata": e.localMetadata as Any]
-    }
-
-    /// Per-device results: `{userId, deviceId, status, error}`, status `accepted|rejected|unknown`.
-    static func sendReportDict(_ r: SendReport) -> [String: Any] {
-        func results(_ list: [SubmissionResult]) -> [[String: Any]] {
-            list.map { ["userId": $0.userId, "deviceId": $0.deviceId as Any, "status": $0.status.rawValue,
-                        "error": $0.error as Any] }
-        }
-        return ["recipients": results(r.recipients), "selfSync": results(r.selfSync)]
-    }
-
-    /// The caller names recipients; the kit resolves no audience.
-    @objc(sendEntry:modelKey:entryId:sentAt:payloadJson:resolver:rejecter:)
-    func sendEntry(_ recipientUserIds: [String], modelKey: String, entryId: String,
-                   sentAt: NSNumber, payloadJson: String,
-                   resolver resolve: @escaping RCTPromiseResolveBlock,
-                   rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do {
-                let report = try await client.send(
-                    to: recipientUserIds, modelKey: modelKey, entryId: entryId,
-                    sentAt: sentAt.uint64Value, payload: Data(payloadJson.utf8)
+                let id = try await client.sendPix(
+                    peerUserId: peerUserId, mediaRef: mediaRef, contentKey: contentKey,
+                    nonce: nonce, mediaType: mediaType, caption: caption,
+                    captionMeta: captionMeta, displayDuration: displayDuration.intValue
                 )
-                resolve(ObscuraBridge.sendReportDict(report))
+                resolve(id)
             } catch {
-                rejectKit(reject, "SEND_ERROR", error)
+                rejectKit(reject, "SEND_PIX_ERROR", error)
             }
         }
     }
 
-    /// `payload` crosses as a UTF-8 string.
-    static func inboxRowDict(_ r: InboxRecord) -> [String: Any] {
+    @objc(markSeen:resolver:rejecter:)
+    func markSeen(_ entryId: String,
+                  resolver resolve: @escaping RCTPromiseResolveBlock,
+                  rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            do {
+                try await client.markSeen(entryId: entryId)
+                resolve(nil)
+            } catch {
+                rejectKit(reject, "MARK_SEEN_ERROR", error)
+            }
+        }
+    }
+
+    @objc(getStories:rejecter:)
+    func getStories(_ resolve: @escaping RCTPromiseResolveBlock,
+                    rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            do {
+                let items = try await client.getStories()
+                resolve(items.map(ObscuraBridge.storyItemDict))
+            } catch {
+                rejectKit(reject, "GET_STORIES_ERROR", error)
+            }
+        }
+    }
+
+    @objc(postStory:mediaRef:contentKey:nonce:mediaType:captionMeta:resolver:rejecter:)
+    func postStory(_ content: String, mediaRef: String?, contentKey: String?,
+                   nonce: String?, mediaType: String?, captionMeta: String?,
+                   resolver resolve: @escaping RCTPromiseResolveBlock,
+                   rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            do {
+                let id = try await client.postStory(
+                    content: content, mediaRef: mediaRef, contentKey: contentKey,
+                    nonce: nonce, mediaType: mediaType, captionMeta: captionMeta
+                )
+                resolve(id)
+            } catch {
+                rejectKit(reject, "POST_STORY_ERROR", error)
+            }
+        }
+    }
+
+    @objc(getProfiles:rejecter:)
+    func getProfiles(_ resolve: @escaping RCTPromiseResolveBlock,
+                     rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            do {
+                let items = try await client.getProfiles()
+                resolve(items.map(ObscuraBridge.profileItemDict))
+            } catch {
+                rejectKit(reject, "GET_PROFILES_ERROR", error)
+            }
+        }
+    }
+
+    @objc(updateProfile:bio:resolver:rejecter:)
+    func updateProfile(_ displayName: String, bio: String,
+                       resolver resolve: @escaping RCTPromiseResolveBlock,
+                       rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            do {
+                try await client.updateProfile(displayName: displayName, bio: bio)
+                resolve(nil)
+            } catch {
+                rejectKit(reject, "UPDATE_PROFILE_ERROR", error)
+            }
+        }
+    }
+
+    @objc(flushOutbox:rejecter:)
+    func flushOutbox(_ resolve: @escaping RCTPromiseResolveBlock,
+                     rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            do {
+                resolve(try await client.flushOutbox())
+            } catch {
+                rejectKit(reject, "FLUSH_OUTBOX_ERROR", error)
+            }
+        }
+    }
+
+    @objc(sweepExpired:rejecter:)
+    func sweepExpired(_ resolve: @escaping RCTPromiseResolveBlock,
+                      rejecter reject: @escaping RCTPromiseRejectBlock) {
+        Task {
+            do {
+                let outcome = try await client.sweepExpired()
+                resolve(outcome.touchedModels)
+            } catch {
+                rejectKit(reject, "SWEEP_EXPIRED_ERROR", error)
+            }
+        }
+    }
+
+    static func attachmentDict(_ att: MediaAttachment) -> [String: Any] {
         [
-            "id": Double(r.id),
-            "senderUserId": r.senderUserId,
-            "senderDeviceId": r.senderDeviceId,
-            "modelKey": r.modelKey,
-            "entryId": r.entryId,
-            "sentAt": Double(r.sentAt),
-            "payload": String(decoding: r.payload, as: UTF8.self),
+            "id": att.id,
+            "contentKey": att.contentKey.base64EncodedString(),
+            "nonce": att.nonce.base64EncodedString(),
+            "mediaType": att.mediaType,
         ]
     }
 
+    static func conversationItemDict(_ item: ConversationItem) -> [String: Any] {
+        if item.kind == "pix", let att = item.attachment {
+            return [
+                "id": item.id,
+                "peerUserId": item.peerUserId,
+                "kind": "pix",
+                "authorUserId": item.authorUserId,
+                "sentAt": Double(item.sentAt),
+                "viewedAt": item.viewedAt.map { Double($0) } as Any,
+                "content": item.content,
+                "attachment": attachmentDict(att),
+                "caption": item.caption as Any,
+                "captionMeta": item.captionMeta as Any,
+                "displayDuration": item.displayDuration,
+            ]
+        }
+        return [
+            "id": item.id,
+            "peerUserId": item.peerUserId,
+            "kind": "message",
+            "authorUserId": item.authorUserId,
+            "sentAt": Double(item.sentAt),
+            "viewedAt": item.viewedAt.map { Double($0) } as Any,
+            "content": item.content,
+        ]
+    }
+
+    static func storyItemDict(_ item: StoryItem) -> [String: Any] {
+        [
+            "id": item.id,
+            "authorUserId": item.authorUserId,
+            "sentAt": Double(item.sentAt),
+            "content": item.content,
+            "attachment": item.attachment.map(attachmentDict) as Any,
+            "captionMeta": item.captionMeta as Any,
+        ]
+    }
+
+    static func profileItemDict(_ item: ProfileItem) -> [String: Any] {
+        [
+            "userId": item.userId,
+            "authorDeviceId": item.authorDeviceId,
+            "updatedAt": Double(item.updatedAt),
+            "displayName": item.displayName,
+            "bio": item.bio,
+        ]
+    }
 }
 
 // MARK: - Typing signals
 
 extension ObscuraBridge {
 
-    @objc(sendTyping:conversationId:resolver:rejecter:)
-    func sendTyping(_ recipientUserIds: [String], conversationId: String,
+    @objc(sendTyping:resolver:rejecter:)
+    func sendTyping(_ peerUserId: String,
                     resolver resolve: @escaping RCTPromiseResolveBlock,
                     rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                try await client.sendTyping(to: recipientUserIds, contextId: conversationId, state: .started)
+                try await client.sendTyping(peerUserId: peerUserId, state: .started)
                 resolve(nil)
             } catch {
                 rejectKit(reject, "TYPING_ERROR", error)
@@ -624,13 +652,13 @@ extension ObscuraBridge {
         }
     }
 
-    @objc(stopTyping:conversationId:resolver:rejecter:)
-    func stopTyping(_ recipientUserIds: [String], conversationId: String,
+    @objc(stopTyping:resolver:rejecter:)
+    func stopTyping(_ peerUserId: String,
                     resolver resolve: @escaping RCTPromiseResolveBlock,
                     rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                try await client.sendTyping(to: recipientUserIds, contextId: conversationId, state: .stopped)
+                try await client.sendTyping(peerUserId: peerUserId, state: .stopped)
                 resolve(nil)
             } catch {
                 rejectKit(reject, "STOP_TYPING_ERROR", error)
@@ -639,31 +667,38 @@ extension ObscuraBridge {
     }
 
     @objc(observeTyping:resolver:rejecter:)
-    func observeTyping(_ conversationId: String,
+    func observeTyping(_ peerUserId: String,
                        resolver resolve: @escaping RCTPromiseResolveBlock,
                        rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
+        typingTasks[peerUserId]?.cancel()
+        typingTasks[peerUserId] = Task { [weak self] in
+            let observation: AsyncStream<Bool>
             do {
-                let observation = try await client.observeTyping(contextId: conversationId)
-                typingTasks[conversationId]?.cancel()
-                typingTasks[conversationId] = Task { [weak self] in
-                    for await userIds in observation {
-                        self?.emit(.typingChanged, ["conversationId": conversationId, "userIds": userIds])
-                    }
+                guard let self else { return }
+                observation = try await self.client.observeTyping(peerUserId: peerUserId)
+                guard !Task.isCancelled else {
+                    resolve(nil)
+                    return
                 }
                 resolve(nil)
             } catch {
-                rejectKit(reject, "OBSERVE_TYPING_ERROR", error)
+                self?.typingTasks[peerUserId] = nil
+                self?.rejectKit(reject, "OBSERVE_TYPING_ERROR", error)
+                return
+            }
+            for await isTyping in observation {
+                guard !Task.isCancelled else { break }
+                self?.emit(.typingChanged, ["peerUserId": peerUserId, "typing": isTyping])
             }
         }
     }
 
     @objc(stopObservingTyping:resolver:rejecter:)
-    func stopObservingTyping(_ conversationId: String,
+    func stopObservingTyping(_ peerUserId: String,
                              resolver resolve: RCTPromiseResolveBlock,
                              rejecter reject: RCTPromiseRejectBlock) {
-        typingTasks[conversationId]?.cancel()
-        typingTasks[conversationId] = nil
+        typingTasks[peerUserId]?.cancel()
+        typingTasks[peerUserId] = nil
         resolve(nil)
     }
 }
@@ -675,29 +710,13 @@ extension ObscuraBridge {
 
 extension ObscuraBridge {
 
-    private static let safeIdChars = CharacterSet(
-        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
-    private static let attachmentExtensions = ["jpg", "mp4", "mov"]
-
-    private static func attachmentDir() -> URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("attachments")
-    }
-
-    /// Cache file stem for an attachment id. Ids come from the server, so never trust them as a path.
-    private static func attachmentStem(_ id: String) -> String {
-        String(String.UnicodeScalarView(id.unicodeScalars.map { safeIdChars.contains($0) ? $0 : "_" }))
-    }
-
     @objc(uploadAttachment:resolver:rejecter:)
     func uploadAttachment(_ filePath: String,
                           resolver resolve: @escaping RCTPromiseResolveBlock,
                           rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
-                // The kit encrypts + uploads and returns the reference triple.
-                let result = try await client.uploadAttachment(data)
+                let result = try await client.uploadAttachment(filePath: filePath)
                 resolve([
                     "id": result.id,
                     "contentKey": result.contentKey.base64EncodedString(),
@@ -715,62 +734,13 @@ extension ObscuraBridge {
                             rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let fm = FileManager.default
-                let dir = ObscuraBridge.attachmentDir()
-                try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-
-                let safe = ObscuraBridge.attachmentStem(id)
-                for ext in ObscuraBridge.attachmentExtensions {
-                    let c = dir.appendingPathComponent("\(safe).\(ext)")
-                    if fm.fileExists(atPath: c.path),
-                       let attrs = try? fm.attributesOfItem(atPath: c.path),
-                       let sz = attrs[.size] as? Int, sz > 0 {
-                        resolve(c.path); return
-                    }
-                }
-
-                guard let keyData = Data(base64Encoded: contentKey),
-                      let nonceData = Data(base64Encoded: nonce) else {
-                    reject("DOWNLOAD_ERROR", "invalid base64 key/nonce", nil); return
-                }
-                let data = try await client.downloadDecryptedAttachment(
-                    id: id, contentKey: keyData, nonce: nonceData)
-
-                // Pick the extension from the content so players that key off it
-                // (AVPlayer / ExoPlayer) can decode. Video is ISO-BMFF with an
-                // "ftyp" box at offset 4; brand "qt  " => QuickTime .mov.
-                var ext = "jpg"
-                let head = [UInt8](data.prefix(12))
-                if head.count >= 12, head[4] == 0x66, head[5] == 0x74, head[6] == 0x79, head[7] == 0x70 {
-                    let brand = String(bytes: head[8..<12], encoding: .ascii) ?? ""
-                    ext = brand == "qt  " ? "mov" : "mp4"
-                }
-                let dest = dir.appendingPathComponent("\(safe).\(ext)")
-
-                // Atomic publish: write a sibling temp, then rename into place.
-                let tmp = dir.appendingPathComponent("\(safe).\(ext).tmp")
-                try data.write(to: tmp, options: .atomic)
-                if fm.fileExists(atPath: dest.path) { try? fm.removeItem(at: dest) }
-                try fm.moveItem(at: tmp, to: dest)
-                resolve(dest.path)
+                let path = try await client.downloadAttachmentToCache(
+                    id: id, contentKeyBase64: contentKey, nonceBase64: nonce)
+                resolve(path)
             } catch {
                 rejectKit(reject, "DOWNLOAD_ERROR", error)
             }
         }
-    }
-
-    /// Delete this device's decrypted copy of an attachment. The server's ciphertext is untouched.
-    @objc(purgeAttachment:resolver:rejecter:)
-    func purgeAttachment(_ id: String,
-                         resolver resolve: @escaping RCTPromiseResolveBlock,
-                         rejecter reject: @escaping RCTPromiseRejectBlock) {
-        let dir = ObscuraBridge.attachmentDir()
-        let stem = ObscuraBridge.attachmentStem(id)
-        for ext in ObscuraBridge.attachmentExtensions {
-            try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(stem).\(ext)"))
-            try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(stem).\(ext).tmp"))
-        }
-        resolve(nil)
     }
 }
 
