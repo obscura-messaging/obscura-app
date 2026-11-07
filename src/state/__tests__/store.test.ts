@@ -40,10 +40,6 @@ beforeEach(() => {
   bridge.__authenticate({ userId: SELF, username: 'me', deviceId: DEVICE });
 });
 
-afterEach(() => {
-  jest.restoreAllMocks();
-});
-
 describe('refreshFriends', () => {
   it('pulls every relationship, whatever its status', async () => {
     bridge.__setFriends([

@@ -62,7 +62,6 @@ describe('Scenario 1: device relink + friend handshake', () => {
 
 describe('Scenario 2: offline capture -> reconnect sync -> peer seen receipt -> expiry sweep refresh', () => {
   it('reports undelivered capture targets, deletes temp files, updates activity on seen receipt, and refreshes slices touched by sweepExpired', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__setFriends([BOB]);
     await loadSession();
 
@@ -109,7 +108,6 @@ describe('Scenario 2: offline capture -> reconnect sync -> peer seen receipt -> 
     await sweepAndRefresh();
 
     expect(useStore.getState().messages).toEqual([]);
-    warn.mockRestore();
   });
 });
 
