@@ -1,18 +1,10 @@
-import { Alert } from 'react-native';
 import { approveLink, linkCodeDeviceName, loadDevices, primaryOnly, unlinkDevice } from '../devices';
 import { confirm, confirmAndApproveLink } from '../../components/confirm';
-import { toast } from '../../components/Toast';
+import { subscribeToast, toast, type ToastItem } from '../toast';
 import { resetSession, useStore } from '../store';
 import { Obscura, type DeviceInfo } from '../../native/ObscuraModule';
 import { FAKE_LINK_DEVICE_NAME } from '../../native/__fixtures__/FakeObscuraBridge';
-import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
-
-jest.mock('../../components/Toast', () => ({
-  toast: {
-    success: jest.fn(),
-    error: jest.fn(),
-  },
-}));
+import { Alert, getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
 const bridge = getFakeBridge();
 
@@ -126,61 +118,62 @@ describe('unlinkDevice', () => {
 });
 
 describe('confirm & confirmAndApproveLink', () => {
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
-
   it('resolves confirm for cancel, action, destructive action, and dismiss', async () => {
-    const alertSpy = jest.spyOn(Alert, 'alert');
-
-    alertSpy.mockImplementationOnce((_t, _m, buttons) => buttons?.[0]?.onPress?.());
+    Alert.__enqueue((_t, _m, buttons) => buttons?.[0]?.onPress?.());
     await expect(confirm('Title', 'Body', 'Go')).resolves.toBe(false);
 
-    alertSpy.mockImplementationOnce((_t, _m, buttons) => {
+    Alert.__enqueue((_t, _m, buttons) => {
       expect(buttons?.[1]?.style).toBe('default');
       buttons?.[1]?.onPress?.();
     });
     await expect(confirm('Title', 'Body', 'Go')).resolves.toBe(true);
 
-    alertSpy.mockImplementationOnce((_t, _m, buttons) => {
+    Alert.__enqueue((_t, _m, buttons) => {
       expect(buttons?.[1]?.style).toBe('destructive');
       buttons?.[1]?.onPress?.();
     });
     await expect(confirm('Title', 'Body', 'Remove', true)).resolves.toBe(true);
 
-    alertSpy.mockImplementationOnce((_t, _m, _buttons, opts) => opts?.onDismiss?.());
+    Alert.__enqueue((_t, _m, _buttons, opts) => opts?.onDismiss?.());
     await expect(confirm('Title', 'Body', 'Go')).resolves.toBe(false);
   });
 
   it('handles invalid codes, lookup errors, cancellation, approval success, and approval errors in confirmAndApproveLink', async () => {
-    const alertSpy = jest.spyOn(Alert, 'alert');
-    const errSpy = jest.spyOn(toast, 'error');
-    const okSpy = jest.spyOn(toast, 'success');
+    const toasts: ToastItem[] = [];
+    const unsubscribe = subscribeToast((t) => toasts.push(t));
 
     // 1. Invalid code -> toast.error
     await expect(confirmAndApproveLink('not-a-code')).resolves.toBe(false);
-    expect(errSpy).toHaveBeenLastCalledWith('That is not a device link code');
+    expect(toasts[toasts.length - 1]).toMatchObject({ type: 'error', message: 'That is not a device link code' });
 
     // 2. linkCodeDeviceName error -> toast.error
     bridge.__failNext('linkCodeDeviceName', 'STORAGE_ERROR', 'db broken');
     await expect(confirmAndApproveLink('link_1')).resolves.toBe(false);
-    expect(errSpy).toHaveBeenLastCalledWith('db broken');
+    expect(toasts[toasts.length - 1]).toMatchObject({ type: 'error', message: 'db broken' });
 
     // 3. User cancels confirmation
-    alertSpy.mockImplementationOnce((_t, _m, buttons) => buttons?.[0]?.onPress?.());
+    Alert.__enqueue((_t, _m, buttons) => buttons?.[0]?.onPress?.());
     await expect(confirmAndApproveLink('link_1')).resolves.toBe(false);
     expect(bridge.__approved).toEqual([]);
 
     // 4. User confirms and approveLink succeeds -> toast.success
-    alertSpy.mockImplementationOnce((_t, _m, buttons) => buttons?.[1]?.onPress?.());
+    Alert.__enqueue((_t, _m, buttons) => buttons?.[1]?.onPress?.());
     await expect(confirmAndApproveLink('link_1')).resolves.toBe(true);
     expect(bridge.__approved).toEqual(['link_1']);
-    expect(okSpy).toHaveBeenLastCalledWith(`${FAKE_LINK_DEVICE_NAME} linked`);
+    expect(toasts[toasts.length - 1]).toMatchObject({ type: 'success', message: `${FAKE_LINK_DEVICE_NAME} linked` });
 
-    // 5. User confirms and approveLink fails -> toast.error
-    alertSpy.mockImplementationOnce((_t, _m, buttons) => buttons?.[1]?.onPress?.());
+    // 5. User confirms and approveLink fails -> toast.error; empty toast messages are ignored
+    Alert.__enqueue((_t, _m, buttons) => buttons?.[1]?.onPress?.());
     bridge.__failNext('approveLink', 'LINK_FAILED', 'expired');
     await expect(confirmAndApproveLink('link_2')).resolves.toBe(false);
-    expect(errSpy).toHaveBeenLastCalledWith('expired');
+    expect(toasts[toasts.length - 1]).toMatchObject({ type: 'error', message: 'expired' });
+    const countBeforeEmpty = toasts.length;
+    toast.error('');
+    expect(toasts).toHaveLength(countBeforeEmpty);
+
+    unsubscribe();
+    unsubscribe();
+    toast.success('unsubscribed');
+    expect(toasts).toHaveLength(countBeforeEmpty);
   });
 });

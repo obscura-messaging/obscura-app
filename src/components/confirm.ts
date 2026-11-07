@@ -1,7 +1,7 @@
 import { Alert } from 'react-native';
 import { deviceLabel, errorMessage } from '../domain/devices';
 import { approveLink, linkCodeDeviceName } from '../state/devices';
-import { toast } from './Toast';
+import { toast } from '../state/toast';
 
 /** Ask before an action; resolves true only when the user picks `action`. */
 export function confirm(title: string, message: string, action: string, destructive = false): Promise<boolean> {

@@ -209,10 +209,10 @@ class GatewayConnectionTest {
             while (gateway.state.value != ConnectionState.CONNECTED) delay(10)
         }
 
-        val socketField = GatewayConnection::class.java.getDeclaredField("socket").apply { isAccessible = true }
-        val activeWs = socketField.get(gateway) as WebSocket
-        activeWs.close(1000, null)
-        val ackErr = runCatching { gateway.ack(com.google.protobuf.ByteString.copyFromUtf8("id")) }.exceptionOrNull()
+        // An oversized (>16 MiB) frame causes OkHttp WebSocket.send() to return false and closes the socket
+        val ackErr = runCatching {
+            gateway.ack(com.google.protobuf.ByteString.copyFrom(ByteArray(17 * 1024 * 1024)))
+        }.exceptionOrNull()
         assertTrue(ackErr is dev.barrelmaker.obscura.kit.ObscuraError.ConnectionFailed)
         gateway.disconnect()
     }

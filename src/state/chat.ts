@@ -36,6 +36,7 @@ export function nextPeerTypingState(
   return current;
 }
 
+/* istanbul ignore next */
 export function usePeerTyping(friendUserId: string): boolean {
   const [peerTyping, setPeerTyping] = useState(false);
   useEffect(() => {

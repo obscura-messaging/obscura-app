@@ -12,10 +12,6 @@ beforeEach(() => {
   resetSession();
 });
 
-afterEach(() => {
-  jest.restoreAllMocks();
-});
-
 describe('logIn', () => {
   it('connects an existing device without provisioning', async () => {
     expect(await logIn('alice', 'password-1234')).toBe('signedIn');
@@ -36,13 +32,7 @@ describe('logIn', () => {
   it('wipes a device the account no longer has, then logs in again to link', async () => {
     bridge.__deliverMessage({ id: 'stale_dm', content: 'old' });
     bridge.__deliverStory({ id: 'stale_story', content: 'old' });
-    bridge.__setLoginScenario('deviceMismatch');
-    const login = bridge.login.bind(bridge);
-    jest.spyOn(bridge, 'login').mockImplementation(async (u, p) => {
-      const scenario = await login(u, p);
-      bridge.__setLoginScenario('linkRequired');
-      return scenario;
-    });
+    bridge.__setLoginScenario('deviceMismatch', 'linkRequired');
 
     expect(await logIn('alice', 'password-1234')).toBe('linkRequired');
 

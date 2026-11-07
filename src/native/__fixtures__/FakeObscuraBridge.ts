@@ -46,6 +46,8 @@ export class FakeObscuraBridge implements ObscuraBridge {
 
   private listeners = new Set<(event: any) => void>();
   private failures = new Map<string, { code: string; message: string }>();
+  private deferred = new Map<string, Promise<void>>();
+  private loginQueue: LoginScenario[] = [];
   private unreachable = new Set<string>();
   private sweepResult: string[] = ['directMessage', 'pix', 'story'];
   private linkCode: string | null = null;
@@ -60,6 +62,11 @@ export class FakeObscuraBridge implements ObscuraBridge {
 
   private async step<T>(method: string, fn: () => T): Promise<T> {
     this.__calls.push(method);
+    const gate = this.deferred.get(method);
+    if (gate) {
+      this.deferred.delete(method);
+      await gate;
+    }
     this.checkFailure(method);
     return fn();
   }
@@ -155,8 +162,10 @@ export class FakeObscuraBridge implements ObscuraBridge {
 
   login(username: string, _password: string): Promise<LoginScenario> {
     return this.step('login', () => {
-      if (this.loginScenario === 'existingDevice') { this.username = username; this.__setAuthState('authenticated'); }
-      return this.loginScenario;
+      const scenario = this.loginQueue.shift() ?? this.loginScenario;
+      this.loginScenario = scenario;
+      if (scenario === 'existingDevice') { this.username = username; this.__setAuthState('authenticated'); }
+      return scenario;
     });
   }
 
@@ -285,6 +294,11 @@ export class FakeObscuraBridge implements ObscuraBridge {
   __emit(event: Record<string, unknown>): void { for (const l of [...this.listeners]) l(event); }
   __listenerCount(): number { return this.listeners.size; }
   __failNext(method: string, code: string, message = 'fake failure'): void { this.failures.set(method, { code, message }); }
+  __deferNext(method: string): () => void {
+    let release!: () => void;
+    this.deferred.set(method, new Promise<void>((r) => { release = r; }));
+    return release;
+  }
   __setUnreachable(userIds: string[]): void { this.unreachable = new Set(userIds); }
   __setSweepResult(models: string[]): void { this.sweepResult = models; }
 
@@ -363,7 +377,10 @@ export class FakeObscuraBridge implements ObscuraBridge {
   __setFriends(friends: Friend[]): void { this.friends = friends; this.__emit({ type: 'friendsChanged' }); }
   __setAuthState(state: AuthState): void { this.authState = state; this.__emit({ type: 'authStateChanged', state }); }
   __setConnectionState(state: ConnectionState): void { this.connectionState = state; this.__emit({ type: 'connectionChanged', state }); }
-  __setLoginScenario(scenario: LoginScenario): void { this.loginScenario = scenario; }
+  __setLoginScenario(...scenarios: LoginScenario[]): void {
+    this.loginQueue = [...scenarios];
+    this.loginScenario = scenarios[0] ?? 'existingDevice';
+  }
   __setPrimary(primary: boolean): void { this.primary = primary; }
   __setDevices(devices: DeviceInfo[]): void { this.devices = devices; }
   __approvePendingLink(): void { this.settleLink(null); }
@@ -372,7 +389,8 @@ export class FakeObscuraBridge implements ObscuraBridge {
   __reset(): void {
     this.messages = []; this.stories = []; this.profiles = []; this.friends = []; this.devices = [];
     this.__calls.length = 0; this.__approved.length = 0;
-    this.listeners.clear(); this.failures.clear(); this.unreachable.clear();
+    this.listeners.clear(); this.failures.clear(); this.deferred.clear(); this.unreachable.clear();
+    this.loginQueue = [];
     this.sweepResult = ['directMessage', 'pix', 'story'];
     this.debugLog = []; this.deletedFiles = [];
     this.pushToken = null; this.clipboard = null; this.launchIntent = null;

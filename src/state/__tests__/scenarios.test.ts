@@ -19,19 +19,9 @@ beforeEach(() => {
   bridge.__authenticate({ userId: ALICE, username: 'alice', deviceId: DEVICE });
 });
 
-afterEach(() => {
-  jest.restoreAllMocks();
-});
-
 describe('Scenario 1: device relink + friend handshake', () => {
   it('wipes a mismatched device, links as secondary, then manages friends on primary', async () => {
-    bridge.__setLoginScenario('deviceMismatch');
-    const origLogin = bridge.login.bind(bridge);
-    jest.spyOn(bridge, 'login').mockImplementationOnce(async (u, p) => {
-      const res = await origLogin(u, p);
-      bridge.__setLoginScenario('linkRequired');
-      return res;
-    });
+    bridge.__setLoginScenario('deviceMismatch', 'linkRequired');
 
     expect(await logIn('alice', 'password-1234')).toBe('linkRequired');
 

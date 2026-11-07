@@ -5,14 +5,13 @@ import { getJsLog, logError } from '../log';
 describe('timeAgo', () => {
   it('formats compact relative timestamps across seconds, minutes, hours, and days', () => {
     const now = 1_700_000_000_000;
-    const spy = jest.spyOn(Date, 'now').mockReturnValue(now);
-    expect(timeAgo(now - 59_000)).toBe('now');
-    expect(timeAgo(now - 60_000)).toBe('1m');
-    expect(timeAgo(now - 3_599_000)).toBe('59m');
-    expect(timeAgo(now - 3_600_000)).toBe('1h');
-    expect(timeAgo(now - 86_399_000)).toBe('23h');
-    expect(timeAgo(now - 86_400_000)).toBe('1d');
-    spy.mockRestore();
+    expect(timeAgo(Date.now())).toBe('now');
+    expect(timeAgo(now - 59_000, now)).toBe('now');
+    expect(timeAgo(now - 60_000, now)).toBe('1m');
+    expect(timeAgo(now - 3_599_000, now)).toBe('59m');
+    expect(timeAgo(now - 3_600_000, now)).toBe('1h');
+    expect(timeAgo(now - 86_399_000, now)).toBe('23h');
+    expect(timeAgo(now - 86_400_000, now)).toBe('1d');
   });
 });
 
@@ -47,7 +46,6 @@ describe('back swipe & touch gesture helpers', () => {
 
 describe('logError & getJsLog', () => {
   it('records tagged warnings and caps the ring buffer at 200 lines', () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     for (let i = 0; i < 205; i += 1) {
       logError('ring', `line-${i}`);
     }
@@ -55,6 +53,5 @@ describe('logError & getJsLog', () => {
     expect(ring).toHaveLength(200);
     expect(ring[0]).toContain('line-5');
     expect(ring[ring.length - 1]).toContain('line-204');
-    warn.mockRestore();
   });
 });

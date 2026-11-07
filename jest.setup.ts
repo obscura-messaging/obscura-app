@@ -12,7 +12,10 @@
 
 jest.mock('react-native', () => require('./src/native/__fixtures__/reactNativeMock'));
 
+console.warn = () => {};
+
 beforeEach(() => {
-  const { getFakeBridge } = require('./src/native/__fixtures__/reactNativeMock');
+  const { Alert, getFakeBridge } = require('./src/native/__fixtures__/reactNativeMock');
   getFakeBridge().__reset();
+  Alert.__reset();
 });
