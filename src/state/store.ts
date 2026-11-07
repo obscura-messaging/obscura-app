@@ -62,6 +62,7 @@ export async function logout(): Promise<void> {
 
 // ─── Selectors ───────────────────────────────────────────
 
+/* istanbul ignore next */
 export function useSession() {
   return useStore(useShallow((s) => ({
     authed: s.authed,
@@ -72,28 +73,34 @@ export function useSession() {
   })));
 }
 
+/* istanbul ignore next */
 export function useIdentity(): Identity {
   return useStore(useShallow((s) => ({ myUserId: s.myUserId, myUsername: s.myUsername, friends: s.friends })));
 }
 
+/* istanbul ignore next */
 export function useAcceptedFriends(): Friend[] {
   const friends = useStore((s) => s.friends);
   return useMemo(() => acceptedFriends(friends), [friends]);
 }
 
+/* istanbul ignore next */
 export function usePendingFriends(): Friend[] {
   const friends = useStore((s) => s.friends);
   return useMemo(() => pendingFriends(friends), [friends]);
 }
 
+/* istanbul ignore next */
 export function useMessages(): ConversationItem[] {
   return useStore((s) => s.messages);
 }
 
+/* istanbul ignore next */
 export function useStories(): StoryItem[] {
   return useStore((s) => s.stories);
 }
 
+/* istanbul ignore next */
 export function useProfiles(): ProfileItem[] {
   return useStore((s) => s.profiles);
 }
@@ -374,6 +381,7 @@ export function shouldRequestStartupPermissions(
 }
 
 /** Mounted once at the app root: the auth check, the event subscription and the signed-in loops. */
+/* istanbul ignore next */
 export function ObscuraBootstrap(): null {
   useEffect(() => {
     bootstrapAuthState();

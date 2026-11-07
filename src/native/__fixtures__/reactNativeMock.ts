@@ -35,13 +35,27 @@ export class NativeEventEmitter {
 
 export const Platform = { OS: 'ios', select: (o: Record<string, unknown>) => o.ios ?? o.default };
 
+type AlertButton = { text?: string; style?: string; onPress?: () => void };
+type AlertOptions = { cancelable?: boolean; onDismiss?: () => void };
+type AlertHandler = (title: string, message?: string, buttons?: AlertButton[], options?: AlertOptions) => void;
+
+const alertQueue: AlertHandler[] = [];
+
 export const Alert = {
+  __enqueue(handler: AlertHandler): void {
+    alertQueue.push(handler);
+  },
+  __reset(): void {
+    alertQueue.length = 0;
+  },
   alert(
-    _title: string,
-    _message?: string,
-    _buttons?: Array<{ text?: string; style?: string; onPress?: () => void }>,
-    _options?: { cancelable?: boolean; onDismiss?: () => void },
-  ): void {},
+    title: string,
+    message?: string,
+    buttons?: AlertButton[],
+    options?: AlertOptions,
+  ): void {
+    alertQueue.shift()?.(title, message, buttons, options);
+  },
 };
 
 

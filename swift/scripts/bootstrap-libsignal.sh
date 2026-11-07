@@ -72,6 +72,7 @@ if [[ "$fetched" != "true" ]]; then
 fi
 
 git -C "$SOURCE" checkout --detach FETCH_HEAD
+rm -rf "$ROOT/vendored/LibSignalClient"
 
 case "$MODE" in
   host)

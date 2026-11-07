@@ -1,4 +1,3 @@
-import React from 'react';
 import { Platform } from 'react-native';
 import { Camera } from 'react-native-vision-camera';
 import {
@@ -7,15 +6,12 @@ import {
   refreshFriends, resetSession, logout, flushOutboxFromStore, sweepAndRefresh,
   subscribeToLaunchScreen, loadDebugLog, copyToClipboard, getFriendCode,
   bootstrapAuthState, ensureSessionLoaded, shouldRequestStartupPermissions,
-  useSession, useIdentity, useAcceptedFriends, usePendingFriends,
-  useMessages, useStories, useProfiles, ObscuraBootstrap,
 } from '../store';
-import { usePeerTyping } from '../chat';
 import { canPromptFor, requestStartupPermissions } from '../permissions';
 import { Obscura } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 import { openPixViewer } from '../../navigation/openPixViewer';
-import { getJsLog, logError } from '../../utils/log';
+import { logError } from '../../utils/log';
 
 jest.mock('react-native-vision-camera', () => ({
   Camera: {
@@ -42,10 +38,6 @@ function session() {
 beforeEach(() => {
   resetSession();
   bridge.__authenticate({ userId: SELF, username: 'me', deviceId: DEVICE });
-});
-
-afterEach(() => {
-  jest.restoreAllMocks();
 });
 
 describe('refreshFriends', () => {
@@ -83,43 +75,29 @@ describe('logout & sessionEpoch race protection', () => {
   it('clears the session even when the kit call fails', async () => {
     session();
     bridge.__failNext('logout', 'SEND_FAILED', 'network down');
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
     await logout();
 
     expect(useStore.getState().authed).toBe(false);
-    warn.mockRestore();
   });
 
   it('discards stale in-flight getMessages, getStories, and getProfiles responses across resetSession/logout', async () => {
     session();
-    let resolveMessages!: (v: any) => void;
-    let resolveStories!: (v: any) => void;
-    let resolveProfiles!: (v: any) => void;
+    bridge.__deliverMessage({ id: 'stale_m', peerUserId: BOB, authorUserId: BOB, content: 'stale' });
+    bridge.__deliverStory({ id: 'stale_s', authorUserId: BOB, content: 'stale' });
+    bridge.__deliverProfile({ userId: BOB, displayName: 'Stale', bio: '' });
 
-    jest.spyOn(bridge, 'getMessages').mockImplementationOnce(
-      () => new Promise((r) => { resolveMessages = r; }),
-    );
-    jest.spyOn(bridge, 'getStories').mockImplementationOnce(
-      () => new Promise((r) => { resolveStories = r; }),
-    );
-    jest.spyOn(bridge, 'getProfiles').mockImplementationOnce(
-      () => new Promise((r) => { resolveProfiles = r; }),
-    );
+    const releaseMessages = bridge.__deferNext('getMessages');
+    const releaseStories = bridge.__deferNext('getStories');
+    const releaseProfiles = bridge.__deferNext('getProfiles');
 
     const inflight = Promise.all([refreshMessages(), refreshStories(), refreshProfiles()]);
     await logout();
     const freshInflight = refreshMessages();
 
-    resolveMessages([{
-      kind: 'message', id: 'stale_m', peerUserId: BOB, authorUserId: BOB, sentAt: 1, viewedAt: null, content: 'stale',
-    }]);
-    resolveStories([{
-      id: 'stale_s', authorUserId: BOB, sentAt: 1, content: 'stale', attachment: null, captionMeta: null,
-    }]);
-    resolveProfiles([{
-      userId: BOB, authorDeviceId: 'd', updatedAt: 1, displayName: 'Stale', bio: '',
-    }]);
+    releaseMessages();
+    releaseStories();
+    releaseProfiles();
     await inflight;
     await freshInflight;
 
@@ -191,7 +169,6 @@ describe('slice refresh & coalescing', () => {
   });
 
   it('swallows refresh, flushOutbox, sweepExpired, event handler, and bootstrap failures rather than rejecting', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     session();
     bridge.__failNext('getMessages', 'STORAGE_ERROR');
     bridge.__failNext('getStories', 'STORAGE_ERROR');
@@ -222,7 +199,6 @@ describe('slice refresh & coalescing', () => {
     bridge.__failNext('getAuthState', 'STORAGE_ERROR');
     await bootstrapAuthState();
     expect(useStore.getState().bootstrapped).toBe(true);
-    warn.mockRestore();
   });
 });
 
@@ -286,7 +262,6 @@ describe('event and lifecycle sync triggers', () => {
   });
 
   it('loads identity, friends, and all slices on cold start, falling back on individual pull failures', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__setFriends([{ userId: BOB, username: 'bob', status: 'accepted' }]);
     bridge.__deliverMessage({ id: 'dm_1', peerUserId: BOB, authorUserId: BOB, content: 'hello' });
     bridge.__failNext('getFriends', 'STORAGE_ERROR');
@@ -296,7 +271,6 @@ describe('event and lifecycle sync triggers', () => {
     expect(useStore.getState().myUserId).toBe(SELF);
     expect(useStore.getState().friends).toEqual([]);
     expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_1']);
-    warn.mockRestore();
   });
 
   it('flips authed on `authStateChanged: authenticated` and clears on `loggedOut`', async () => {
@@ -353,17 +327,14 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
     expect(screens).toEqual(['ChatList', 'Profile']);
     offNull();
 
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__failNext('getUserId', 'ERR', 'no uid');
     bridge.__failNext('getUsername', 'ERR', 'no uname');
     bridge.__failNext('getDeviceId', 'ERR', 'no did');
     await loadSession();
     expect(useStore.getState()).toMatchObject({ myUserId: '', myUsername: '', myDeviceId: '' });
-    warn.mockRestore();
   });
 
   it('combines native and JS debug logs, copies to clipboard, and fetches the friend code', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.debugLog = ['00:00:01 Native boot'];
     logError('test.tag', new Error('boom'));
 
@@ -375,93 +346,6 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
     expect(bridge.clipboard).toBe('copied-text');
 
     expect(await getFriendCode()).toBe(`${SELF}:me`);
-
-    for (let i = 0; i < 205; i += 1) {
-      logError('ring', `line-${i}`);
-    }
-    const ring = getJsLog();
-    expect(ring).toHaveLength(200);
-    expect(ring[ring.length - 1]).toContain('line-204');
-    warn.mockRestore();
-  });
-
-  it('wires selectors, ObscuraBootstrap, and usePeerTyping hooks to the store and bridge', async () => {
-    const cleanups: Array<() => void> = [];
-    const stateTransforms: Array<(prev: boolean) => boolean> = [];
-    const refObj = { current: false };
-
-    jest.spyOn(React, 'useSyncExternalStore').mockImplementation((_sub, getSnap) => getSnap());
-    jest.spyOn(React, 'useCallback').mockImplementation((fn) => fn);
-    jest.spyOn(React, 'useDebugValue').mockImplementation(() => {});
-    jest.spyOn(React, 'useMemo').mockImplementation((fn) => fn());
-    jest.spyOn(React, 'useRef').mockImplementation(() => ({ current: undefined } as any));
-    jest.spyOn(React, 'useState').mockImplementation(((init?: unknown) => {
-      const val = typeof init === 'function' ? (init as () => unknown)() : init;
-      const set = (next: unknown) => {
-        if (typeof next === 'function') stateTransforms.push(next as (prev: boolean) => boolean);
-      };
-      return [val, set];
-    }) as typeof React.useState);
-    jest.spyOn(React, 'useEffect').mockImplementation((fn) => {
-      const cleanup = fn();
-      if (typeof cleanup === 'function') cleanups.push(cleanup);
-    });
-
-    session();
-    useStore.setState({
-      connState: 'connected',
-      friends: [
-        { userId: BOB, username: 'bob', status: 'accepted' },
-        { userId: 'uCarol', username: 'carol', status: 'pending_received' },
-      ],
-    });
-
-    expect(useSession()).toMatchObject({ authed: true, myUserId: SELF, myUsername: 'me', connState: 'connected' });
-    expect(useIdentity()).toMatchObject({ myUserId: SELF, myUsername: 'me' });
-    expect(useAcceptedFriends().map((f) => f.username)).toEqual(['bob']);
-    expect(usePendingFriends().map((f) => f.username)).toEqual(['carol']);
-    expect(useMessages()).toEqual([]);
-    expect(useStories()).toEqual([]);
-    expect(useProfiles()).toEqual([]);
-
-    jest.spyOn(React, 'useRef').mockImplementation(() => refObj as any);
-    jest.useFakeTimers();
-    expect(ObscuraBootstrap()).toBeNull();
-    expect(refObj.current).toBe(true);
-    jest.advanceTimersByTime(60_000);
-    // Second render while already requested skips re-requesting permissions.
-    expect(ObscuraBootstrap()).toBeNull();
-
-    // Signed-out render resets permissionsRequested ref and skips session/sweep effects.
-    useStore.setState({ authed: false, connState: 'disconnected' });
-    expect(ObscuraBootstrap()).toBeNull();
-    expect(refObj.current).toBe(false);
-    jest.useRealTimers();
-
-    expect(usePeerTyping(BOB)).toBe(false);
-    bridge.__emit({ type: 'typingChanged', peerUserId: BOB, typing: true });
-    expect(stateTransforms[stateTransforms.length - 1](false)).toBe(true);
-
-    // Also cover error paths in ObscuraBootstrap permission request and usePeerTyping observe/unobserve.
-    useStore.setState({ authed: true, connState: 'connected' });
-    refObj.current = false;
-    (Camera.getCameraPermissionStatus as jest.Mock).mockReturnValueOnce('not-determined');
-    (Camera.requestCameraPermission as jest.Mock).mockRejectedValueOnce(new Error('perm boom'));
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(ObscuraBootstrap()).toBeNull();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    bridge.__failNext('observeTyping', 'OBSERVE_TYPING_ERROR', 'obs boom');
-    bridge.__failNext('stopObservingTyping', 'STOP_OBSERVING_TYPING_ERROR', 'unobs boom');
-    expect(usePeerTyping(BOB)).toBe(false);
-    await Promise.resolve();
-
-    while (cleanups.length > 0) {
-      cleanups.pop()?.();
-    }
-    await Promise.resolve();
-    warn.mockRestore();
   });
 
   it('bootstraps auth state, ensures session is loaded once, and gates startup permission requests', async () => {

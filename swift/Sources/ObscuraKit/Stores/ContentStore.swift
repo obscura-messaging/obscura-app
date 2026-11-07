@@ -7,11 +7,34 @@ public struct MediaAttachment: Sendable, Equatable {
     public let nonce: Data
     public let mediaType: String
 
-    public init(id: String, contentKey: Data, nonce: Data, mediaType: String) {
+    public init(id: String, contentKey: Data, nonce: Data, mediaType: String = "photo") {
         self.id = id
         self.contentKey = contentKey
         self.nonce = nonce
-        self.mediaType = mediaType
+        self.mediaType = mediaType.isEmpty ? "photo" : mediaType
+    }
+
+    init?(proto: Obscura_Client_V1_AttachmentPointer) {
+        guard !proto.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !proto.contentKey.isEmpty,
+              !proto.nonce.isEmpty else {
+            return nil
+        }
+        self.init(
+            id: proto.id,
+            contentKey: proto.contentKey,
+            nonce: proto.nonce,
+            mediaType: proto.mediaType
+        )
+    }
+
+    var proto: Obscura_Client_V1_AttachmentPointer {
+        var pointer = Obscura_Client_V1_AttachmentPointer()
+        pointer.id = id
+        pointer.contentKey = contentKey
+        pointer.nonce = nonce
+        pointer.mediaType = mediaType
+        return pointer
     }
 }
 
@@ -41,6 +64,15 @@ public struct ConversationItem: Sendable, Equatable {
         captionMeta: String? = nil,
         displayDuration: Int = 0
     ) {
+        precondition(kind == "message" || kind == "pix", "invalid conversation item kind: \(kind)")
+        if kind == "pix" {
+            precondition(attachment != nil, "pix requires an attachment")
+        } else {
+            precondition(
+                attachment == nil && caption == nil && captionMeta == nil && displayDuration == 0,
+                "message cannot carry pix fields"
+            )
+        }
         self.id = id
         self.peerUserId = peerUserId
         self.kind = kind
@@ -49,9 +81,90 @@ public struct ConversationItem: Sendable, Equatable {
         self.viewedAt = viewedAt
         self.content = content
         self.attachment = attachment
-        self.caption = caption
-        self.captionMeta = captionMeta
-        self.displayDuration = displayDuration
+        self.caption = (caption?.isEmpty == false) ? caption : nil
+        self.captionMeta = (captionMeta?.isEmpty == false) ? captionMeta : nil
+        self.displayDuration = max(0, displayDuration)
+    }
+
+    public static func message(
+        id: String,
+        peerUserId: String,
+        authorUserId: String,
+        sentAt: UInt64,
+        content: String,
+        viewedAt: UInt64? = nil
+    ) -> ConversationItem {
+        ConversationItem(
+            id: id,
+            peerUserId: peerUserId,
+            kind: "message",
+            authorUserId: authorUserId,
+            sentAt: sentAt,
+            viewedAt: viewedAt,
+            content: content
+        )
+    }
+
+    public static func pix(
+        id: String,
+        peerUserId: String,
+        authorUserId: String,
+        sentAt: UInt64,
+        attachment: MediaAttachment,
+        caption: String? = nil,
+        captionMeta: String? = nil,
+        displayDuration: Int = 0,
+        viewedAt: UInt64? = nil
+    ) -> ConversationItem {
+        ConversationItem(
+            id: id,
+            peerUserId: peerUserId,
+            kind: "pix",
+            authorUserId: authorUserId,
+            sentAt: sentAt,
+            viewedAt: viewedAt,
+            content: "",
+            attachment: attachment,
+            caption: caption,
+            captionMeta: captionMeta,
+            displayDuration: displayDuration
+        )
+    }
+
+    func toClientMessage() -> Obscura_Client_V1_ClientMessage {
+        var message = Obscura_Client_V1_ClientMessage()
+        message.timestamp = sentAt
+        if kind == "pix", let attachment {
+            message.pix.id = id
+            message.pix.peerUserID = peerUserId
+            message.pix.attachment = attachment.proto
+            message.pix.caption = caption ?? ""
+            message.pix.captionMeta = captionMeta ?? ""
+            message.pix.displayDurationSecs = UInt32(displayDuration)
+        } else {
+            message.directMessage.id = id
+            message.directMessage.peerUserID = peerUserId
+            message.directMessage.content = content
+        }
+        return message
+    }
+
+    var snapshotRecord: Obscura_Client_V1_StoredMessageRecord {
+        var record = Obscura_Client_V1_StoredMessageRecord()
+        record.id = id
+        record.peerUserID = peerUserId
+        record.kind = kind
+        record.authorUserID = authorUserId
+        record.sentAt = sentAt
+        record.viewedAt = viewedAt ?? 0
+        record.content = content
+        if let attachment {
+            record.attachment = attachment.proto
+        }
+        record.caption = caption ?? ""
+        record.captionMeta = captionMeta ?? ""
+        record.displayDurationSecs = UInt32(displayDuration)
+        return record
     }
 }
 
@@ -76,7 +189,32 @@ public struct StoryItem: Sendable, Equatable {
         self.sentAt = sentAt
         self.content = content
         self.attachment = attachment
-        self.captionMeta = captionMeta
+        self.captionMeta = (captionMeta?.isEmpty == false) ? captionMeta : nil
+    }
+
+    func toClientMessage() -> Obscura_Client_V1_ClientMessage {
+        var message = Obscura_Client_V1_ClientMessage()
+        message.timestamp = sentAt
+        message.story.id = id
+        message.story.content = content
+        if let attachment {
+            message.story.attachment = attachment.proto
+        }
+        message.story.captionMeta = captionMeta ?? ""
+        return message
+    }
+
+    var snapshotRecord: Obscura_Client_V1_StoredStoryRecord {
+        var record = Obscura_Client_V1_StoredStoryRecord()
+        record.id = id
+        record.authorUserID = authorUserId
+        record.sentAt = sentAt
+        record.content = content
+        if let attachment {
+            record.attachment = attachment.proto
+        }
+        record.captionMeta = captionMeta ?? ""
+        return record
     }
 }
 
@@ -99,6 +237,24 @@ public struct ProfileItem: Sendable, Equatable {
         self.updatedAt = updatedAt
         self.displayName = displayName
         self.bio = bio
+    }
+
+    func toClientMessage() -> Obscura_Client_V1_ClientMessage {
+        var message = Obscura_Client_V1_ClientMessage()
+        message.timestamp = updatedAt
+        message.profile.displayName = displayName
+        message.profile.bio = bio
+        return message
+    }
+
+    var snapshotRecord: Obscura_Client_V1_StoredProfileRecord {
+        var record = Obscura_Client_V1_StoredProfileRecord()
+        record.userID = userId
+        record.authorDeviceID = authorDeviceId
+        record.updatedAt = updatedAt
+        record.displayName = displayName
+        record.bio = bio
+        return record
     }
 }
 
@@ -460,50 +616,9 @@ actor ContentStore {
     func snapshot() async throws -> Obscura_Client_V1_EntrySnapshot {
         try await db.read { db in
             var snapshot = Obscura_Client_V1_EntrySnapshot()
-            snapshot.messages = try Self.messages(in: db).map { item in
-                var record = Obscura_Client_V1_StoredMessageRecord()
-                record.id = item.id
-                record.peerUserID = item.peerUserId
-                record.kind = item.kind
-                record.authorUserID = item.authorUserId
-                record.sentAt = item.sentAt
-                record.viewedAt = item.viewedAt ?? 0
-                record.content = item.content
-                if let att = item.attachment, !att.id.isEmpty {
-                    record.attachment.id = att.id
-                    record.attachment.contentKey = att.contentKey
-                    record.attachment.nonce = att.nonce
-                    record.attachment.mediaType = att.mediaType
-                }
-                record.caption = item.caption ?? ""
-                record.captionMeta = item.captionMeta ?? ""
-                record.displayDurationSecs = UInt32(max(0, item.displayDuration))
-                return record
-            }
-            snapshot.stories = try Self.allStories(in: db).map { item in
-                var record = Obscura_Client_V1_StoredStoryRecord()
-                record.id = item.id
-                record.authorUserID = item.authorUserId
-                record.sentAt = item.sentAt
-                record.content = item.content
-                if let att = item.attachment, !att.id.isEmpty {
-                    record.attachment.id = att.id
-                    record.attachment.contentKey = att.contentKey
-                    record.attachment.nonce = att.nonce
-                    record.attachment.mediaType = att.mediaType
-                }
-                record.captionMeta = item.captionMeta ?? ""
-                return record
-            }
-            snapshot.profiles = try Self.profiles(in: db).map { item in
-                var record = Obscura_Client_V1_StoredProfileRecord()
-                record.userID = item.userId
-                record.authorDeviceID = item.authorDeviceId
-                record.updatedAt = item.updatedAt
-                record.displayName = item.displayName
-                record.bio = item.bio
-                return record
-            }
+            snapshot.messages = try Self.messages(in: db).map(\.snapshotRecord)
+            snapshot.stories = try Self.allStories(in: db).map(\.snapshotRecord)
+            snapshot.profiles = try Self.profiles(in: db).map(\.snapshotRecord)
             return snapshot
         }
     }
@@ -515,54 +630,44 @@ actor ContentStore {
                       !record.peerUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       !record.authorUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
                 let kind = record.kind.isEmpty ? "message" : record.kind
-                let isPix = kind == "pix"
-                let hasAtt = isPix
-                    && record.hasAttachment
-                    && !record.attachment.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    && !record.attachment.contentKey.isEmpty
-                    && !record.attachment.nonce.isEmpty
-                if isPix && !hasAtt { continue }
-                let attachment: MediaAttachment? = hasAtt ? MediaAttachment(
-                    id: record.attachment.id,
-                    contentKey: record.attachment.contentKey,
-                    nonce: record.attachment.nonce,
-                    mediaType: record.attachment.mediaType.isEmpty ? "photo" : record.attachment.mediaType
-                ) : nil
-                let item = ConversationItem(
-                    id: record.id,
-                    peerUserId: record.peerUserID,
-                    kind: kind,
-                    authorUserId: record.authorUserID,
-                    sentAt: record.sentAt,
-                    viewedAt: record.viewedAt > 0 ? record.viewedAt : nil,
-                    content: record.content,
-                    attachment: attachment,
-                    caption: isPix && !record.caption.isEmpty ? record.caption : nil,
-                    captionMeta: isPix && !record.captionMeta.isEmpty ? record.captionMeta : nil,
-                    displayDuration: isPix ? Int(record.displayDurationSecs) : 0
-                )
+                let viewedAt = record.viewedAt > 0 ? record.viewedAt : nil
+                let item: ConversationItem
+                if kind == "pix" {
+                    guard record.hasAttachment, let attachment = MediaAttachment(proto: record.attachment) else { continue }
+                    item = .pix(
+                        id: record.id,
+                        peerUserId: record.peerUserID,
+                        authorUserId: record.authorUserID,
+                        sentAt: record.sentAt,
+                        attachment: attachment,
+                        caption: record.caption,
+                        captionMeta: record.captionMeta,
+                        displayDuration: Int(record.displayDurationSecs),
+                        viewedAt: viewedAt
+                    )
+                } else {
+                    item = .message(
+                        id: record.id,
+                        peerUserId: record.peerUserID,
+                        authorUserId: record.authorUserID,
+                        sentAt: record.sentAt,
+                        content: record.content,
+                        viewedAt: viewedAt
+                    )
+                }
                 _ = try Self.insertConversationItem(item, undelivered: false, in: db)
             }
             for record in snapshot.stories {
                 guard !record.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       !record.authorUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-                let hasAtt = record.hasAttachment
-                    && !record.attachment.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    && !record.attachment.contentKey.isEmpty
-                    && !record.attachment.nonce.isEmpty
-                let attachment: MediaAttachment? = hasAtt ? MediaAttachment(
-                    id: record.attachment.id,
-                    contentKey: record.attachment.contentKey,
-                    nonce: record.attachment.nonce,
-                    mediaType: record.attachment.mediaType.isEmpty ? "photo" : record.attachment.mediaType
-                ) : nil
+                let attachment = record.hasAttachment ? MediaAttachment(proto: record.attachment) : nil
                 let item = StoryItem(
                     id: record.id,
                     authorUserId: record.authorUserID,
                     sentAt: record.sentAt,
                     content: record.content,
                     attachment: attachment,
-                    captionMeta: record.captionMeta.isEmpty ? nil : record.captionMeta
+                    captionMeta: record.captionMeta
                 )
                 _ = try Self.insertStoryItem(item, undelivered: false, in: db)
             }

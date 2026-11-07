@@ -15,6 +15,9 @@ java {
 
 kotlin {
     jvmToolchain(21)
+    compilerOptions {
+        optIn.add("kotlinx.coroutines.ExperimentalCoroutinesApi")
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -42,8 +45,8 @@ sourceSets {
     create("integrationTest") {
         kotlin.srcDir("src/integrationTest/kotlin")
         resources.srcDir("src/integrationTest/resources")
-        compileClasspath += sourceSets["main"].output
-        runtimeClasspath += sourceSets["main"].output
+        compileClasspath += sourceSets["main"].output + sourceSets["test"].output
+        runtimeClasspath += sourceSets["main"].output + sourceSets["test"].output
     }
 }
 

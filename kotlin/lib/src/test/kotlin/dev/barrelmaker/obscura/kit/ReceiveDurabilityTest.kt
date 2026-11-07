@@ -168,8 +168,7 @@ class ReceiveDurabilityTest {
         driver.close()
     }
 
-    @Test fun `duplicate Signal ciphertext, ack failure, followUp failure, prekey replenish failure, and database error branches`() = runBlocking {
-        // Exercise all NoOpLogger methods directly
+    @Test fun `unprovisioned client properties, NoOpLogger, and identity change callback`() = runBlocking {
         NoOpLogger.log("msg")
         NoOpLogger.decryptFailed("u", "r")
         NoOpLogger.ackFailed("e", "r")
@@ -178,7 +177,6 @@ class ReceiveDurabilityTest {
         NoOpLogger.identityChanged("u")
         NoOpLogger.databaseError("s", "op", "r")
 
-        // 1. Logged-out client properties, isPrimary on unprovisioned client, and signalStore.onIdentityChanged callback
         val unprov = newClient()
         assertNull(unprov.userId)
         assertNull(unprov.deviceId)
@@ -191,57 +189,68 @@ class ReceiveDurabilityTest {
         unprov.signalStore.saveIdentity(Messenger.addressFor(peerDevice), org.signal.libsignal.protocol.IdentityKeyPair.generate().publicKey)
         unprov.signalStore.saveIdentity(Messenger.addressFor(peerDevice), org.signal.libsignal.protocol.IdentityKeyPair.generate().publicKey)
         assertTrue(unprov.getDebugLog().any { it.contains("IDENTITY changed for $peerUser") })
+    }
 
-        // 2. Malformed envelope IDs (missing id or missing senderUserId), duplicate ciphertext with new envelopeId, and ack failure
+    @Test fun `malformed envelope ids are not acked, ack failures are logged, and duplicate Signal ciphertext is acked`() = runBlocking {
         val (c, driver, envelope) = fixture()
         var acks = 0
         c.receive(envelope.toBuilder().clearId().build()) { acks++ }
         c.receive(envelope.toBuilder().clearSenderUserId().build()) { acks++ }
         assertEquals(0, acks)
 
-        // First receive with failing ack (null exception message to cover reason() fallback)
         c.receive(envelope) { throw RuntimeException() }
         assertTrue(c.getDebugLog().any { it.contains("RECV ack failed") })
 
-        // Same Signal ciphertext in a new envelope ID triggers DuplicateMessageException and acks
         val newEnvId = Envelope.newBuilder(envelope).setId(UuidCodec.uuidToBytes(UUID.randomUUID())).build()
         c.receive(newEnvId) { acks++ }
         assertEquals(1, acks)
         assertTrue(c.getDebugLog().any { it.contains("redelivered envelope") })
+        c.auth.end()
+        driver.close()
+    }
 
-        // Prekey count below 20 triggers background replenishPreKeys which fails against unreachable server and calls logger.preKeyReplenishFailed
+    @Test fun `low prekey count after receive triggers replenishment and reports failure`() = runBlocking {
         val (cLow, driverLow, envLow) = fixture()
-        for (id in 1..85) cLow.signalStore.removePreKey(id)
+        val replenishFailures = kotlinx.coroutines.CompletableDeferred<String>()
+        cLow.logger = object : ObscuraLogger by NoOpLogger {
+            override fun preKeyReplenishFailed(reason: String) {
+                replenishFailures.complete(reason)
+            }
+        }
+        var acks = 0
+        for (id in 2..90) cLow.signalStore.removePreKey(id)
         cLow.receive(envLow) { acks++ }
-        kotlinx.coroutines.delay(100)
+        assertEquals(1, acks)
+        kotlinx.coroutines.withTimeout(5_000) {
+            assertTrue(replenishFailures.await().isNotBlank())
+        }
         cLow.auth.end()
         driverLow.close()
+    }
 
-        // 3. Sender device registered to a different user triggers ProtocolViolation in directory stage
+    @Test fun `sender device registered to another user, followUp failure, and duplicate lookup failure leave envelope unacknowledged`() = runBlocking {
         val (cConflict, driverConflict, envConflict) = fixture()
+        var acks = 0
         cConflict.devices.add(UUID.randomUUID().toString(), listOf(peerDevice))
         cConflict.receive(envConflict) { acks++ }
+        assertEquals(0, acks)
         assertTrue(cConflict.getDebugLog().any { it.contains("RECV decrypt failed") })
         cConflict.auth.end()
         driverConflict.close()
 
-        // 4. followUp failure inside receive() (incoming FRIEND_REQUEST from ACCEPTED peer when sendFriendAccept fails)
         val friendReqMsg = ClientMessage.newBuilder().setFriendRequest(obscura.client.v1.friendRequest { username = "peer" }).build()
         val (cFollow, driverFollow, envFollow) = fixture(incoming = friendReqMsg)
         FriendStore(cFollow.db).add(peerUser, "peer", FriendStatus.ACCEPTED)
-        var followAcks = 0
-        cFollow.receive(envFollow) { followAcks++ }
-        assertEquals(0, followAcks)
+        cFollow.receive(envFollow) { acks++ }
+        assertEquals(0, acks)
         assertTrue(cFollow.getDebugLog().any { it.contains("RECV FRIEND_REQUEST not stored") })
+
+        driverFollow.execute(null, "DROP TABLE ProcessedEnvelope", 0)
+        val freshEnv = Envelope.newBuilder(envFollow).setId(UuidCodec.uuidToBytes(UUID.randomUUID())).build()
+        cFollow.receive(freshEnv) { acks++ }
+        assertEquals(0, acks)
+        assertTrue(cFollow.getDebugLog().any { it.contains("RECV duplicate lookup failed") })
         cFollow.auth.end()
         driverFollow.close()
-
-        // 5. containsEnvelope database failure
-        driver.execute(null, "DROP TABLE ProcessedEnvelope", 0)
-        val freshEnv = Envelope.newBuilder(envelope).setId(UuidCodec.uuidToBytes(UUID.randomUUID())).build()
-        c.receive(freshEnv) { acks++ }
-        assertTrue(c.getDebugLog().any { it.contains("RECV duplicate lookup failed") })
-        c.auth.end()
-        driver.close()
     }
 }

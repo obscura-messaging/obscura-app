@@ -8,15 +8,9 @@ import dev.barrelmaker.obscura.kit.stores.ContentStore
 import dev.barrelmaker.obscura.kit.stores.ConversationItem
 import dev.barrelmaker.obscura.kit.stores.MediaAttachment
 import dev.barrelmaker.obscura.kit.stores.ProfileItem
-import dev.barrelmaker.obscura.kit.stores.STORY_MAX_AGE_MS
 import dev.barrelmaker.obscura.kit.stores.StoryItem
-import dev.barrelmaker.obscura.kit.stores.expiresAt
-import obscura.client.v1.Client.AttachmentPointer
 import obscura.client.v1.Client.EntrySnapshot
 import obscura.client.v1.Client.HistorySnapshot
-import obscura.client.v1.Client.StoredMessageRecord
-import obscura.client.v1.Client.StoredProfileRecord
-import obscura.client.v1.Client.StoredStoryRecord
 
 /** Encrypted history snapshot export and import during device linking. */
 internal object HistorySync {
@@ -40,40 +34,9 @@ internal object HistorySync {
         val profiles = content.getProfiles()
         if (messages.isEmpty() && stories.isEmpty() && profiles.isEmpty()) return null
         return EntrySnapshot.newBuilder()
-            .addAllMessages(messages.map { m ->
-                StoredMessageRecord.newBuilder()
-                    .setId(m.id)
-                    .setPeerUserId(m.peerUserId)
-                    .setKind(m.kind)
-                    .setAuthorUserId(m.authorUserId)
-                    .setSentAt(m.sentAt)
-                    .setViewedAt(m.viewedAt ?: 0L)
-                    .setContent(m.content)
-                    .setCaption(m.caption ?: "")
-                    .setCaptionMeta(m.captionMeta ?: "")
-                    .setDisplayDurationSecs(m.displayDuration)
-                    .apply { m.attachment?.let { setAttachment(encodeAttachment(it)) } }
-                    .build()
-            })
-            .addAllStories(stories.map { s ->
-                StoredStoryRecord.newBuilder()
-                    .setId(s.id)
-                    .setAuthorUserId(s.authorUserId)
-                    .setSentAt(s.sentAt)
-                    .setContent(s.content)
-                    .setCaptionMeta(s.captionMeta ?: "")
-                    .apply { s.attachment?.let { setAttachment(encodeAttachment(it)) } }
-                    .build()
-            })
-            .addAllProfiles(profiles.map { p ->
-                StoredProfileRecord.newBuilder()
-                    .setUserId(p.userId)
-                    .setAuthorDeviceId(p.authorDeviceId)
-                    .setUpdatedAt(p.updatedAt)
-                    .setDisplayName(p.displayName)
-                    .setBio(p.bio)
-                    .build()
-            })
+            .addAllMessages(messages.map(ConversationItem::toSnapshotRecord))
+            .addAllStories(stories.map(StoryItem::toSnapshotRecord))
+            .addAllProfiles(profiles.map(ProfileItem::toSnapshotRecord))
             .build()
     }
 
@@ -94,39 +57,43 @@ internal object HistorySync {
     suspend fun importSnapshot(snapshot: EntrySnapshot, content: ContentStore) {
         val messages = snapshot.messagesList.mapNotNull { m ->
             if (m.id.isBlank() || m.peerUserId.isBlank() || m.authorUserId.isBlank()) return@mapNotNull null
-            val kind = m.kind.ifEmpty { "message" }
-            val isPix = kind == "pix"
-            val att = if (isPix && m.hasAttachment()) decodeAttachment(m.attachment) else null
-            if (isPix && att == null) return@mapNotNull null
             val viewedAt = m.viewedAt.takeIf { it > 0L }
-            ConversationItem(
-                id = m.id,
-                peerUserId = m.peerUserId,
-                kind = kind,
-                authorUserId = m.authorUserId,
-                sentAt = m.sentAt,
-                viewedAt = viewedAt,
-                expiresAt = expiresAt(m.sentAt, viewedAt),
-                content = m.content,
-                attachment = att,
-                caption = if (isPix) m.caption.ifEmpty { null } else null,
-                captionMeta = if (isPix) m.captionMeta.ifEmpty { null } else null,
-                displayDuration = if (isPix) m.displayDurationSecs else 0,
-                undelivered = false,
-            )
+            if (m.kind == "pix") {
+                val att = if (m.hasAttachment()) MediaAttachment.fromProto(m.attachment) else null
+                att?.let {
+                    ConversationItem.pix(
+                        id = m.id,
+                        peerUserId = m.peerUserId,
+                        authorUserId = m.authorUserId,
+                        sentAt = m.sentAt,
+                        attachment = it,
+                        caption = m.caption.ifEmpty { null },
+                        captionMeta = m.captionMeta.ifEmpty { null },
+                        displayDuration = m.displayDurationSecs,
+                        viewedAt = viewedAt,
+                    )
+                }
+            } else {
+                ConversationItem.message(
+                    id = m.id,
+                    peerUserId = m.peerUserId,
+                    authorUserId = m.authorUserId,
+                    sentAt = m.sentAt,
+                    content = m.content,
+                    viewedAt = viewedAt,
+                )
+            }
         }
         val stories = snapshot.storiesList.mapNotNull { s ->
             if (s.id.isBlank() || s.authorUserId.isBlank()) return@mapNotNull null
-            val att = if (s.hasAttachment()) decodeAttachment(s.attachment) else null
+            val att = if (s.hasAttachment()) MediaAttachment.fromProto(s.attachment) else null
             StoryItem(
                 id = s.id,
                 authorUserId = s.authorUserId,
                 sentAt = s.sentAt,
-                expiresAt = s.sentAt + STORY_MAX_AGE_MS,
                 content = s.content,
                 attachment = att,
                 captionMeta = s.captionMeta.ifEmpty { null },
-                undelivered = false,
             )
         }
         val profiles = snapshot.profilesList.mapNotNull { p ->
@@ -137,27 +104,8 @@ internal object HistorySync {
                 updatedAt = p.updatedAt,
                 displayName = p.displayName,
                 bio = p.bio,
-                undelivered = false,
             )
         }
         content.importSnapshot(messages, stories, profiles)
     }
-
-    fun encodeAttachment(att: MediaAttachment): AttachmentPointer =
-        AttachmentPointer.newBuilder()
-            .setId(att.id)
-            .setContentKey(ByteString.copyFrom(att.contentKey))
-            .setNonce(ByteString.copyFrom(att.nonce))
-            .setMediaType(att.mediaType)
-            .build()
-
-    fun decodeAttachment(att: AttachmentPointer): MediaAttachment? =
-        if (att.id.isNotBlank() && !att.contentKey.isEmpty && !att.nonce.isEmpty) {
-            MediaAttachment(
-                id = att.id,
-                contentKey = att.contentKey.toByteArray(),
-                nonce = att.nonce.toByteArray(),
-                mediaType = att.mediaType.ifEmpty { "photo" },
-            )
-        } else null
 }

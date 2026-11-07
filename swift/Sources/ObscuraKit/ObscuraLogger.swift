@@ -11,6 +11,18 @@ public protocol ObscuraLogger: Sendable {
     func databaseError(store: String, operation: String, reason: String)
 }
 
+public struct NoOpLogger: ObscuraLogger {
+    public init() {}
+    public func log(_ message: String) {}
+    public func decryptFailed(sourceUserId: String, reason: String) {}
+    public func ackFailed(envelopeId: String, reason: String) {}
+    public func tokenRefreshFailed(attempt: Int, reason: String) {}
+    public func preKeyReplenishFailed(reason: String) {}
+    public func identityChanged(userId: String) {}
+    public func sessionEstablishFailed(userId: String, reason: String) {}
+    public func databaseError(store: String, operation: String, reason: String) {}
+}
+
 /// Forwards to the host logger and keeps the newest lines for `getDebugLog()`.
 final class RecordingLogger: ObscuraLogger {
     private let host: ObscuraLogger

@@ -247,18 +247,12 @@ extension ObscuraClient {
                   let peer = peerUserId(senderUserId: senderUserId, claimedPeerUserId: dm.peerUserID, selfUserId: selfUserId) else {
                 return .ignored("direct message with blank id or invalid peer")
             }
-            let item = ConversationItem(
+            let item = ConversationItem.message(
                 id: dm.id,
                 peerUserId: peer,
-                kind: "message",
                 authorUserId: senderUserId,
                 sentAt: sentAt,
-                viewedAt: nil,
-                content: dm.content,
-                attachment: nil,
-                caption: nil,
-                captionMeta: nil,
-                displayDuration: 0
+                content: dm.content
             )
             let inserted = try ContentStore.insertConversationItem(item, undelivered: false, in: db)
             try ContentStore.recordEnvelope(envelopeId, in: db)
@@ -267,27 +261,17 @@ extension ObscuraClient {
             guard !pix.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   let peer = peerUserId(senderUserId: senderUserId, claimedPeerUserId: pix.peerUserID, selfUserId: selfUserId),
                   pix.hasAttachment,
-                  !pix.attachment.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !pix.attachment.contentKey.isEmpty,
-                  !pix.attachment.nonce.isEmpty else {
+                  let attachment = MediaAttachment(proto: pix.attachment) else {
                 return .ignored("pix message with invalid id, peer, or attachment")
             }
-            let item = ConversationItem(
+            let item = ConversationItem.pix(
                 id: pix.id,
                 peerUserId: peer,
-                kind: "pix",
                 authorUserId: senderUserId,
                 sentAt: sentAt,
-                viewedAt: nil,
-                content: "",
-                attachment: MediaAttachment(
-                    id: pix.attachment.id,
-                    contentKey: pix.attachment.contentKey,
-                    nonce: pix.attachment.nonce,
-                    mediaType: pix.attachment.mediaType.isEmpty ? "photo" : pix.attachment.mediaType
-                ),
-                caption: pix.caption.isEmpty ? nil : pix.caption,
-                captionMeta: pix.captionMeta.isEmpty ? nil : pix.captionMeta,
+                attachment: attachment,
+                caption: pix.caption,
+                captionMeta: pix.captionMeta,
                 displayDuration: Int(pix.displayDurationSecs)
             )
             let inserted = try ContentStore.insertConversationItem(item, undelivered: false, in: db)
@@ -311,22 +295,13 @@ extension ObscuraClient {
             guard !st.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return .ignored("story with blank id")
             }
-            let hasAtt = st.hasAttachment
-                && !st.attachment.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !st.attachment.contentKey.isEmpty
-                && !st.attachment.nonce.isEmpty
             let item = StoryItem(
                 id: st.id,
                 authorUserId: senderUserId,
                 sentAt: sentAt,
                 content: st.content,
-                attachment: hasAtt ? MediaAttachment(
-                    id: st.attachment.id,
-                    contentKey: st.attachment.contentKey,
-                    nonce: st.attachment.nonce,
-                    mediaType: st.attachment.mediaType.isEmpty ? "photo" : st.attachment.mediaType
-                ) : nil,
-                captionMeta: st.captionMeta.isEmpty ? nil : st.captionMeta
+                attachment: st.hasAttachment ? MediaAttachment(proto: st.attachment) : nil,
+                captionMeta: st.captionMeta
             )
             let inserted = try ContentStore.insertStoryItem(item, undelivered: false, in: db)
             try ContentStore.recordEnvelope(envelopeId, in: db)

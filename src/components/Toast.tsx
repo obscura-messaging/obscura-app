@@ -1,13 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { subscribeToast, toast, type ToastItem, type ToastType } from '../state/toast';
 import { colors } from '../styles';
 
+export { subscribeToast, toast, type ToastItem, type ToastType };
+
 /** A slide-down notice raised from anywhere through `toast` and rendered by the root `ToastHost`. */
-
-type ToastType = 'success' | 'error';
-
-interface ToastItem { id: number; message: string; type: ToastType; }
 
 const COLORS: Record<ToastType, string> = {
   success: colors.success,
@@ -16,30 +15,13 @@ const COLORS: Record<ToastType, string> = {
 
 const VISIBLE_MS = 2600;
 
-let listener: ((t: ToastItem) => void) | null = null;
-let counter = 0;
-
-function showToast(message: string, type: ToastType) {
-  if (!message) return;
-  counter += 1;
-  listener?.({ id: counter, message, type });
-}
-
-export const toast = {
-  success: (message: string) => showToast(message, 'success'),
-  error: (message: string) => showToast(message, 'error'),
-};
-
 export function ToastHost() {
   const insets = useSafeAreaInsets();
   const [item, setItem] = useState<ToastItem | null>(null);
   const anim = useRef(new Animated.Value(0)).current;
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    listener = (t) => setItem(t);
-    return () => { listener = null; };
-  }, []);
+  useEffect(() => subscribeToast(setItem), []);
 
   useEffect(() => {
     if (!item) return;

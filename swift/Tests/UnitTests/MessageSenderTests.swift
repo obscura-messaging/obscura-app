@@ -290,4 +290,61 @@ final class MessageSenderTests: XCTestCase {
         XCTAssertEqual(ids(carolGot), ["batched"])
         XCTAssertEqual(ids(tabletGot), ["batched"])
     }
+
+    func testVerifiedBundlesAcceptsOptionalOneTimePreKeyAndRejectsMalformedBundles() throws {
+        let keys = try SignalKeys.generate()
+        let validIdentity = keys.identity
+        let validSigned = keys.signedPreKey
+        let validDeviceId = UUID().uuidString.lowercased()
+        let bundleNoOneTime = PreKeyBundleResponse(
+            deviceId: validDeviceId,
+            registrationId: Int(keys.registrationId),
+            identityKey: Data(validIdentity.publicKey.serialize()).base64EncodedString(),
+            signedPreKey: .init(
+                keyId: Int(validSigned.id),
+                publicKey: Data(validSigned.publicKey.serialize()).base64EncodedString(),
+                signature: Data(validSigned.signature).base64EncodedString()
+            ),
+            oneTimePreKey: nil
+        )
+        let verified = try Messenger.verifiedBundles([bundleNoOneTime])
+        XCTAssertEqual(verified.count, 1)
+
+        XCTAssertThrowsError(try Messenger.verifiedBundles([bundleNoOneTime, bundleNoOneTime]))
+        let badIdBundle = PreKeyBundleResponse(
+            deviceId: "not-uuid", registrationId: 1, identityKey: "",
+            signedPreKey: .init(keyId: 1, publicKey: "", signature: ""), oneTimePreKey: nil
+        )
+        XCTAssertThrowsError(try Messenger.verifiedBundles([badIdBundle]))
+        let badBase64Bundle = PreKeyBundleResponse(
+            deviceId: validDeviceId, registrationId: 1, identityKey: "!!!",
+            signedPreKey: .init(keyId: 1, publicKey: "!!!", signature: "!!!"), oneTimePreKey: nil
+        )
+        XCTAssertThrowsError(try Messenger.verifiedBundles([badBase64Bundle]))
+        let badOneTimeBundle = PreKeyBundleResponse(
+            deviceId: validDeviceId,
+            registrationId: Int(keys.registrationId),
+            identityKey: Data(validIdentity.publicKey.serialize()).base64EncodedString(),
+            signedPreKey: .init(
+                keyId: Int(validSigned.id),
+                publicKey: Data(validSigned.publicKey.serialize()).base64EncodedString(),
+                signature: Data(validSigned.signature).base64EncodedString()
+            ),
+            oneTimePreKey: .init(keyId: 1, publicKey: "!!!")
+        )
+        XCTAssertThrowsError(try Messenger.verifiedBundles([badOneTimeBundle]))
+    }
+
+    func testMessengerAndSenderRejectInvalidUUIDsAndUnspecifiedEncryptedMessage() async throws {
+        await assertThrows(.protocolViolation("device id not-uuid is not a UUID")) {
+            _ = try await self.alice.messenger.prepareSubmission(deviceId: "not-uuid", clientMessage: Data())
+        }
+        var unspecifiedEncrypted = Obscura_Client_V1_EncryptedMessage()
+        unspecifiedEncrypted.type = .unspecified
+        await assertThrows(.protocolViolation("encrypted message type 0")) {
+            _ = try await self.alice.messenger.decrypt(senderDeviceUuid: self.bob.deviceId, unspecifiedEncrypted)
+        }
+        let badUserResults = await alice.sender.send(to: "not-a-uuid", Data([1]))
+        XCTAssertEqual(badUserResults.first?.status, .rejected)
+    }
 }

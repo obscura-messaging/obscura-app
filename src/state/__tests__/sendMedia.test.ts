@@ -52,18 +52,15 @@ describe('sendCapture', () => {
   });
 
   it('reports recipients it could not reach and keeps their pix', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__setUnreachable([CAROL.userId]);
 
     expect(await sendCapture(CAPTURE, [BOB, CAROL], false)).toEqual(['carol']);
 
     expect(await Obscura.getMessages()).toHaveLength(2);
     expect(useStore.getState().messages).toHaveLength(2);
-    warn.mockRestore();
   });
 
   it('reports an undelivered story, keeps it in the outbox, and still deletes temp files', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__setUnreachable([BOB.userId, CAROL.userId]);
     bridge.__calls.length = 0;
 
@@ -73,7 +70,6 @@ describe('sendCapture', () => {
     expect(await Obscura.getStories()).toHaveLength(1);
     expect(useStore.getState().stories).toHaveLength(1);
     expect(bridge.__calls).toContain('deleteFile');
-    warn.mockRestore();
   });
 
   it('does not resize a video', async () => {
@@ -104,7 +100,6 @@ describe('sendCapture', () => {
   });
 
   it('falls back to the original path if resizeImage fails, and supports capture helpers', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__failNext('resizeImage', 'STORAGE_ERROR');
     bridge.__failNext('deleteFile', 'STORAGE_ERROR');
 
@@ -125,6 +120,5 @@ describe('sendCapture', () => {
     prewarmAudio();
     discardCapture(testPath);
     await Promise.resolve();
-    warn.mockRestore();
   });
 });

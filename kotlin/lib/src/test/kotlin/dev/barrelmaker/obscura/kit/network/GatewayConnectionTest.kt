@@ -196,8 +196,7 @@ class GatewayConnectionTest {
     }
 
     @Test
-    fun `reconnect failure retries, disconnect during connect or reconnect aborts, and closing socket rejects ack`() = runBlocking {
-        // 1. Reconnect failure logs and schedules another reconnect which then succeeds
+    fun `reconnect failure retries and closing socket rejects ack`() = runBlocking {
         enqueueGateway { it.close(1000, "drop") }
         server.enqueue(MockResponse.Builder().code(500).body("ticket error").build())
         enqueueGateway()
@@ -210,20 +209,23 @@ class GatewayConnectionTest {
             while (gateway.state.value != ConnectionState.CONNECTED) delay(10)
         }
 
-        // 2. ack throws when underlying WebSocket refuses send (already closing/cancelled)
-        val socketField = GatewayConnection::class.java.getDeclaredField("socket").apply { isAccessible = true }
-        val activeWs = socketField.get(gateway) as WebSocket
-        activeWs.close(1000, null)
-        val ackErr = runCatching { gateway.ack(com.google.protobuf.ByteString.copyFromUtf8("id")) }.exceptionOrNull()
+        // An oversized (>16 MiB) frame causes OkHttp WebSocket.send() to return false and closes the socket
+        val ackErr = runCatching {
+            gateway.ack(com.google.protobuf.ByteString.copyFrom(ByteArray(17 * 1024 * 1024)))
+        }.exceptionOrNull()
         assertTrue(ackErr is dev.barrelmaker.obscura.kit.ObscuraError.ConnectionFailed)
         gateway.disconnect()
+    }
 
-        // 3. Custom GatewayConnection to test beforeConnect hooks: disconnect mid-open, null-message exception, and reconnect cancellation
+    @Test
+    fun `disconnect during connect or reconnect aborts cleanly without wall-clock sleeps`() = runBlocking {
+        val scheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
+        val testScope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.test.StandardTestDispatcher(scheduler))
         var hookMode = "disconnect-on-connect"
         lateinit var customGateway: GatewayConnection
         customGateway = GatewayConnection(
             APIClient(server.url("/").toString().trimEnd('/')) { "t" },
-            scope,
+            testScope,
             beforeConnect = {
                 when (hookMode) {
                     "disconnect-on-connect" -> {
@@ -252,14 +254,15 @@ class GatewayConnectionTest {
         assertTrue(nullMsgErr is dev.barrelmaker.obscura.kit.ObscuraError.ConnectionFailed)
         assertEquals("RuntimeException", nullMsgErr?.message)
 
-        // Connect normally, then drop to trigger scheduleReconnect with cancel-on-reconnect and disconnect-and-fail-reconnect
         hookMode = "ok"
         enqueueGateway {
             hookMode = "cancel-on-reconnect"
             it.close(1000, "drop")
         }
         customGateway.connect()
-        delay(1_200)
+        withTimeout(5_000) { customGateway.state.first { it == ConnectionState.RECONNECTING } }
+        scheduler.advanceTimeBy(1_001L)
+        scheduler.runCurrent()
         assertEquals(ConnectionState.DISCONNECTED, customGateway.state.value)
 
         hookMode = "ok"
@@ -268,9 +271,11 @@ class GatewayConnectionTest {
             it.close(1000, "drop")
         }
         customGateway.connect()
-        withTimeout(5_000) {
-            while (logs.none { it.contains("abandoned reconnect") }) delay(10)
-        }
+        withTimeout(5_000) { customGateway.state.first { it == ConnectionState.RECONNECTING } }
+        scheduler.advanceTimeBy(1_001L)
+        scheduler.runCurrent()
+        assertTrue(logs.any { it.contains("abandoned reconnect") })
         assertEquals(ConnectionState.DISCONNECTED, customGateway.state.value)
+        testScope.cancel()
     }
 }

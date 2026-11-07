@@ -691,6 +691,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         )
     }
 
+    @Suppress("DEPRECATION")
     private fun fetchAndDeliverToken(promise: Promise) {
         try {
             com.google.firebase.messaging.FirebaseMessaging.getInstance().token
@@ -769,9 +770,8 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    @Suppress("DEPRECATION")
-    override fun onCatalystInstanceDestroy() {
-        super.onCatalystInstanceDestroy()
+    override fun invalidate() {
+        super.invalidate()
         ObscuraSession.unbindEventSink(eventSink)
         typingJobs.values.forEach { it.cancel() }
         typingJobs.clear()

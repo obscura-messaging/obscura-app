@@ -1,7 +1,6 @@
-package scenarios
+package dev.barrelmaker.obscura.kit.crypto
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
-import dev.barrelmaker.obscura.kit.crypto.SignalStore
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import dev.barrelmaker.obscura.kit.generateIdentity
 import org.junit.jupiter.api.Assertions.*
@@ -11,7 +10,7 @@ import org.signal.libsignal.protocol.*
 import org.signal.libsignal.protocol.ecc.Curve
 import org.signal.libsignal.protocol.state.*
 
-class SignalStoreTests {
+class SignalStoreTest {
 
     private lateinit var store: SignalStore
     private lateinit var db: ObscuraDatabase
@@ -221,7 +220,7 @@ class SignalStoreTests {
     }
 
     @Test
-    fun `uninitialized identity, signed prekey list and removal, existing sessions, and unsupported key types`() {
+    fun `uninitialized identity, signed prekey list and removal, and existing session lookup`() {
         assertFalse(store.hasIdentity())
         assertThrows(IllegalStateException::class.java) { store.identityKeyPair }
         assertThrows(IllegalStateException::class.java) { store.localRegistrationId }
@@ -247,7 +246,11 @@ class SignalStoreTests {
         store.storeSession(bobAddr, SessionRecord())
         assertEquals(1, store.loadExistingSessions(listOf(bobAddr)).size)
         assertEquals(emptyList<Int>(), store.getSubDeviceSessions("bob-phone"))
+    }
 
+    @Test
+    fun `sender keys and Kyber prekey operations are rejected as unsupported`() {
+        val bobAddr = SignalProtocolAddress("bob-phone", 1)
         val dummySenderKey = object : org.signal.libsignal.protocol.groups.state.SenderKeyRecord(0L) {
             override fun release(handle: Long) {}
         }

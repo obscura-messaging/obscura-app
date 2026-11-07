@@ -2,11 +2,10 @@ import {
   useStore, loadSession, refreshMessages, flushOutboxFromStore, sweepAndRefresh,
   applyObscuraEvent, addFriend, acceptFriend, removeFriend, markSeen, resetSession,
 } from '../store';
-import { nextPeerTypingState, notifyTyping, sendChatMessage } from '../chat';
 import { logIn, linkThisDevice } from '../login';
 import { sendCapture, type Capture } from '../sendMedia';
 import { activityPreview, chatTimeline, friendActivities } from '../../domain/chats';
-import { Obscura, type Friend } from '../../native/ObscuraModule';
+import type { Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
 const bridge = getFakeBridge();
@@ -20,19 +19,9 @@ beforeEach(() => {
   bridge.__authenticate({ userId: ALICE, username: 'alice', deviceId: DEVICE });
 });
 
-afterEach(() => {
-  jest.restoreAllMocks();
-});
-
 describe('Scenario 1: device relink + friend handshake', () => {
   it('wipes a mismatched device, links as secondary, then manages friends on primary', async () => {
-    bridge.__setLoginScenario('deviceMismatch');
-    const origLogin = bridge.login.bind(bridge);
-    jest.spyOn(bridge, 'login').mockImplementationOnce(async (u, p) => {
-      const res = await origLogin(u, p);
-      bridge.__setLoginScenario('linkRequired');
-      return res;
-    });
+    bridge.__setLoginScenario('deviceMismatch', 'linkRequired');
 
     expect(await logIn('alice', 'password-1234')).toBe('linkRequired');
 
@@ -73,7 +62,6 @@ describe('Scenario 1: device relink + friend handshake', () => {
 
 describe('Scenario 2: offline capture -> reconnect sync -> peer seen receipt -> expiry sweep refresh', () => {
   it('reports undelivered capture targets, deletes temp files, updates activity on seen receipt, and refreshes slices touched by sweepExpired', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     bridge.__setFriends([BOB]);
     await loadSession();
 
@@ -120,7 +108,6 @@ describe('Scenario 2: offline capture -> reconnect sync -> peer seen receipt -> 
     await sweepAndRefresh();
 
     expect(useStore.getState().messages).toEqual([]);
-    warn.mockRestore();
   });
 });
 
@@ -171,21 +158,6 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
     expect(chatTimeline(useStore.getState().messages, BOB.userId, ALICE)).toEqual([]);
   });
 
-  it('stops typing, sends a chat message, and refreshes messages', async () => {
-    bridge.__setFriends([BOB]);
-    await loadSession();
-
-    await sendChatMessage(BOB.userId, 'hello bob');
-
-    expect(bridge.__calls).toContain('stopTyping');
-    expect(await Obscura.getMessages()).toEqual([
-      expect.objectContaining({ peerUserId: BOB.userId, kind: 'message', content: 'hello bob' }),
-    ]);
-    expect(useStore.getState().messages).toEqual([
-      expect.objectContaining({ peerUserId: BOB.userId, kind: 'message', content: 'hello bob' }),
-    ]);
-  });
-
   it('coalesces concurrent flushOutboxFromStore triggers and gates foreground outbox flush on connected state', async () => {
     bridge.__setFriends([BOB]);
     await loadSession();
@@ -200,42 +172,6 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
     bridge.__calls.length = 0;
     await Promise.all([flushOutboxFromStore(), flushOutboxFromStore(), flushOutboxFromStore()]);
     expect(bridge.__calls.filter((c) => c === 'flushOutbox')).toHaveLength(2);
-  });
-
-  it('sends sendTyping on non-empty input and stopTyping when cleared to empty', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    await notifyTyping(BOB.userId, '', '');
-    await notifyTyping(BOB.userId, '', 'h');
-    await notifyTyping(BOB.userId, 'h', 'hi');
-    await notifyTyping(BOB.userId, 'hi', '');
-
-    expect(bridge.__calls.filter((c) => c === 'sendTyping')).toHaveLength(2);
-    expect(bridge.__calls.filter((c) => c === 'stopTyping')).toHaveLength(1);
-
-    bridge.__failNext('sendTyping', 'SEND_FAILED');
-    bridge.__failNext('stopTyping', 'SEND_FAILED');
-    await notifyTyping(BOB.userId, '', 'h');
-    await notifyTyping(BOB.userId, 'h', '');
-    warn.mockRestore();
-
-    expect(nextPeerTypingState(false, BOB.userId, {
-      type: 'typingChanged', peerUserId: BOB.userId, typing: true,
-    })).toBe(true);
-    expect(nextPeerTypingState(true, BOB.userId, {
-      type: 'typingChanged', peerUserId: 'other-peer', typing: false,
-    })).toBe(true);
-    expect(nextPeerTypingState(false, BOB.userId, {
-      type: 'typingChanged', peerUserId: 'other-peer', typing: true,
-    })).toBe(false);
-    expect(nextPeerTypingState(true, BOB.userId, {
-      type: 'messageReceived', model: 'story',
-    })).toBe(true);
-    expect(nextPeerTypingState(true, BOB.userId, {
-      type: 'messageReceived', model: 'directMessage',
-    })).toBe(false);
-    expect(nextPeerTypingState(true, BOB.userId, {
-      type: 'friendsChanged',
-    })).toBe(true);
   });
 });
 

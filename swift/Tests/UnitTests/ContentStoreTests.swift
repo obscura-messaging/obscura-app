@@ -4,7 +4,7 @@ import GRDB
 
 /// Typed content storage: messages, pix, seen receipts, stories, profiles, expiry sweeps, tombstones,
 /// snapshot export/import, and secure deletion.
-final class EntryStoreTests: XCTestCase {
+final class ContentStoreTests: XCTestCase {
 
     private func makeStore() throws -> ContentStore {
         ContentStore(db: try ObscuraDatabase.inMemory())
@@ -155,7 +155,7 @@ final class EntryStoreTests: XCTestCase {
         XCTAssertEqual(afterTombstoneMaxAge.purgedMediaRefs, [])
     }
 
-    func testSnapshotExportAndImportWithAttachmentsAndInvalidRecordFiltering() async throws {
+    func testSnapshotExportAndImportRoundTripsAllTables() async throws {
         let source = try makeStore()
         let att = MediaAttachment(id: "att_1", contentKey: Data([1, 2, 3]), nonce: Data([4, 5, 6]), mediaType: "video")
         try await source.insertConversationItem(ConversationItem(
@@ -171,14 +171,36 @@ final class EntryStoreTests: XCTestCase {
             userId: "peer_1", authorDeviceId: "dev_1", updatedAt: 3_000, displayName: "Peer", bio: "Bio"
         ))
 
-        var exported = try await source.snapshot()
+        let exported = try await source.snapshot()
         XCTAssertEqual(exported.messages.count, 1)
         XCTAssertEqual(exported.messages[0].attachment.id, "att_1")
         XCTAssertEqual(exported.stories.count, 1)
         XCTAssertEqual(exported.stories[0].attachment.id, "att_1")
         XCTAssertEqual(exported.profiles.count, 1)
 
-        // Append edge-case and invalid records to test importSnapshot filtering and defaults.
+        let target = try makeStore()
+        try await target.importSnapshot(exported)
+
+        let pix1 = try await target.message(id: "pix_1")
+        XCTAssertEqual(pix1?.viewedAt, 1_500)
+        XCTAssertEqual(pix1?.attachment, att)
+        XCTAssertEqual(pix1?.caption, "hello pix")
+        XCTAssertEqual(pix1?.captionMeta, "{\"y\":0.5}")
+        XCTAssertEqual(pix1?.displayDuration, 8)
+
+        let importedStories = try await target.allStories()
+        XCTAssertEqual(importedStories.map(\.id), ["story_1"])
+        XCTAssertEqual(importedStories.first?.attachment, att)
+        let dupStory = try await target.insertStoryItem(importedStories[0])
+        XCTAssertFalse(dupStory, "duplicate story is ignored")
+
+        let importedProfile = try await target.profile(userId: "peer_1")
+        XCTAssertEqual(importedProfile?.displayName, "Peer")
+    }
+
+    func testSnapshotImportSkipsBlankAndErasedRecordsAndDefaultsMediaType() async throws {
+        var snapshot = Obscura_Client_V1_EntrySnapshot()
+
         var defaultKindMsg = Obscura_Client_V1_StoredMessageRecord()
         defaultKindMsg.id = "msg_default"
         defaultKindMsg.peerUserID = "peer_1"
@@ -196,6 +218,13 @@ final class EntryStoreTests: XCTestCase {
         defaultMediaPix.attachment.nonce = Data([8])
         defaultMediaPix.attachment.mediaType = ""
 
+        var erasedMsg = Obscura_Client_V1_StoredMessageRecord()
+        erasedMsg.id = "erased_msg"
+        erasedMsg.peerUserID = "peer_1"
+        erasedMsg.authorUserID = "peer_1"
+        erasedMsg.kind = "message"
+        erasedMsg.content = "gone"
+
         var invalidBlankMsg = Obscura_Client_V1_StoredMessageRecord()
         invalidBlankMsg.id = "  "
         invalidBlankMsg.peerUserID = "peer_1"
@@ -207,7 +236,7 @@ final class EntryStoreTests: XCTestCase {
         invalidPixNoAtt.authorUserID = "peer_1"
         invalidPixNoAtt.kind = "pix"
 
-        exported.messages.append(contentsOf: [defaultKindMsg, defaultMediaPix, invalidBlankMsg, invalidPixNoAtt])
+        snapshot.messages = [defaultKindMsg, defaultMediaPix, erasedMsg, invalidBlankMsg, invalidPixNoAtt]
 
         var defaultMediaStory = Obscura_Client_V1_StoredStoryRecord()
         defaultMediaStory.id = "story_default_media"
@@ -222,38 +251,33 @@ final class EntryStoreTests: XCTestCase {
         invalidStory.id = " "
         invalidStory.authorUserID = "peer_1"
 
-        exported.stories.append(contentsOf: [defaultMediaStory, invalidStory])
+        snapshot.stories = [defaultMediaStory, invalidStory]
 
         var invalidProfile = Obscura_Client_V1_StoredProfileRecord()
         invalidProfile.userID = "  "
-        exported.profiles.append(invalidProfile)
+        snapshot.profiles = [invalidProfile]
 
         let target = try makeStore()
-        try await target.importSnapshot(exported)
+        try await target.insertConversationItem(message("erased_msg", peer: "peer_1", author: "peer_1", sentAt: 100))
+        _ = try await target.markSeenLocal(entryId: "erased_msg", selfUserId: "self", viewedAt: 100)
+        _ = try await target.sweepExpired(now: 100 + ContentStore.expireAfterViewMs)
+
+        try await target.importSnapshot(snapshot)
 
         let importedMessages = try await target.messages()
-        XCTAssertEqual(importedMessages.map(\.id), ["msg_default", "pix_default_media", "pix_1"])
-        let pix1 = try await target.message(id: "pix_1")
-        XCTAssertEqual(pix1?.viewedAt, 1_500)
-        XCTAssertEqual(pix1?.attachment, att)
-        XCTAssertEqual(pix1?.caption, "hello pix")
-        XCTAssertEqual(pix1?.captionMeta, "{\"y\":0.5}")
-        XCTAssertEqual(pix1?.displayDuration, 8)
+        XCTAssertEqual(importedMessages.map(\.id), ["msg_default", "pix_default_media"])
         let pixDefault = try await target.message(id: "pix_default_media")
         XCTAssertEqual(pixDefault?.attachment?.mediaType, "photo")
 
         let importedStories = try await target.allStories()
-        XCTAssertEqual(importedStories.map(\.id), ["story_1", "story_default_media"])
-        XCTAssertEqual(importedStories.first?.attachment, att)
-        XCTAssertEqual(importedStories.last?.attachment?.mediaType, "photo")
-        let dupStory = try await target.insertStoryItem(importedStories[0])
-        XCTAssertFalse(dupStory, "duplicate story is ignored")
+        XCTAssertEqual(importedStories.map(\.id), ["story_default_media"])
+        XCTAssertEqual(importedStories.first?.attachment?.mediaType, "photo")
 
-        let importedProfile = try await target.profile(userId: "peer_1")
-        XCTAssertEqual(importedProfile?.displayName, "Peer")
+        let importedProfiles = try await target.profiles()
+        XCTAssertTrue(importedProfiles.isEmpty)
     }
 
-    func testUndeliveredFlagsAndSeenReceiptValidation() async throws {
+    func testUndeliveredFlagsTrackAndClearPendingItems() async throws {
         let store = try makeStore()
         try await store.insertConversationItem(message("m1", peer: "peer", author: "self", sentAt: 100), undelivered: true)
         try await store.insertConversationItem(message("m2", peer: "peer", author: "peer", sentAt: 200), undelivered: false)
@@ -276,8 +300,13 @@ final class EntryStoreTests: XCTestCase {
         XCTAssertTrue(undeliveredMsgs.isEmpty)
         XCTAssertTrue(undeliveredStories.isEmpty)
         XCTAssertTrue(undeliveredProfiles.isEmpty)
+    }
 
-        // markSeenLocal rejects missing, self-authored, and already-seen entries.
+    func testMarkSeenLocalMarksIncomingOnceAndIgnoresMissingOrOwn() async throws {
+        let store = try makeStore()
+        try await store.insertConversationItem(message("m1", peer: "peer", author: "self", sentAt: 100))
+        try await store.insertConversationItem(message("m2", peer: "peer", author: "peer", sentAt: 200))
+
         let missingSeen = try await store.markSeenLocal(entryId: "missing", selfUserId: "self", viewedAt: 300)
         let ownSeen = try await store.markSeenLocal(entryId: "m1", selfUserId: "self", viewedAt: 300)
         let firstSeen = try await store.markSeenLocal(entryId: "m2", selfUserId: "self", viewedAt: 300)

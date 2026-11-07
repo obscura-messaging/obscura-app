@@ -112,19 +112,50 @@ class ContentStoreTest {
     }
 
     @Test
-    fun `MediaAttachment compares contentKey and nonce by value`() {
-        val a = MediaAttachment("att_1", byteArrayOf(1, 2, 3), byteArrayOf(4, 5), "photo")
-        val b = MediaAttachment("att_1", byteArrayOf(1, 2, 3), byteArrayOf(4, 5), "photo")
+    fun `MediaAttachment compares contentKey and nonce by value and normalizes blank mediaType`() {
+        val a = MediaAttachment("att_1", byteArrayOf(1, 2, 3), byteArrayOf(4, 5))
+        val b = MediaAttachment("att_1", byteArrayOf(1, 2, 3), byteArrayOf(4, 5), "")
         val c = MediaAttachment("att_1", byteArrayOf(9, 2, 3), byteArrayOf(4, 5), "photo")
+        assertEquals("photo", a.mediaType)
+        assertEquals("photo", b.mediaType)
         assertTrue(a.equals(a))
         assertFalse(a.equals("not-an-attachment"))
         assertFalse(a.equals(null))
         assertEquals(a, b)
         assertEquals(a.hashCode(), b.hashCode())
         assertNotEquals(a, c)
-        assertNotEquals(a, a.copy(id = "att_2"))
-        assertNotEquals(a, a.copy(nonce = byteArrayOf(9, 5)))
-        assertNotEquals(a, a.copy(mediaType = "video"))
+        assertNotEquals(a, MediaAttachment("att_2", byteArrayOf(1, 2, 3), byteArrayOf(4, 5), "photo"))
+        assertNotEquals(a, MediaAttachment("att_1", byteArrayOf(1, 2, 3), byteArrayOf(9, 5), "photo"))
+        assertNotEquals(a, MediaAttachment("att_1", byteArrayOf(1, 2, 3), byteArrayOf(4, 5), "video"))
+    }
+
+    @Test
+    fun `ConversationItem enforces kind and pix invariants`() {
+        val att = MediaAttachment("att_1", byteArrayOf(1), byteArrayOf(2))
+        assertThrows(IllegalArgumentException::class.java) {
+            ConversationItem("id", peer, "story", peer, 100L, null, content = "x")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ConversationItem("id", peer, "pix", peer, 100L, null, content = "", attachment = null)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ConversationItem("id", peer, "message", peer, 100L, null, content = "x", attachment = att)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ConversationItem("id", peer, "message", peer, 100L, null, content = "x", caption = "cap")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ConversationItem("id", peer, "message", peer, 100L, null, content = "x", captionMeta = "{}")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ConversationItem("id", peer, "message", peer, 100L, null, content = "x", displayDuration = 5)
+        }
+        val defaultPix = ConversationItem.pix("pix_def", peer, peer, 100L, att)
+        assertEquals(expiresAt(100L, null), defaultPix.expiresAt)
+        assertEquals(0, defaultPix.displayDuration)
+        assertFalse(defaultPix.undelivered)
+        val undeliveredPix = ConversationItem.pix("pix_u", peer, peer, 100L, att, undelivered = true)
+        assertTrue(undeliveredPix.undelivered)
     }
 
     @Test
@@ -258,8 +289,8 @@ class ContentStoreTest {
             }
         }
 
-        // decodeAttachment defaults empty mediaType to "photo"
-        val decodedDefaultType = HistorySync.decodeAttachment(
+        // MediaAttachment.fromProto defaults empty mediaType to "photo"
+        val decodedDefaultType = MediaAttachment.fromProto(
             AttachmentPointer.newBuilder()
                 .setId("att_default")
                 .setContentKey(ByteString.copyFrom(byteArrayOf(1)))
@@ -386,7 +417,7 @@ class ContentStoreTest {
 
                 // Also put an undelivered message to a non-friend so flushOutbox skips it
                 c.content.putConversation(
-                    ConversationItem("stranger_dm", "019f025a-0000-7de6-84b6-000000000099", "message", SELF_USER_ID, 50, null, expiresAt(50, null), "skip", undelivered = true),
+                    ConversationItem.message("stranger_dm", "019f025a-0000-7de6-84b6-000000000099", SELF_USER_ID, 50, "skip", undelivered = true),
                 )
 
                 assertEquals(4, c.content.getUndeliveredMessages().size)

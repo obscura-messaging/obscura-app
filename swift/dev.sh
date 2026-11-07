@@ -18,9 +18,11 @@ prepare_libsignal_package() {
 
   # SwiftPM derives local package identity from the final path component. The
   # monorepo package itself lives at swift/, so depending on libsignal/swift
-  # directly creates an identity collision.
-  rm -rf "$LIBSIGNAL_SWIFT_PACKAGE"
-  cp -pR "$LIBSIGNAL_SWIFT_SOURCE" "$LIBSIGNAL_SWIFT_PACKAGE"
+  # directly creates an identity collision. Copy once when missing or changed.
+  if [ ! -f "$LIBSIGNAL_SWIFT_PACKAGE/Package.swift" ] || ! cmp -s "$LIBSIGNAL_SWIFT_SOURCE/Package.swift" "$LIBSIGNAL_SWIFT_PACKAGE/Package.swift"; then
+    rm -rf "$LIBSIGNAL_SWIFT_PACKAGE"
+    cp -pR "$LIBSIGNAL_SWIFT_SOURCE" "$LIBSIGNAL_SWIFT_PACKAGE"
+  fi
 }
 
 case "${1:-test}" in
@@ -37,9 +39,10 @@ case "${1:-test}" in
     if [[ "${*:2}" == *"UnitTests"* ]]; then
       LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test --enable-code-coverage "${@:2}"
       # SwiftPM names the test bundle differently across toolchains
-      # (UnitTests.xctest vs. <Package>PackageTests.xctest), so locate it.
-      BIN_PATH="$(LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT build --show-bin-path)"
-      PROFDATA="$(dirname "$(LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test --show-codecov-path)")/default.profdata"
+      # (UnitTests.xctest vs. <Package>PackageTests.xctest), so locate it from codecov dir.
+      CODECOV_DIR="$(dirname "$(LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test --show-codecov-path)")"
+      BIN_PATH="$(dirname "$CODECOV_DIR")"
+      PROFDATA="$CODECOV_DIR/default.profdata"
       BUNDLE="$(find "$BIN_PATH" -maxdepth 1 -name '*.xctest' | head -n 1)"
       if [ -z "$BUNDLE" ]; then
         echo "error: no .xctest bundle found in $BIN_PATH" >&2

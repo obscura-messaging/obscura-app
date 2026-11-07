@@ -2,6 +2,7 @@ package scenarios
 
 import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.ConversationItemData
+import dev.barrelmaker.obscura.kit.MemoryStorage
 import dev.barrelmaker.obscura.kit.NoOpLogger
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraConfig
@@ -34,11 +35,7 @@ fun requireServer() = assumeTrue(serverUp, "no Obscura server at $API")
 
 fun uniqueName(prefix: String): String = "kt_${prefix}_${System.currentTimeMillis()}_${(1000..9999).random()}"
 
-class MemoryStorage(var data: Map<String, String>? = null) : SessionStorage {
-    override fun save(data: Map<String, String>) { this.data = data }
-    override fun load() = data
-    override fun clear() { data = null }
-}
+typealias MemoryStorage = dev.barrelmaker.obscura.kit.MemoryStorage
 
 fun newClient(
     deviceName: String = "Kotlin Test",

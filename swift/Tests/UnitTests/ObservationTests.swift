@@ -26,7 +26,7 @@ final class ObservationTests: XCTestCase {
     }
 
     func testTypingCancellationConcurrentWithExpiryAndClearNeverBlocks() async throws {
-        let tracker = TypingTracker()
+        let tracker = TypingTracker(expiryNanoseconds: 50_000_000)
         let complete = expectation(description: "expiry publication and cancellation finish")
         let work = Task.detached {
             for i in 0..<100 {
@@ -38,13 +38,13 @@ final class ObservationTests: XCTestCase {
             }
             let consumer = Task { for await _ in tracker.observe(contextId: "c") {} }
             tracker.started(contextId: "c", userId: "u", deviceId: "expiry")
-            try? await Task.sleep(nanoseconds: TypingTracker.expiry)
+            try? await Task.sleep(nanoseconds: tracker.expiryNanoseconds)
             consumer.cancel()
             tracker.clear()
             _ = await consumer.value
             complete.fulfill()
         }
-        await fulfillment(of: [complete], timeout: 8)
+        await fulfillment(of: [complete], timeout: 5)
         work.cancel()
     }
 
@@ -112,6 +112,43 @@ final class ObservationTests: XCTestCase {
         XCTAssertEqual(lines.last, "line 50")
     }
 
+    func testObscuraErrorCodesAndLocalizedDescriptions() {
+        let cases: [(ObscuraError, String, String)] = [
+            (.notAuthenticated, "NOT_AUTHENTICATED", "Not authenticated"),
+            (.invalidArgument("bad arg"), "INVALID_ARGUMENT", "Invalid argument: bad arg"),
+            (.invalidFriendCode, "INVALID_FRIEND_CODE", "Invalid friend code"),
+            (.http(status: 418, body: "teapot"), "HTTP_ERROR", "HTTP 418: teapot"),
+            (.connectionFailed("down"), "CONNECTION_FAILED", "Connection failed: down"),
+            (.sendFailed("no peers"), "SEND_FAILED", "Send failed: no peers"),
+            (.protocolViolation("bad wire"), "PROTOCOL_VIOLATION", "Protocol violation: bad wire"),
+            (.storageFailed("io err"), "STORAGE_ERROR", "Storage failed: io err"),
+            (.notPrimary, "NOT_PRIMARY", "Only the primary device can do this"),
+            (.linkFailed("expired"), "LINK_FAILED", "Link failed: expired"),
+        ]
+        for (error, expectedCode, expectedDescription) in cases {
+            XCTAssertEqual(error.code, expectedCode)
+            XCTAssertEqual(error.errorDescription, expectedDescription)
+            XCTAssertEqual(error.localizedDescription, expectedDescription)
+        }
+    }
+
+    func testRecordingLoggerRecordsFailureEvents() {
+        let noop = NoOpLogger()
+        noop.log("noop")
+        let logger = RecordingLogger(noop)
+        logger.ackFailed(envelopeId: "env1", reason: "closed")
+        logger.preKeyReplenishFailed(reason: "500")
+        logger.decryptFailed(sourceUserId: "u1", reason: "bad mac")
+        logger.tokenRefreshFailed(attempt: 2, reason: "timeout")
+        logger.identityChanged(userId: "u2")
+        logger.sessionEstablishFailed(userId: "u3", reason: "404")
+        logger.databaseError(store: "s", operation: "op", reason: "locked")
+        let logLines = logger.snapshot()
+        XCTAssertEqual(logLines.count, 7)
+        XCTAssertTrue(logLines.contains("ack failed for env1: closed"))
+        XCTAssertTrue(logLines.contains("prekey replenish failed: 500"))
+    }
+
     // MARK: - Typing
 
     func testTypersAreDistinctSortedUsersAndStoppedClearsOnlyThatDevice() async throws {
@@ -131,7 +168,7 @@ final class ObservationTests: XCTestCase {
     }
 
     func testAStartedSignalExpiresFiveSecondsAfterReceipt() async throws {
-        let tracker = TypingTracker()
+        let tracker = TypingTracker(expiryNanoseconds: 80_000_000)
         let start = Date()
 
         let values = try await first(3, of: tracker.observe(contextId: "c")) {
@@ -139,15 +176,15 @@ final class ObservationTests: XCTestCase {
         }
 
         XCTAssertEqual(values, [[], ["alice"], []])
-        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(start), 4.9)
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(start), 0.06)
     }
 
     func testARenewedSignalOutlivesTheFirstOnesExpiry() async throws {
-        let tracker = TypingTracker()
+        let tracker = TypingTracker(expiryNanoseconds: 120_000_000)
         tracker.started(contextId: "c", userId: "alice", deviceId: "d")
-        try await Task.sleep(nanoseconds: 3_000_000_000)
+        try await Task.sleep(nanoseconds: 70_000_000)
         tracker.started(contextId: "c", userId: "alice", deviceId: "d")
-        try await Task.sleep(nanoseconds: 3_000_000_000)
+        try await Task.sleep(nanoseconds: 70_000_000)
 
         let values = try await first(1, of: tracker.observe(contextId: "c"))
         XCTAssertEqual(values, [["alice"]])

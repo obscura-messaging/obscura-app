@@ -97,10 +97,13 @@ object ObscuraSession {
                     sink?.onAppStateChanged(AppState.BACKGROUND)
                     val c = client ?: return
                     c.disconnect()
-                    scope.launch {
-                        restoreJob?.join()
-                        if (!appInForeground && client === c && pushWakeCount.get() == 0) {
-                            c.disconnect()
+                    val pendingRestore = restoreJob
+                    if (pendingRestore?.isActive == true) {
+                        scope.launch {
+                            pendingRestore.join()
+                            if (!appInForeground && client === c && pushWakeCount.get() == 0) {
+                                c.disconnect()
+                            }
                         }
                     }
                 }

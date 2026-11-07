@@ -22,15 +22,12 @@ import dev.barrelmaker.obscura.kit.persistence.SessionStorage
 import dev.barrelmaker.obscura.kit.stores.ContentStore
 import dev.barrelmaker.obscura.kit.stores.ConversationItem
 import dev.barrelmaker.obscura.kit.stores.DeviceStore
-import dev.barrelmaker.obscura.kit.stores.EXPIRE_AFTER_VIEW_MS
 import dev.barrelmaker.obscura.kit.stores.FriendList
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import dev.barrelmaker.obscura.kit.stores.FriendStore
 import dev.barrelmaker.obscura.kit.stores.LocalDevice
-import dev.barrelmaker.obscura.kit.stores.MAX_EPHEMERAL_AGE_MS
 import dev.barrelmaker.obscura.kit.stores.MediaAttachment
 import dev.barrelmaker.obscura.kit.stores.ProfileItem
-import dev.barrelmaker.obscura.kit.stores.STORY_MAX_AGE_MS
 import dev.barrelmaker.obscura.kit.stores.StoryItem
 import dev.barrelmaker.obscura.kit.stores.expiresAt
 import dev.barrelmaker.obscura.kit.stores.pragma
@@ -61,14 +58,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import com.google.protobuf.InvalidProtocolBufferException
 import obscura.client.v1.Client.ClientMessage
-import obscura.client.v1.Client.DirectMessage
 import obscura.client.v1.Client.FriendListSync
 import obscura.client.v1.Client.LinkBundle
 import obscura.client.v1.Client.LinkCode
-import obscura.client.v1.Client.PixMessage
-import obscura.client.v1.Client.ProfileUpdate
 import obscura.client.v1.Client.SeenReceipt
-import obscura.client.v1.Client.StoryPost
 import obscura.client.v1.friendAccept
 import obscura.client.v1.friendRequest
 import obscura.client.v1.typingSignal
@@ -572,14 +565,11 @@ class ObscuraClient(
                     Stored(message)
                 } else {
                     content.insertConversationInTransaction(
-                        ConversationItem(
+                        ConversationItem.message(
                             id = dm.id,
                             peerUserId = peer,
-                            kind = "message",
                             authorUserId = senderUserId,
                             sentAt = sentAt,
-                            viewedAt = null,
-                            expiresAt = expiresAt(sentAt, null),
                             content = dm.content,
                         ),
                     )
@@ -589,29 +579,20 @@ class ObscuraClient(
             ClientMessage.PayloadCase.PIX -> {
                 val pix = message.pix
                 val peer = resolvePeerUserId(senderUserId, pix.peerUserId)
-                val att = if (pix.hasAttachment()) pix.attachment else null
-                if (pix.id.isBlank() || peer == null || att == null || att.id.isBlank() || att.contentKey.isEmpty || att.nonce.isEmpty) {
+                val att = if (pix.hasAttachment()) MediaAttachment.fromProto(pix.attachment) else null
+                if (pix.id.isBlank() || peer == null || att == null) {
                     log("RECV PIX with invalid fields from $senderUserId; ignored")
                     Stored(message)
                 } else if (!content.canInsertConversationInTransaction(pix.id)) {
                     Stored(message)
                 } else {
                     content.insertConversationInTransaction(
-                        ConversationItem(
+                        ConversationItem.pix(
                             id = pix.id,
                             peerUserId = peer,
-                            kind = "pix",
                             authorUserId = senderUserId,
                             sentAt = sentAt,
-                            viewedAt = null,
-                            expiresAt = expiresAt(sentAt, null),
-                            content = "",
-                            attachment = MediaAttachment(
-                                id = att.id,
-                                contentKey = att.contentKey.toByteArray(),
-                                nonce = att.nonce.toByteArray(),
-                                mediaType = att.mediaType.ifEmpty { "photo" },
-                            ),
+                            attachment = att,
                             caption = pix.caption.ifEmpty { null },
                             captionMeta = pix.captionMeta.ifEmpty { null },
                             displayDuration = pix.displayDurationSecs,
@@ -645,13 +626,12 @@ class ObscuraClient(
                 } else if (!content.canInsertStoryInTransaction(st.id)) {
                     Stored(message)
                 } else {
-                    val att = if (st.hasAttachment()) HistorySync.decodeAttachment(st.attachment) else null
+                    val att = if (st.hasAttachment()) MediaAttachment.fromProto(st.attachment) else null
                     content.insertStoryInTransaction(
                         StoryItem(
                             id = st.id,
                             authorUserId = senderUserId,
                             sentAt = sentAt,
-                            expiresAt = sentAt + STORY_MAX_AGE_MS,
                             content = st.content,
                             attachment = att,
                             captionMeta = st.captionMeta.ifEmpty { null },
@@ -669,7 +649,6 @@ class ObscuraClient(
                         updatedAt = sentAt,
                         displayName = pr.displayName,
                         bio = pr.bio,
-                        undelivered = false,
                     ),
                 )
                 Stored(message, wokeModel = if (updated) "profile" else null)
@@ -812,29 +791,16 @@ class ObscuraClient(
         if (peerUserId == self.userId) throw ObscuraError.InvalidArgument("Cannot message yourself")
         val sentAt = clock()
         val id = generateEntryId("dm", sentAt)
-        this.content.putConversation(
-            ConversationItem(
-                id = id,
-                peerUserId = peerUserId,
-                kind = "message",
-                authorUserId = self.userId,
-                sentAt = sentAt,
-                viewedAt = null,
-                expiresAt = expiresAt(sentAt, null),
-                content = content,
-            ),
+        val item = ConversationItem.message(
+            id = id,
+            peerUserId = peerUserId,
+            authorUserId = self.userId,
+            sentAt = sentAt,
+            content = content,
         )
-        val message = ClientMessage.newBuilder()
-            .setTimestamp(sentAt)
-            .setDirectMessage(
-                DirectMessage.newBuilder()
-                    .setId(id)
-                    .setPeerUserId(peerUserId)
-                    .setContent(content),
-            )
-            .build()
+        this.content.putConversation(item)
         val peers = acceptedFriendIds(self.userId).intersect(setOf(peerUserId)).toList()
-        val report = sendToPeersAndSelf(self.userId, peers, message)
+        val report = sendToPeersAndSelf(self.userId, peers, item.toClientMessage())
         if (peers.isEmpty() || report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
             this.content.setConversationUndelivered(id, true)
             throw sendFailed("directMessage", report)
@@ -870,29 +836,24 @@ class ObscuraClient(
         if (peerUserId == self.userId) throw ObscuraError.InvalidArgument("Cannot message yourself")
         val sentAt = clock()
         val id = generateEntryId("pix", sentAt)
-        val item = ConversationItem(
+        val item = ConversationItem.pix(
             id = id,
             peerUserId = peerUserId,
-            kind = "pix",
             authorUserId = self.userId,
             sentAt = sentAt,
-            viewedAt = null,
-            expiresAt = expiresAt(sentAt, null),
-            content = "",
             attachment = MediaAttachment(
                 id = mediaRef,
                 contentKey = keyBytes,
                 nonce = nonceBytes,
-                mediaType = mediaType.ifEmpty { "photo" },
+                mediaType = mediaType,
             ),
             caption = caption.ifEmpty { null },
             captionMeta = captionMeta?.ifEmpty { null },
             displayDuration = displayDuration,
         )
         content.putConversation(item)
-        val message = buildPixClientMessage(item)
         val peers = acceptedFriendIds(self.userId).intersect(setOf(peerUserId)).toList()
-        val report = sendToPeersAndSelf(self.userId, peers, message)
+        val report = sendToPeersAndSelf(self.userId, peers, item.toClientMessage())
         if (peers.isEmpty() || report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
             content.setConversationUndelivered(id, true)
             throw sendFailed("pix", report)
@@ -939,7 +900,7 @@ class ObscuraClient(
                 id = mediaRef,
                 contentKey = keyBytes,
                 nonce = nonceBytes,
-                mediaType = if (mediaType.isNullOrEmpty()) "photo" else mediaType,
+                mediaType = mediaType.orEmpty(),
             )
         } else null
         val self = requireFreshToken()
@@ -949,15 +910,13 @@ class ObscuraClient(
             id = id,
             authorUserId = self.userId,
             sentAt = sentAt,
-            expiresAt = sentAt + STORY_MAX_AGE_MS,
             content = content,
             attachment = attachment,
             captionMeta = captionMeta?.ifEmpty { null },
         )
         this.content.putStory(item)
-        val message = buildStoryClientMessage(item)
         val peers = acceptedFriendIds(self.userId).toList()
-        val report = sendToPeersAndSelf(self.userId, peers, message)
+        val report = sendToPeersAndSelf(self.userId, peers, item.toClientMessage())
         if (peers.isNotEmpty() && report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
             this.content.setStoryUndelivered(id, true)
             throw sendFailed("story", report)
@@ -979,9 +938,8 @@ class ObscuraClient(
             bio = bio,
         )
         content.putProfile(item)
-        val message = buildProfileClientMessage(item)
         val peers = acceptedFriendIds(self.userId).toList()
-        val report = sendToPeersAndSelf(self.userId, peers, message)
+        val report = sendToPeersAndSelf(self.userId, peers, item.toClientMessage())
         if (peers.isNotEmpty() && report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
             content.setProfileUndelivered(self.userId, sentAt, true)
             throw sendFailed("profile", report)
@@ -995,20 +953,7 @@ class ObscuraClient(
         for (row in content.getUndeliveredMessages()) {
             val peers = accepted.intersect(setOf(row.peerUserId)).toList()
             if (peers.isEmpty()) continue
-            val message = if (row.kind == "pix") {
-                buildPixClientMessage(row)
-            } else {
-                ClientMessage.newBuilder()
-                    .setTimestamp(row.sentAt)
-                    .setDirectMessage(
-                        DirectMessage.newBuilder()
-                            .setId(row.id)
-                            .setPeerUserId(row.peerUserId)
-                            .setContent(row.content),
-                    )
-                    .build()
-            }
-            val report = sendToPeersAndSelf(self.userId, peers, message)
+            val report = sendToPeersAndSelf(self.userId, peers, row.toClientMessage())
             if (report.recipients.any { it.status == SubmissionStatus.ACCEPTED }) {
                 content.setConversationUndelivered(row.id, false)
                 delivered++
@@ -1016,8 +961,7 @@ class ObscuraClient(
         }
         for (row in content.getUndeliveredStories()) {
             val peers = accepted.toList()
-            val message = buildStoryClientMessage(row)
-            val report = sendToPeersAndSelf(self.userId, peers, message)
+            val report = sendToPeersAndSelf(self.userId, peers, row.toClientMessage())
             if (peers.isEmpty() || report.recipients.any { it.status == SubmissionStatus.ACCEPTED }) {
                 content.setStoryUndelivered(row.id, false)
                 delivered++
@@ -1025,8 +969,7 @@ class ObscuraClient(
         }
         for (row in content.getUndeliveredProfiles()) {
             val peers = accepted.toList()
-            val message = buildProfileClientMessage(row)
-            val report = sendToPeersAndSelf(self.userId, peers, message)
+            val report = sendToPeersAndSelf(self.userId, peers, row.toClientMessage())
             if (peers.isEmpty() || report.recipients.any { it.status == SubmissionStatus.ACCEPTED }) {
                 content.setProfileUndelivered(row.userId, row.updatedAt, false)
                 delivered++
@@ -1064,44 +1007,6 @@ class ObscuraClient(
         val token = java.lang.Long.toUnsignedString(random.nextLong(), 36).take(8).padStart(8, '0')
         return "${prefix}_${now}_$token"
     }
-
-    private fun buildPixClientMessage(item: ConversationItem): ClientMessage {
-        val att = requireNotNull(item.attachment)
-        return ClientMessage.newBuilder()
-            .setTimestamp(item.sentAt)
-            .setPix(
-                PixMessage.newBuilder()
-                    .setId(item.id)
-                    .setPeerUserId(item.peerUserId)
-                    .setAttachment(HistorySync.encodeAttachment(att))
-                    .setCaption(item.caption ?: "")
-                    .setCaptionMeta(item.captionMeta ?: "")
-                    .setDisplayDurationSecs(item.displayDuration.coerceAtLeast(0)),
-            )
-            .build()
-    }
-
-    private fun buildStoryClientMessage(item: StoryItem): ClientMessage =
-        ClientMessage.newBuilder()
-            .setTimestamp(item.sentAt)
-            .setStory(
-                StoryPost.newBuilder()
-                    .setId(item.id)
-                    .setContent(item.content)
-                    .setCaptionMeta(item.captionMeta ?: "")
-                    .apply { item.attachment?.let { setAttachment(HistorySync.encodeAttachment(it)) } },
-            )
-            .build()
-
-    private fun buildProfileClientMessage(item: ProfileItem): ClientMessage =
-        ClientMessage.newBuilder()
-            .setTimestamp(item.updatedAt)
-            .setProfile(
-                ProfileUpdate.newBuilder()
-                    .setDisplayName(item.displayName)
-                    .setBio(item.bio),
-            )
-            .build()
 
     private fun requireUserId(): String = auth.requireCredentials().userId
 
