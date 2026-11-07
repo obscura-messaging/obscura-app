@@ -133,7 +133,9 @@ final class ObservationTests: XCTestCase {
     }
 
     func testRecordingLoggerRecordsFailureEvents() {
-        let logger = RecordingLogger(SilentLogger())
+        let noop = NoOpLogger()
+        noop.log("noop")
+        let logger = RecordingLogger(noop)
         logger.ackFailed(envelopeId: "env1", reason: "closed")
         logger.preKeyReplenishFailed(reason: "500")
         logger.decryptFailed(sourceUserId: "u1", reason: "bad mac")

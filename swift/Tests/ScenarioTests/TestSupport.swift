@@ -20,16 +20,7 @@ final class MemorySessionStorage: SessionStorage, @unchecked Sendable {
     func clear() { lock.withLock { stored = nil } }
 }
 
-final class SilentLogger: ObscuraLogger {
-    func log(_ message: String) {}
-    func decryptFailed(sourceUserId: String, reason: String) {}
-    func ackFailed(envelopeId: String, reason: String) {}
-    func tokenRefreshFailed(attempt: Int, reason: String) {}
-    func preKeyReplenishFailed(reason: String) {}
-    func identityChanged(userId: String) {}
-    func sessionEstablishFailed(userId: String, reason: String) {}
-    func databaseError(store: String, operation: String, reason: String) {}
-}
+typealias SilentLogger = NoOpLogger
 
 struct Timeout: Error {
     let what: String

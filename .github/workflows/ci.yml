@@ -29,7 +29,6 @@ jobs:
       # Domain, bridge-facade, and state tests run without a native simulator.
       # ESLint errors fail the job; warnings remain non-fatal.
       - run: just check
-      - run: python3 scripts/test-verify-release-build.py -q
 
   kotlin-unit:
     name: Kotlin Kit (unit tests + coverage)

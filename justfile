@@ -54,6 +54,7 @@ lint:
 
 # Run every JavaScript CI gate.
 check: test typecheck lint
+    python3 scripts/test-verify-release-build.py -q
 
 # Lint the client-to-client protocol.
 protocol-lint:
@@ -65,11 +66,11 @@ protocol-vectors:
 
 # Run Kotlin unit tests.
 kotlin-unit:
-    cd kotlin && ../scripts/run-with-java-21.sh ./gradlew :lib:test --no-daemon
+    cd kotlin && ../scripts/run-with-java-21.sh ./gradlew :lib:test
 
 # Run the Kotlin CI tasks in one Gradle process.
 kotlin-ci:
-    cd kotlin && ../scripts/run-with-java-21.sh ./gradlew :lib:test :lib:koverHtmlReport :lib:koverXmlReport :lib:koverVerify --no-daemon
+    cd kotlin && ../scripts/run-with-java-21.sh ./gradlew :lib:test :lib:koverHtmlReport :lib:koverXmlReport :lib:koverVerify
 
 # Run the full fast Kotlin CI gate.
 kotlin-check: protocol-vectors kotlin-ci
@@ -77,7 +78,7 @@ kotlin-check: protocol-vectors kotlin-ci
 # Run Kotlin server-dependent tests against an explicit local endpoint.
 kotlin-integration api="http://localhost:3000":
     @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
-    cd kotlin && OBSCURA_TEST_API="{{ api }}" ../scripts/run-with-java-21.sh ./gradlew :lib:integrationTest --no-daemon
+    cd kotlin && OBSCURA_TEST_API="{{ api }}" ../scripts/run-with-java-21.sh ./gradlew :lib:integrationTest
 
 # Fetch and build the pinned host libsignal FFI.
 [private]

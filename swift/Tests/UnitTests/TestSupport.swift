@@ -38,16 +38,7 @@ final class MemorySessionStorage: SessionStorage, @unchecked Sendable {
     }
 }
 
-final class SilentLogger: ObscuraLogger {
-    func log(_ message: String) {}
-    func decryptFailed(sourceUserId: String, reason: String) {}
-    func ackFailed(envelopeId: String, reason: String) {}
-    func tokenRefreshFailed(attempt: Int, reason: String) {}
-    func preKeyReplenishFailed(reason: String) {}
-    func identityChanged(userId: String) {}
-    func sessionEstablishFailed(userId: String, reason: String) {}
-    func databaseError(store: String, operation: String, reason: String) {}
-}
+typealias SilentLogger = NoOpLogger
 
 func makeClient(apiURL: String = "https://obscura.invalid", database: DatabaseQueue? = nil,
                 storage: MemorySessionStorage = MemorySessionStorage()) throws -> ObscuraClient {
