@@ -15,6 +15,9 @@ java {
 
 kotlin {
     jvmToolchain(21)
+    compilerOptions {
+        optIn.add("kotlinx.coroutines.ExperimentalCoroutinesApi")
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────

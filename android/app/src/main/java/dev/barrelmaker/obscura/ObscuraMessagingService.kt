@@ -17,6 +17,7 @@ class ObscuraMessagingService : FirebaseMessagingService() {
 
     companion object { private const val TAG = "ObscuraMessagingService" }
 
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun onNewToken(token: String) {
         Log.d(TAG, "onNewToken: ${token.take(20)}...")
         ObscuraSession.deliverPushToken(token)

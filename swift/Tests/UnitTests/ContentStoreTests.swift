@@ -4,7 +4,7 @@ import GRDB
 
 /// Typed content storage: messages, pix, seen receipts, stories, profiles, expiry sweeps, tombstones,
 /// snapshot export/import, and secure deletion.
-final class EntryStoreTests: XCTestCase {
+final class ContentStoreTests: XCTestCase {
 
     private func makeStore() throws -> ContentStore {
         ContentStore(db: try ObscuraDatabase.inMemory())

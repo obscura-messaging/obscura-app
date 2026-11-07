@@ -209,11 +209,19 @@ class ReceiveDurabilityTest {
         assertEquals(1, acks)
         assertTrue(c.getDebugLog().any { it.contains("redelivered envelope") })
 
-        // Prekey count below 20 triggers background replenishPreKeys which fails against unreachable server and calls logger.preKeyReplenishFailed
+        // Prekey count below 20 after decrypt triggers background replenishPreKeys which fails and calls logger.preKeyReplenishFailed
         val (cLow, driverLow, envLow) = fixture()
-        for (id in 1..85) cLow.signalStore.removePreKey(id)
+        val replenishFailures = kotlinx.coroutines.CompletableDeferred<String>()
+        cLow.logger = object : ObscuraLogger by NoOpLogger {
+            override fun preKeyReplenishFailed(reason: String) {
+                replenishFailures.complete(reason)
+            }
+        }
+        for (id in 2..90) cLow.signalStore.removePreKey(id)
         cLow.receive(envLow) { acks++ }
-        kotlinx.coroutines.delay(100)
+        kotlinx.coroutines.withTimeout(5_000) {
+            assertTrue(replenishFailures.await().isNotBlank())
+        }
         cLow.auth.end()
         driverLow.close()
 

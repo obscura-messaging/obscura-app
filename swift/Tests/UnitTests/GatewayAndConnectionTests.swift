@@ -321,7 +321,10 @@ final class GatewayAndConnectionTests: XCTestCase {
         do {
             let s = try await cancelledOpen.value
             s.close()
-        } catch {}
+            XCTFail("expected pre-cancelled GatewaySocket.open to throw CancellationError")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
 
         // Persist duplicate envelope check and invalid AuthResponse check.
         let db = try ObscuraDatabase.inMemory()

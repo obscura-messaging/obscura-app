@@ -46,6 +46,7 @@ final class ObscuraSession {
                 clientUsername = username.lowercased()
                 observeMessages(restored)
                 restoreTask = Task { [weak self] in
+                    defer { self?.restoreTask = nil }
                     if !(await restored.restorePersistedSession()) {
                         self?.logger.log("No usable stored session")
                     } else if self?.appInForeground == false {
@@ -152,9 +153,11 @@ final class ObscuraSession {
                 self.appInForeground = false
                 self.onAppStateChanged?(false)
                 await self.client?.disconnect()
-                await self.restoreTask?.value
-                if !self.appInForeground {
-                    await self.client?.disconnect()
+                if let pendingRestore = self.restoreTask {
+                    await pendingRestore.value
+                    if !self.appInForeground {
+                        await self.client?.disconnect()
+                    }
                 }
             }
         }
