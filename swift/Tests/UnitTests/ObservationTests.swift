@@ -180,11 +180,11 @@ final class ObservationTests: XCTestCase {
     }
 
     func testARenewedSignalOutlivesTheFirstOnesExpiry() async throws {
-        let tracker = TypingTracker(expiryNanoseconds: 120_000_000)
+        let tracker = TypingTracker(expiryNanoseconds: 800_000_000)
         tracker.started(contextId: "c", userId: "alice", deviceId: "d")
-        try await Task.sleep(nanoseconds: 70_000_000)
+        try await Task.sleep(nanoseconds: 450_000_000)
         tracker.started(contextId: "c", userId: "alice", deviceId: "d")
-        try await Task.sleep(nanoseconds: 70_000_000)
+        try await Task.sleep(nanoseconds: 450_000_000)
 
         let values = try await first(1, of: tracker.observe(contextId: "c"))
         XCTAssertEqual(values, [["alice"]])
