@@ -9,6 +9,11 @@ public enum TypingState: String, Sendable, Codable {
 /// renewed; `stopped` ends it.
 final class TypingTracker: Sendable {
     static let expiry: UInt64 = 5_000_000_000
+    let expiryNanoseconds: UInt64
+
+    init(expiryNanoseconds: UInt64 = TypingTracker.expiry) {
+        self.expiryNanoseconds = expiryNanoseconds
+    }
 
     private struct Typer {
         let userId: String
@@ -27,8 +32,9 @@ final class TypingTracker: Sendable {
 
     func started(contextId: String, userId: String, deviceId: String) {
         let token = UUID()
+        let duration = expiryNanoseconds
         let expiry = Task { [weak self] in
-            guard (try? await Task.sleep(nanoseconds: Self.expiry)) != nil else { return }
+            guard (try? await Task.sleep(nanoseconds: duration)) != nil else { return }
             self?.expire(contextId: contextId, deviceId: deviceId, token: token)
         }
         update(contextId) { typers in

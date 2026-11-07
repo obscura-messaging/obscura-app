@@ -26,40 +26,23 @@ extension ObscuraClient {
         }
         let sentAt = Self.nowMs()
         let id = Self.generateId(prefix: "dm")
-        let item = ConversationItem(
+        let item = ConversationItem.message(
             id: id,
             peerUserId: peerUserId,
-            kind: "message",
             authorUserId: selfUserId,
             sentAt: sentAt,
-            viewedAt: nil,
-            content: text,
-            attachment: nil,
-            caption: nil,
-            captionMeta: nil,
-            displayDuration: 0
+            content: text
         )
         try await content.insertConversationItem(item, undelivered: false)
-
         let isAccepted = try await friends.friend(peerUserId)?.status == .accepted
-        var message = Obscura_Client_V1_ClientMessage()
-        message.timestamp = sentAt
-        message.directMessage.id = id
-        message.directMessage.peerUserID = peerUserId
-        message.directMessage.content = text
-
-        do {
-            let report = try await send(message, to: isAccepted ? [peerUserId] : [])
-            guard isAccepted, report.recipients.contains(where: { $0.status == .accepted }) else {
-                throw ObscuraError.sendFailed("directMessage to \(peerUserId) reached no recipient devices")
-            }
-            return id
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            try? await content.setMessageUndelivered(id: id, undelivered: true)
-            throw error
-        }
+        try await deliverOrQueue(
+            item.toClientMessage(),
+            to: isAccepted ? [peerUserId] : [],
+            requireRecipient: true,
+            failureReason: "directMessage to \(peerUserId) reached no recipient devices",
+            markUndelivered: { try? await self.content.setMessageUndelivered(id: id, undelivered: true) }
+        )
+        return id
     }
 
     public func sendPix(
@@ -86,53 +69,32 @@ extension ObscuraClient {
         }
         let sentAt = Self.nowMs()
         let id = Self.generateId(prefix: "pix")
-        let normalizedMediaType = mediaType.isEmpty ? "photo" : mediaType
         let attachment = MediaAttachment(
             id: mediaRef,
             contentKey: keyBytes,
             nonce: nonceBytes,
-            mediaType: normalizedMediaType
+            mediaType: mediaType
         )
-        let item = ConversationItem(
+        let item = ConversationItem.pix(
             id: id,
             peerUserId: peerUserId,
-            kind: "pix",
             authorUserId: selfUserId,
             sentAt: sentAt,
-            viewedAt: nil,
-            content: "",
             attachment: attachment,
-            caption: caption.isEmpty ? nil : caption,
-            captionMeta: (captionMeta?.isEmpty == false) ? captionMeta : nil,
-            displayDuration: max(0, displayDuration)
+            caption: caption,
+            captionMeta: captionMeta,
+            displayDuration: displayDuration
         )
         try await content.insertConversationItem(item, undelivered: false)
-
         let isAccepted = try await friends.friend(peerUserId)?.status == .accepted
-        var message = Obscura_Client_V1_ClientMessage()
-        message.timestamp = sentAt
-        message.pix.id = id
-        message.pix.peerUserID = peerUserId
-        message.pix.attachment.id = attachment.id
-        message.pix.attachment.contentKey = attachment.contentKey
-        message.pix.attachment.nonce = attachment.nonce
-        message.pix.attachment.mediaType = attachment.mediaType
-        message.pix.caption = caption
-        message.pix.captionMeta = captionMeta ?? ""
-        message.pix.displayDurationSecs = UInt32(max(0, displayDuration))
-
-        do {
-            let report = try await send(message, to: isAccepted ? [peerUserId] : [])
-            guard isAccepted, report.recipients.contains(where: { $0.status == .accepted }) else {
-                throw ObscuraError.sendFailed("pix to \(peerUserId) reached no recipient devices")
-            }
-            return id
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            try? await content.setMessageUndelivered(id: id, undelivered: true)
-            throw error
-        }
+        try await deliverOrQueue(
+            item.toClientMessage(),
+            to: isAccepted ? [peerUserId] : [],
+            requireRecipient: true,
+            failureReason: "pix to \(peerUserId) reached no recipient devices",
+            markUndelivered: { try? await self.content.setMessageUndelivered(id: id, undelivered: true) }
+        )
+        return id
     }
 
     public func markSeen(entryId: String) async throws {
@@ -172,12 +134,11 @@ extension ObscuraClient {
                   let nonce, let decodedNonce = Data(base64Encoded: nonce), !decodedNonce.isEmpty else {
                 throw ObscuraError.invalidArgument("invalid story attachment key material")
             }
-            let normalizedMediaType = (mediaType?.isEmpty == false) ? mediaType! : "photo"
             attachment = MediaAttachment(
                 id: mediaRef,
                 contentKey: decodedKey,
                 nonce: decodedNonce,
-                mediaType: normalizedMediaType
+                mediaType: mediaType ?? "photo"
             )
         }
         let (selfUserId, _) = try await sendContext()
@@ -189,35 +150,18 @@ extension ObscuraClient {
             sentAt: sentAt,
             content: text,
             attachment: attachment,
-            captionMeta: (captionMeta?.isEmpty == false) ? captionMeta : nil
+            captionMeta: captionMeta
         )
         try await content.insertStoryItem(item, undelivered: false)
-
         let peerIds = try await friends.all().filter { $0.status == .accepted }.map(\.userId)
-        var message = Obscura_Client_V1_ClientMessage()
-        message.timestamp = sentAt
-        message.story.id = id
-        message.story.content = text
-        if let attachment {
-            message.story.attachment.id = attachment.id
-            message.story.attachment.contentKey = attachment.contentKey
-            message.story.attachment.nonce = attachment.nonce
-            message.story.attachment.mediaType = attachment.mediaType
-        }
-        message.story.captionMeta = captionMeta ?? ""
-
-        do {
-            let report = try await send(message, to: peerIds)
-            if !peerIds.isEmpty, !report.recipients.contains(where: { $0.status == .accepted }) {
-                throw ObscuraError.sendFailed("story reached no recipient devices")
-            }
-            return id
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            try? await content.setStoryUndelivered(id: id, undelivered: true)
-            throw error
-        }
+        try await deliverOrQueue(
+            item.toClientMessage(),
+            to: peerIds,
+            requireRecipient: false,
+            failureReason: "story reached no recipient devices",
+            markUndelivered: { try? await self.content.setStoryUndelivered(id: id, undelivered: true) }
+        )
+        return id
     }
 
     public func getProfiles() async throws -> [ProfileItem] {
@@ -238,22 +182,32 @@ extension ObscuraClient {
             bio: bio
         )
         try await content.upsertProfile(item, undelivered: false)
-
         let peerIds = try await friends.all().filter { $0.status == .accepted }.map(\.userId)
-        var message = Obscura_Client_V1_ClientMessage()
-        message.timestamp = sentAt
-        message.profile.displayName = displayName
-        message.profile.bio = bio
+        try await deliverOrQueue(
+            item.toClientMessage(),
+            to: peerIds,
+            requireRecipient: false,
+            failureReason: "profile reached no recipient devices",
+            markUndelivered: { try? await self.content.setProfileUndelivered(userId: session.userId, updatedAt: sentAt, undelivered: true) }
+        )
+    }
 
+    private func deliverOrQueue(
+        _ message: Obscura_Client_V1_ClientMessage,
+        to recipientUserIds: [String],
+        requireRecipient: Bool,
+        failureReason: String,
+        markUndelivered: () async -> Void
+    ) async throws {
         do {
-            let report = try await send(message, to: peerIds)
-            if !peerIds.isEmpty, !report.recipients.contains(where: { $0.status == .accepted }) {
-                throw ObscuraError.sendFailed("profile reached no recipient devices")
+            let report = try await send(message, to: recipientUserIds)
+            if (requireRecipient || !recipientUserIds.isEmpty) && !report.recipients.contains(where: { $0.status == .accepted }) {
+                throw ObscuraError.sendFailed(failureReason)
             }
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            try? await content.setProfileUndelivered(userId: session.userId, updatedAt: sentAt, undelivered: true)
+            await markUndelivered()
             throw error
         }
     }
@@ -265,25 +219,7 @@ extension ObscuraClient {
 
         for row in try await content.undeliveredMessages() {
             guard acceptedFriends.contains(row.peerUserId) else { continue }
-            var message = Obscura_Client_V1_ClientMessage()
-            message.timestamp = row.sentAt
-            if row.kind == "pix" {
-                guard let att = row.attachment else { continue }
-                message.pix.id = row.id
-                message.pix.peerUserID = row.peerUserId
-                message.pix.attachment.id = att.id
-                message.pix.attachment.contentKey = att.contentKey
-                message.pix.attachment.nonce = att.nonce
-                message.pix.attachment.mediaType = att.mediaType
-                message.pix.caption = row.caption ?? ""
-                message.pix.captionMeta = row.captionMeta ?? ""
-                message.pix.displayDurationSecs = UInt32(max(0, row.displayDuration))
-            } else {
-                message.directMessage.id = row.id
-                message.directMessage.peerUserID = row.peerUserId
-                message.directMessage.content = row.content
-            }
-            if let report = try? await send(message, to: [row.peerUserId]),
+            if let report = try? await send(row.toClientMessage(), to: [row.peerUserId]),
                report.recipients.contains(where: { $0.status == .accepted }) {
                 try await content.setMessageUndelivered(id: row.id, undelivered: false)
                 delivered += 1
@@ -292,18 +228,7 @@ extension ObscuraClient {
 
         let friendList = Array(acceptedFriends)
         for row in try await content.undeliveredStories() {
-            var message = Obscura_Client_V1_ClientMessage()
-            message.timestamp = row.sentAt
-            message.story.id = row.id
-            message.story.content = row.content
-            if let att = row.attachment {
-                message.story.attachment.id = att.id
-                message.story.attachment.contentKey = att.contentKey
-                message.story.attachment.nonce = att.nonce
-                message.story.attachment.mediaType = att.mediaType
-            }
-            message.story.captionMeta = row.captionMeta ?? ""
-            if let report = try? await send(message, to: friendList),
+            if let report = try? await send(row.toClientMessage(), to: friendList),
                friendList.isEmpty || report.recipients.contains(where: { $0.status == .accepted }) {
                 try await content.setStoryUndelivered(id: row.id, undelivered: false)
                 delivered += 1
@@ -311,11 +236,7 @@ extension ObscuraClient {
         }
 
         for row in try await content.undeliveredProfiles() {
-            var message = Obscura_Client_V1_ClientMessage()
-            message.timestamp = row.updatedAt
-            message.profile.displayName = row.displayName
-            message.profile.bio = row.bio
-            if let report = try? await send(message, to: friendList),
+            if let report = try? await send(row.toClientMessage(), to: friendList),
                friendList.isEmpty || report.recipients.contains(where: { $0.status == .accepted }) {
                 try await content.setProfileUndelivered(userId: row.userId, updatedAt: row.updatedAt, undelivered: false)
                 delivered += 1

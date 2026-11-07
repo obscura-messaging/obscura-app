@@ -2,6 +2,7 @@ package dev.barrelmaker.obscura.kit.stores
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
+import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.ConversationEntry
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.ProfileEntry
@@ -9,6 +10,15 @@ import dev.barrelmaker.obscura.kit.StoryEntry
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import obscura.client.v1.Client.AttachmentPointer
+import obscura.client.v1.Client.ClientMessage
+import obscura.client.v1.Client.DirectMessage
+import obscura.client.v1.Client.PixMessage
+import obscura.client.v1.Client.ProfileUpdate
+import obscura.client.v1.Client.StoredMessageRecord
+import obscura.client.v1.Client.StoredProfileRecord
+import obscura.client.v1.Client.StoredStoryRecord
+import obscura.client.v1.Client.StoryPost
 
 const val EXPIRE_AFTER_VIEW_MS = 15 * 60 * 1000L
 const val MAX_EPHEMERAL_AGE_MS = 30L * 24 * 60 * 60 * 1000L
@@ -18,12 +28,22 @@ fun expiresAt(sentAt: Long, viewedAt: Long?): Long =
     if (viewedAt == null) sentAt + MAX_EPHEMERAL_AGE_MS
     else minOf(sentAt + MAX_EPHEMERAL_AGE_MS, viewedAt + EXPIRE_AFTER_VIEW_MS)
 
-data class MediaAttachment(
+class MediaAttachment(
     val id: String,
     val contentKey: ByteArray,
     val nonce: ByteArray,
-    val mediaType: String,
+    mediaType: String = "photo",
 ) {
+    val mediaType: String = mediaType.ifBlank { "photo" }
+
+    fun toProto(): AttachmentPointer =
+        AttachmentPointer.newBuilder()
+            .setId(id)
+            .setContentKey(ByteString.copyFrom(contentKey))
+            .setNonce(ByteString.copyFrom(nonce))
+            .setMediaType(mediaType)
+            .build()
+
     override fun equals(other: Any?): Boolean =
         this === other || (other is MediaAttachment &&
             id == other.id &&
@@ -38,6 +58,18 @@ data class MediaAttachment(
         result = 31 * result + mediaType.hashCode()
         return result
     }
+
+    companion object {
+        fun fromProto(att: AttachmentPointer): MediaAttachment? =
+            if (att.id.isNotBlank() && !att.contentKey.isEmpty && !att.nonce.isEmpty) {
+                MediaAttachment(
+                    id = att.id,
+                    contentKey = att.contentKey.toByteArray(),
+                    nonce = att.nonce.toByteArray(),
+                    mediaType = att.mediaType,
+                )
+            } else null
+    }
 }
 
 data class ConversationItem(
@@ -47,25 +79,153 @@ data class ConversationItem(
     val authorUserId: String,
     val sentAt: Long,
     val viewedAt: Long?,
-    val expiresAt: Long,
+    val expiresAt: Long = expiresAt(sentAt, viewedAt),
     val content: String,
     val attachment: MediaAttachment? = null,
     val caption: String? = null,
     val captionMeta: String? = null,
     val displayDuration: Int = 0,
     val undelivered: Boolean = false,
-)
+) {
+    init {
+        require(kind == "message" || kind == "pix") { "Invalid conversation item kind: $kind" }
+        if (kind == "pix") {
+            requireNotNull(attachment) { "pix requires an attachment" }
+        } else {
+            require(attachment == null && caption == null && captionMeta == null && displayDuration == 0) {
+                "message cannot carry pix fields"
+            }
+        }
+    }
+
+    internal fun toClientMessage(): ClientMessage {
+        val att = attachment
+        return ClientMessage.newBuilder()
+            .setTimestamp(sentAt)
+            .apply {
+                if (att != null) {
+                    setPix(
+                        PixMessage.newBuilder()
+                            .setId(id)
+                            .setPeerUserId(peerUserId)
+                            .setAttachment(att.toProto())
+                            .setCaption(caption ?: "")
+                            .setCaptionMeta(captionMeta ?: "")
+                            .setDisplayDurationSecs(displayDuration.coerceAtLeast(0)),
+                    )
+                } else {
+                    setDirectMessage(
+                        DirectMessage.newBuilder()
+                            .setId(id)
+                            .setPeerUserId(peerUserId)
+                            .setContent(content),
+                    )
+                }
+            }
+            .build()
+    }
+
+    internal fun toSnapshotRecord(): StoredMessageRecord {
+        val att = attachment
+        return StoredMessageRecord.newBuilder()
+            .setId(id)
+            .setPeerUserId(peerUserId)
+            .setKind(kind)
+            .setAuthorUserId(authorUserId)
+            .setSentAt(sentAt)
+            .setViewedAt(viewedAt ?: 0L)
+            .setContent(content)
+            .setCaption(caption ?: "")
+            .setCaptionMeta(captionMeta ?: "")
+            .setDisplayDurationSecs(displayDuration)
+            .apply { if (att != null) setAttachment(att.toProto()) }
+            .build()
+    }
+
+    companion object {
+        fun message(
+            id: String,
+            peerUserId: String,
+            authorUserId: String,
+            sentAt: Long,
+            content: String,
+            viewedAt: Long? = null,
+            undelivered: Boolean = false,
+        ): ConversationItem = ConversationItem(
+            id = id,
+            peerUserId = peerUserId,
+            kind = "message",
+            authorUserId = authorUserId,
+            sentAt = sentAt,
+            viewedAt = viewedAt,
+            content = content,
+            undelivered = undelivered,
+        )
+
+        fun pix(
+            id: String,
+            peerUserId: String,
+            authorUserId: String,
+            sentAt: Long,
+            attachment: MediaAttachment,
+            caption: String? = null,
+            captionMeta: String? = null,
+            displayDuration: Int = 0,
+            viewedAt: Long? = null,
+            undelivered: Boolean = false,
+        ): ConversationItem = ConversationItem(
+            id = id,
+            peerUserId = peerUserId,
+            kind = "pix",
+            authorUserId = authorUserId,
+            sentAt = sentAt,
+            viewedAt = viewedAt,
+            content = "",
+            attachment = attachment,
+            caption = caption,
+            captionMeta = captionMeta,
+            displayDuration = displayDuration,
+            undelivered = undelivered,
+        )
+    }
+}
 
 data class StoryItem(
     val id: String,
     val authorUserId: String,
     val sentAt: Long,
-    val expiresAt: Long,
+    val expiresAt: Long = sentAt + STORY_MAX_AGE_MS,
     val content: String,
     val attachment: MediaAttachment? = null,
     val captionMeta: String? = null,
     val undelivered: Boolean = false,
-)
+) {
+    internal fun toClientMessage(): ClientMessage {
+        val att = attachment
+        return ClientMessage.newBuilder()
+            .setTimestamp(sentAt)
+            .setStory(
+                StoryPost.newBuilder()
+                    .setId(id)
+                    .setContent(content)
+                    .setCaptionMeta(captionMeta ?: "")
+                    .apply { if (att != null) setAttachment(att.toProto()) },
+            )
+            .build()
+    }
+
+    internal fun toSnapshotRecord(): StoredStoryRecord {
+        val att = attachment
+        return StoredStoryRecord.newBuilder()
+            .setId(id)
+            .setAuthorUserId(authorUserId)
+            .setSentAt(sentAt)
+            .setContent(content)
+            .setCaptionMeta(captionMeta ?: "")
+            .apply { if (att != null) setAttachment(att.toProto()) }
+            .build()
+    }
+}
 
 data class ProfileItem(
     val userId: String,
@@ -74,7 +234,26 @@ data class ProfileItem(
     val displayName: String,
     val bio: String,
     val undelivered: Boolean = false,
-)
+) {
+    internal fun toClientMessage(): ClientMessage =
+        ClientMessage.newBuilder()
+            .setTimestamp(updatedAt)
+            .setProfile(
+                ProfileUpdate.newBuilder()
+                    .setDisplayName(displayName)
+                    .setBio(bio),
+            )
+            .build()
+
+    internal fun toSnapshotRecord(): StoredProfileRecord =
+        StoredProfileRecord.newBuilder()
+            .setUserId(userId)
+            .setAuthorDeviceId(authorDeviceId)
+            .setUpdatedAt(updatedAt)
+            .setDisplayName(displayName)
+            .setBio(bio)
+            .build()
+}
 
 typealias ConversationItemData = ConversationItem
 typealias StoryItemData = StoryItem
@@ -305,7 +484,7 @@ private fun toAttachment(mediaRef: String?, contentKey: ByteArray?, nonce: ByteA
             id = mediaRef,
             contentKey = contentKey,
             nonce = nonce,
-            mediaType = if (mediaType.isNullOrEmpty()) "photo" else mediaType,
+            mediaType = mediaType.orEmpty(),
         )
     } else null
 
@@ -318,10 +497,10 @@ private fun ConversationEntry.toData() = ConversationItem(
     viewedAt = viewed_at,
     expiresAt = expires_at,
     content = content,
-    attachment = if (kind == "pix") toAttachment(media_ref, content_key, nonce, media_type) else null,
-    caption = if (kind == "pix") caption else null,
-    captionMeta = if (kind == "pix") caption_meta else null,
-    displayDuration = if (kind == "pix") display_duration.toInt() else 0,
+    attachment = toAttachment(media_ref, content_key, nonce, media_type),
+    caption = caption,
+    captionMeta = caption_meta,
+    displayDuration = display_duration.toInt(),
     undelivered = undelivered != 0L,
 )
 
