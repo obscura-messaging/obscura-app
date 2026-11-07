@@ -248,14 +248,14 @@ extension ObscuraClient {
 
     public func sweepExpired(
         now: UInt64 = UInt64(Date().timeIntervalSince1970 * 1000)
-    ) async throws -> (purgedMediaRefs: [String], touchedModels: [String]) {
+    ) async throws -> Set<String> {
         let outcome = try await content.sweepExpired(now: now)
         if let cacheDir = attachmentCacheDir {
             for id in outcome.purgedMediaRefs {
                 AttachmentCrypto.purgeCached(cacheDir: cacheDir, id: id)
             }
         }
-        return outcome
+        return Set(outcome.touchedModels)
     }
 
     /// Sends a `ClientMessage` to every device of the named users and to this user's other devices.
@@ -382,7 +382,7 @@ extension ObscuraClient {
         try await sendTyping(to: [peerUserId], contextId: convId, state: state)
     }
 
-    public func observeTyping(peerUserId: String) async throws -> AsyncStream<Bool> {
+    public func observePeerTyping(_ peerUserId: String) async throws -> AsyncStream<Bool> {
         guard !peerUserId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ObscuraError.invalidArgument("peerUserId must not be blank")
         }
@@ -408,10 +408,7 @@ extension ObscuraClient {
             throw ObscuraError.invalidArgument("blank contextId")
         }
         _ = try requireSession()
-        let key = "\(state.rawValue):\(contextId)"
-        let now = Date()
-        if let last = typingSentAt[key], now.timeIntervalSince(last) < 2 { return }
-        typingSentAt[key] = now
+        guard typing.shouldSend(contextId: contextId, state: state) else { return }
 
         var message = Obscura_Client_V1_ClientMessage()
         message.typingSignal.contextID = contextId
@@ -434,19 +431,19 @@ extension ObscuraClient {
 
     // MARK: - Attachments and push
 
-    public func uploadAttachment(filePath: String) async throws -> UploadedAttachment {
+    public func uploadAttachmentFile(filePath: String) async throws -> AttachmentUpload {
         let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
         return try await uploadAttachment(data)
     }
 
     /// Encrypts and uploads; the server only sees ciphertext. The app sends the result in an entry.
-    public func uploadAttachment(_ plaintext: Data) async throws -> UploadedAttachment {
+    public func uploadAttachment(_ plaintext: Data) async throws -> AttachmentUpload {
         _ = try await requireFreshSession()
         let generation = sessionGeneration
         let encrypted = try AttachmentCrypto.encrypt(plaintext)
         let response = try await api.uploadAttachment(encrypted.ciphertext)
         guard generation == sessionGeneration, !Task.isCancelled else { throw CancellationError() }
-        return UploadedAttachment(id: response.id, contentKey: encrypted.contentKey, nonce: encrypted.nonce)
+        return AttachmentUpload(id: response.id, contentKey: encrypted.contentKey, nonce: encrypted.nonce)
     }
 
     public func downloadAttachmentToCache(id: String, contentKeyBase64: String, nonceBase64: String) async throws -> String {

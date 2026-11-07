@@ -88,7 +88,6 @@ public actor ObscuraClient {
 
     var session: Session?
     var sender: MessageSender?
-    var typingSentAt: [String: Date] = [:]
     var pendingLinkSession: (username: String, password: String, session: LinkSessionResponse)?
 
     var sessionGeneration = 0
@@ -302,7 +301,6 @@ public actor ObscuraClient {
         sender = nil
         api.setToken(nil)
         typing.clear()
-        typingSentAt = [:]
         auth.set(.loggedOut)
         try storeSession { try sessionStorage.clear() }
         if revoking, let ended {

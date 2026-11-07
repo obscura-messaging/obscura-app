@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-public struct UploadedAttachment: Sendable, Equatable {
+public struct AttachmentUpload: Sendable, Equatable {
     public let id: String
     public let contentKey: Data
     public let nonce: Data

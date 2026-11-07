@@ -34,6 +34,7 @@ internal class MessageSender(
     private val api: APIClient,
     private val messenger: Messenger,
     private val devices: DeviceStore,
+    private val logger: () -> dev.barrelmaker.obscura.kit.ObscuraLogger = { dev.barrelmaker.obscura.kit.NoOpLogger },
     private val selfDeviceId: () -> String?,
 ) {
     // Sends to the same user are serialized in sorted userId order, so concurrent first contacts
@@ -84,6 +85,7 @@ internal class MessageSender(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
+                        logger().sessionEstablishFailed(userId, e.message ?: e.javaClass.simpleName)
                         settled[userId] = listOf(rejected(userId, e))
                     }
                 }

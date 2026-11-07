@@ -384,7 +384,7 @@ final class ClientTests: XCTestCase {
         let payload = Data("secret-attachment-bytes".utf8)
         try payload.write(to: inputFile)
 
-        let uploaded = try await customClient.uploadAttachment(filePath: inputFile.path)
+        let uploaded = try await customClient.uploadAttachmentFile(filePath: inputFile.path)
         let decrypted = try await customClient.downloadDecryptedAttachment(
             id: uploaded.id, contentKey: uploaded.contentKey, nonce: uploaded.nonce
         )
@@ -447,8 +447,8 @@ final class ClientTests: XCTestCase {
             attachment: MediaAttachment(id: uploaded.id, contentKey: uploaded.contentKey, nonce: uploaded.nonce, mediaType: "photo"),
             caption: nil, captionMeta: nil, displayDuration: 5
         ))
-        let outcome = try await customClient.sweepExpired(now: 100 + ContentStore.expireAfterViewMs + 1)
-        XCTAssertEqual(outcome.purgedMediaRefs, [uploaded.id])
+        let touched = try await customClient.sweepExpired(now: 100 + ContentStore.expireAfterViewMs + 1)
+        XCTAssertEqual(touched, ["pix"])
         XCTAssertNil(AttachmentCrypto.readCached(cacheDir: cacheDir, id: uploaded.id))
 
         try await customClient.registerPushToken("apns-token-xyz")
@@ -493,14 +493,14 @@ final class ClientTests: XCTestCase {
             try await self.client.sendTyping(peerUserId: "  ", state: .started)
         }
         await assertThrows(.invalidArgument("peerUserId must not be blank")) {
-            _ = try await self.client.observeTyping(peerUserId: "  ")
+            _ = try await self.client.observePeerTyping("  ")
         }
         XCTAssertEqual(ObscuraClient.typingConvId("a", "b"), "a_b")
         XCTAssertEqual(ObscuraClient.typingConvId("b", "a"), "a_b")
     }
 
     func testObservePeerTypingTracksIncomingStartedAndStoppedSignals() async throws {
-        let stream = try await client.observeTyping(peerUserId: bob.userId)
+        let stream = try await client.observePeerTyping(bob.userId)
         var iterator = stream.makeAsyncIterator()
         let initial = await iterator.next()
         XCTAssertEqual(initial, false)

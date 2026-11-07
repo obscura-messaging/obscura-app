@@ -133,7 +133,7 @@ class ObscuraClient(
         authRef = auth
         gateway = GatewayConnection(api, scope, beforeConnect = { requireFreshToken() }, log = ::log)
         messenger = Messenger(signalStore, api)
-        sender = MessageSender(api, messenger, devices) { auth.credentials?.deviceId }
+        sender = MessageSender(api, messenger, devices, logger = { logger }) { auth.credentials?.deviceId }
     }
 
     val authState: StateFlow<AuthState> get() = auth.state

@@ -568,8 +568,8 @@ extension ObscuraBridge {
                       rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let outcome = try await client.sweepExpired()
-                resolve(outcome.touchedModels)
+                let touched = try await client.sweepExpired()
+                resolve(Array(touched))
             } catch {
                 rejectKit(reject, "SWEEP_EXPIRED_ERROR", error)
             }
@@ -675,7 +675,7 @@ extension ObscuraBridge {
             let observation: AsyncStream<Bool>
             do {
                 guard let self else { return }
-                observation = try await self.client.observeTyping(peerUserId: peerUserId)
+                observation = try await self.client.observePeerTyping(peerUserId)
                 guard !Task.isCancelled else {
                     resolve(nil)
                     return
@@ -716,7 +716,7 @@ extension ObscuraBridge {
                           rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let result = try await client.uploadAttachment(filePath: filePath)
+                let result = try await client.uploadAttachmentFile(filePath: filePath)
                 resolve([
                     "id": result.id,
                     "contentKey": result.contentKey.base64EncodedString(),

@@ -175,6 +175,7 @@ class ReceiveDurabilityTest {
         NoOpLogger.tokenRefreshFailed(1, "r")
         NoOpLogger.preKeyReplenishFailed("r")
         NoOpLogger.identityChanged("u")
+        NoOpLogger.sessionEstablishFailed("u", "r")
         NoOpLogger.databaseError("s", "op", "r")
 
         val unprov = newClient()
