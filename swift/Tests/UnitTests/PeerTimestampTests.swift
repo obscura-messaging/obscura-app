@@ -8,16 +8,17 @@ final class PeerTimestampTests: XCTestCase {
     private static let aboveInt64Max = UInt64(Int64.max) + 1
 
     func testTheClampPullsAFarFutureTimestampBackToRoughlyNow() {
-        let now = UInt64(Date().timeIntervalSince1970 * 1000)
+        XCTAssertEqual(ObscuraClient.clampFuture(Self.aboveInt64Max, now: 1_000_000), 1_060_000)
+        XCTAssertEqual(ObscuraClient.clampFuture(1_060_001, now: 1_000_000), 1_060_000)
+        let now = ObscuraClient.nowMs()
         let clamped = ObscuraClient.clampFuture(Self.aboveInt64Max)
-
-        XCTAssertLessThanOrEqual(clamped, now + 61_000)
-        XCTAssertGreaterThan(clamped, now)
+        XCTAssertLessThanOrEqual(clamped, ObscuraClient.nowMs() + 60_000)
+        XCTAssertGreaterThanOrEqual(clamped, now + 60_000)
     }
 
     func testASlightlyFastClockIsNotRewritten() {
-        let slightlyAhead = UInt64(Date().timeIntervalSince1970 * 1000) + 5_000
-        XCTAssertEqual(ObscuraClient.clampFuture(slightlyAhead), slightlyAhead)
+        XCTAssertEqual(ObscuraClient.clampFuture(1_060_000, now: 1_000_000), 1_060_000)
+        XCTAssertEqual(ObscuraClient.clampFuture(1_005_000, now: 1_000_000), 1_005_000)
     }
 
     func testContentStoreSaturatesInsteadOfTrappingAtBothEnds() async throws {

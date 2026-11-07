@@ -371,8 +371,8 @@ extension ObscuraClient {
     }
 
     /// A far-future timestamp would win every later merge.
-    static func clampFuture(_ sentAt: UInt64) -> UInt64 {
-        min(sentAt, UInt64(Date().timeIntervalSince1970 * 1000) + 60_000)
+    static func clampFuture(_ sentAt: UInt64, now: UInt64 = nowMs()) -> UInt64 {
+        min(sentAt, now + 60_000)
     }
 
     /// Known requests never relabel peers. An accepted account gets an idempotent accept reply.
