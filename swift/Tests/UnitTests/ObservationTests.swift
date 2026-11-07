@@ -112,6 +112,41 @@ final class ObservationTests: XCTestCase {
         XCTAssertEqual(lines.last, "line 50")
     }
 
+    func testObscuraErrorCodesAndLocalizedDescriptions() {
+        let cases: [(ObscuraError, String, String)] = [
+            (.notAuthenticated, "NOT_AUTHENTICATED", "Not authenticated"),
+            (.invalidArgument("bad arg"), "INVALID_ARGUMENT", "Invalid argument: bad arg"),
+            (.invalidFriendCode, "INVALID_FRIEND_CODE", "Invalid friend code"),
+            (.http(status: 418, body: "teapot"), "HTTP_ERROR", "HTTP 418: teapot"),
+            (.connectionFailed("down"), "CONNECTION_FAILED", "Connection failed: down"),
+            (.sendFailed("no peers"), "SEND_FAILED", "Send failed: no peers"),
+            (.protocolViolation("bad wire"), "PROTOCOL_VIOLATION", "Protocol violation: bad wire"),
+            (.storageFailed("io err"), "STORAGE_ERROR", "Storage failed: io err"),
+            (.notPrimary, "NOT_PRIMARY", "Only the primary device can do this"),
+            (.linkFailed("expired"), "LINK_FAILED", "Link failed: expired"),
+        ]
+        for (error, expectedCode, expectedDescription) in cases {
+            XCTAssertEqual(error.code, expectedCode)
+            XCTAssertEqual(error.errorDescription, expectedDescription)
+            XCTAssertEqual(error.localizedDescription, expectedDescription)
+        }
+    }
+
+    func testRecordingLoggerRecordsFailureEvents() {
+        let logger = RecordingLogger(SilentLogger())
+        logger.ackFailed(envelopeId: "env1", reason: "closed")
+        logger.preKeyReplenishFailed(reason: "500")
+        logger.decryptFailed(sourceUserId: "u1", reason: "bad mac")
+        logger.tokenRefreshFailed(attempt: 2, reason: "timeout")
+        logger.identityChanged(userId: "u2")
+        logger.sessionEstablishFailed(userId: "u3", reason: "404")
+        logger.databaseError(store: "s", operation: "op", reason: "locked")
+        let logLines = logger.snapshot()
+        XCTAssertEqual(logLines.count, 7)
+        XCTAssertTrue(logLines.contains("ack failed for env1: closed"))
+        XCTAssertTrue(logLines.contains("prekey replenish failed: 500"))
+    }
+
     // MARK: - Typing
 
     func testTypersAreDistinctSortedUsersAndStoppedClearsOnlyThatDevice() async throws {

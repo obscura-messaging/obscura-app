@@ -1,8 +1,16 @@
 import type { ConversationItem, PixItem } from '../chats';
 import type { Friend } from '../friends';
 import {
-  pixToSlide, pixViewerGroups, stepViewer, storyGroups, storyToSlide, storyViewerGroups, type StoryItem,
+  displayMs, pixToSlide, pixViewerGroups, stepViewer, storyGroups, storyToSlide, storyViewerGroups, type StoryItem,
 } from '../viewer';
+
+describe('displayMs', () => {
+  it('uses the default for no limit or no value', () => {
+    expect(displayMs(3)).toBe(3_000);
+    expect(displayMs(0)).toBe(5_000);
+    expect(displayMs(undefined)).toBe(5_000);
+  });
+});
 
 describe('stepViewer', () => {
   it('advances through stories in a group, turns the cube to the next group, and closes at the end', () => {
@@ -150,6 +158,10 @@ describe('slide projections & viewer groups', () => {
       initialGroupIdx: 1,
     });
     expect(storyViewerGroups([storyOlder, carolStory], identity, 'uUnknown').initialGroupIdx).toBe(0);
+    expect(storyGroups([{ ...storyOlder, authorUserId: 'uStranger' }], identity)).toEqual({
+      mine: { userId: 'uMe', username: 'me', stories: [] },
+      others: [],
+    });
 
     expect(
       pixViewerGroups([pix2, msgWithWantedId, unwantedPix, pix1], BOB.userId, 'fallback', ['p1', 'p2', 'm1'], [CAROL, BOB]),

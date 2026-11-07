@@ -84,6 +84,21 @@ final class SubmissionResultsTests: XCTestCase {
         let transport = await messenger.submit(userId: "05050505-0505-0505-0505-050505050505", submissions: [submission(1)]).submitted.map(\.result)
         XCTAssertEqual(transport.map(\.status), [.unknown], "a lost response does not prove non-acceptance")
     }
+
+    func testSubmitOutcomeConvenienceInitAndInvalidUserUUIDRejection() async throws {
+        let outcomeEmpty = SubmitOutcome(submitted: [], missingDeviceIds: [])
+        XCTAssertTrue(outcomeEmpty.missingDeviceIds.isEmpty)
+        let outcomeMissing = SubmitOutcome(submitted: [], missingDeviceIds: ["d1"])
+        XCTAssertEqual(outcomeMissing.missingDeviceIds, ["d1"])
+
+        let api = try APIClient(baseURL: "https://submission-unit.invalid")
+        let messenger = Messenger(api: api, store: try signalStoreWithIdentity())
+        let badSubmit = await messenger.submit(
+            userIds: ["not-a-uuid"],
+            submissions: [UserSubmission(userId: "not-a-uuid", submission: submission(1))]
+        )
+        XCTAssertEqual(badSubmit.submitted.first?.result.status, .rejected)
+    }
 }
 
 private final class SubmissionFailureProtocol: URLProtocol {

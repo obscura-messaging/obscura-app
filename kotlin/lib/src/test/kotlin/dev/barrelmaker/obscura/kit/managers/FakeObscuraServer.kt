@@ -39,6 +39,8 @@ class FakeObscuraServer : AutoCloseable {
     private val identities = Collections.synchronizedMap(mutableMapOf<String, IdentityKeyPair>())
     private val consumed = Collections.synchronizedMap(mutableMapOf<String, Int>())
     private val sendRequests = Collections.synchronizedList(mutableListOf<Pair<String, SendMessageRequest>>())
+    @Volatile var bundleStatusOverride: Int? = null
+    @Volatile var overrideBundleDeviceId: String? = null
     private val http = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
         createContext("/v1/keys/") { respond(it, bundles(it.requestURI.path.removePrefix("/v1/keys/").split("/"))) }
         createContext("/v1/messages") { respond(it, accept(it)) }
@@ -75,11 +77,16 @@ class FakeObscuraServer : AutoCloseable {
     override fun close() = http.stop(0)
 
     private fun bundles(path: List<String>): Pair<Int, ByteArray> {
+        bundleStatusOverride?.let { return it to "error".toByteArray() }
         val userId = path[0]
         val owned = devices.values.filter { it.userId == userId && it.servesBundles && (path.size == 1 || it.deviceId == path[2]) }
         if (owned.isEmpty()) return 404 to ByteArray(0)
         consumed.merge(userId, owned.size, Int::plus)
-        val bundles = owned.map { it.consumeBundle() }
+        val bundles = owned.map {
+            it.consumeBundle().apply {
+                overrideBundleDeviceId?.let { overrideId -> put("deviceId", overrideId) }
+            }
+        }
         return 200 to (if (path.size == 1) JSONObject().put("bundles", JSONArray(bundles)).toString() else bundles.single().toString()).toByteArray()
     }
 

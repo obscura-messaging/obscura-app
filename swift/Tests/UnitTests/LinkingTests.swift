@@ -216,7 +216,7 @@ final class LinkingTests: XCTestCase {
         XCTAssertEqual(client.authState, .loggedOut)
     }
 
-    func testRegisterAndCachedLinkSessionAndDeviceValidation() async throws {
+    func testRegisterProvisionsAuthenticatedPrimary() async throws {
         let registered = try freshClient()
         try await registered.register("bob_new", "password123")
         XCTAssertEqual(registered.authState, .authenticated)
@@ -227,20 +227,25 @@ final class LinkingTests: XCTestCase {
         XCTAssertNotNil(bobDeviceId)
         XCTAssertTrue(bobIsPrimary)
         try await registered.logout()
+    }
 
+    func testBeginLinkValidatesDeviceNameAndReusesCachedLinkSession() async throws {
         let linkClient = try freshClient()
         await assertThrows(.invalidArgument("deviceName must not be blank")) {
             _ = try await linkClient.beginLink("alice", "password", deviceName: " \t\n ")
         }
 
-        // login returning .linkRequired caches pendingLinkSession, which beginLink reuses.
         let scenario = try await linkClient.login("alice", "password")
         XCTAssertEqual(scenario, .linkRequired)
         let req = try await linkClient.beginLink("alice", "password", deviceName: "iPad")
         XCTAssertEqual(req.deviceName, "iPad")
         XCTAssertEqual(req.username, "alice")
+    }
 
-        // Expired LinkRequest fails immediately with link session expired.
+    func testCompleteLinkRejectsExpiredRequestAndInvalidPrimaryDeviceId() async throws {
+        let linkClient = try freshClient()
+        let req = try await linkClient.beginLink("alice", "password", deviceName: "iPad")
+
         let alreadyExpired = LinkRequest(
             code: req.code, sessionId: req.sessionId, expiresAt: 1,
             username: "alice", userId: req.userId, deviceName: "iPad", privateKey: req.privateKey
@@ -249,7 +254,6 @@ final class LinkingTests: XCTestCase {
             try await linkClient.completeLink(alreadyExpired)
         }
 
-        // Invalid primaryDeviceID in bundle is a protocol violation.
         let ephemeral = PrivateKey.generate()
         var badPrimaryBundle = Obscura_Client_V1_LinkBundle()
         badPrimaryBundle.identityKeyPair = Data(IdentityKeyPair.generate().serialize())
@@ -259,18 +263,19 @@ final class LinkingTests: XCTestCase {
         XCTAssertThrowsError(try ObscuraClient.open(badPrimaryBody, privateKey: Data(ephemeral.serialize()), userId: "alice-id")) {
             XCTAssertEqual($0 as? ObscuraError, .protocolViolation("invalid primary device id in link bundle"))
         }
+    }
 
-        // devices() requires exactly one primary device.
+    func testDevicesRequiresExactlyOnePrimary() async throws {
         server.setCustomDevicesResponse([
             ["deviceId": phone.deviceId, "name": "test", "isPrimary": false],
         ])
+        defer { server.setCustomDevicesResponse(nil) }
         await assertThrows(.protocolViolation("the account has no primary device")) {
             _ = try await self.phoneClient.devices()
         }
-        server.setCustomDevicesResponse(nil)
     }
 
-    func testCompleteLinkPollsRestoresHistoryAndValidatesSnapshot() async throws {
+    func testCompleteLinkPollsApprovesAndRestoresHistory() async throws {
         try await phoneClient.friends.add(UUID().uuidString.lowercased(), username: "bob", status: .accepted)
         try await phoneClient.content.insertConversationItem(ConversationItem(
             id: "hist_msg_1", peerUserId: "bob-id", kind: "message", authorUserId: "bob-id",
@@ -288,7 +293,6 @@ final class LinkingTests: XCTestCase {
             try await newClient.completeLink(request)
             XCTFail("fake gateway returns 503 on connect at end of completeLink")
         } catch {
-            // connect() fails with 503 after history and credentials are installed
             XCTAssertEqual((error as? ObscuraError)?.code, "HTTP_ERROR")
         }
         try await approveTask.value
@@ -301,8 +305,9 @@ final class LinkingTests: XCTestCase {
         let friends = try await newClient.getFriends()
         XCTAssertEqual(friends.count, 1)
         try await newClient.logout()
+    }
 
-        // Malformed history snapshot bytes throw PROTOCOL_VIOLATION.
+    func testCompleteLinkRejectsMalformedHistorySnapshot() async throws {
         let badHistoryClient = try freshClient()
         let badReq = try await badHistoryClient.beginLink("alice", "password", deviceName: "Tablet")
         let badCode = try LinkCrypto.decode(badReq.code)

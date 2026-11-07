@@ -247,4 +247,20 @@ final class PersistentSignalStoreTests: XCTestCase {
         XCTAssertNotNil(try alice.loadSession(for: bobAddress, context: NullContext()))
         XCTAssertNil(try alice.loadSession(for: ProtocolAddress(name: "nobody", deviceId: 1), context: NullContext()))
     }
+
+    func testStorePreKeySignedPreKeyLoadExistingSessionsAndKyberStubs() throws {
+        let store = try store()
+        let keys = try SignalKeys.generate()
+        try store.install(keys)
+        try store.storePreKey(keys.preKeys[0], id: 999, context: NullContext())
+        XCTAssertNoThrow(try store.loadPreKey(id: 999, context: NullContext()))
+        try store.storeSignedPreKey(keys.signedPreKey, id: 888, context: NullContext())
+        XCTAssertNoThrow(try store.loadSignedPreKey(id: 888, context: NullContext()))
+        let existingSessions = try store.loadExistingSessions(
+            for: [ProtocolAddress(name: "missing", deviceId: 1)], context: NullContext()
+        )
+        XCTAssertTrue(existingSessions.isEmpty)
+        XCTAssertThrowsError(try store.loadKyberPreKey(id: 1, context: NullContext()))
+        XCTAssertThrowsError(try store.markKyberPreKeyUsed(id: 1, context: NullContext()))
+    }
 }

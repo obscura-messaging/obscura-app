@@ -301,16 +301,16 @@ class MessageSenderTest {
     }
 
     @Test
-    fun `empty recipients, invalid user IDs, unestablishable sessions, and bundle error branches`() = runBlocking {
-        // Empty user list returns empty immediately
+    fun `empty recipient list and invalid UUID user IDs are rejected without network calls`() = runBlocking {
         assertTrue(alice.sender.send(emptyList(), entry("noop")).isEmpty())
 
-        // Invalid UUID user ID is rejected immediately
         val badIdResult = alice.sender.send("not-a-uuid", entry("bad")).single()
         assertEquals(REJECTED, badIdResult.status)
         assertTrue(badIdResult.error!!.contains("Invalid user ID"))
+    }
 
-        // Self-sync mismatch that persists for 3 rounds with kept.isEmpty() settles with rejected error
+    @Test
+    fun `persistent self-sync mismatch and unestablishable sessions settle as rejected after 3 rounds`() = runBlocking {
         alice.directory.replace(alice.userId, listOf(alice.deviceId))
         val hiddenSelf = server.register(alice.userId, servesBundles = false)
         val selfMismatchResult = alice.send(alice, "self-mismatch").single()
@@ -318,7 +318,6 @@ class MessageSenderTest {
         assertTrue(selfMismatchResult.error!!.contains(hiddenSelf.deviceId))
         server.remove(hiddenSelf)
 
-        // When sessionTargets returns null across all 3 rounds, settles with "Sessions could not be established"
         val unstableUser = user()
         val dev1 = server.register(unstableUser, identity = IdentityKeyPair.generate())
         alice.sender.send(unstableUser, entry("warm"))
@@ -336,44 +335,25 @@ class MessageSenderTest {
         alice.signalStore.onIdentityChanged = {}
         server.remove(dev1)
         server.remove(dev2)
+    }
 
-        // Custom HTTP server to exercise non-404 errors on fetchAll/fetchOne, mismatched bundle deviceId, and message-less exceptions
-        var mode = "500-all"
-        val customHttp = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0).apply {
-            createContext("/v1/keys/") { exchange ->
-                val body = when (mode) {
-                    "wrong-device" -> bob.consumeBundle().put("deviceId", UUID.randomUUID().toString()).toString().toByteArray()
-                    else -> "error".toByteArray()
-                }
-                val code = if (mode == "wrong-device") 200 else 500
-                exchange.sendResponseHeaders(code, body.size.toLong())
-                exchange.responseBody.use { it.write(body) }
-            }
-            start()
-        }
+    @Test
+    fun `bundle fetch server errors and mismatched single-device bundle IDs reject the user`() = runBlocking {
         try {
-            val db = dev.barrelmaker.obscura.kit.newInMemoryDatabase()
-            val st = dev.barrelmaker.obscura.kit.crypto.SignalStore(db).also {
-                SignalKeyUtils.install(it, SignalKeyUtils.generateProvisioningKeys(IdentityKeyPair.generate()))
-            }
-            val dir = dev.barrelmaker.obscura.kit.stores.DeviceStore(db)
-            val api = dev.barrelmaker.obscura.kit.network.APIClient("http://127.0.0.1:${customHttp.address.port}") { "tok" }
-            val sender = MessageSender(api, Messenger(st, api), dir) { null }
+            server.bundleStatusOverride = 500
+            assertEquals(REJECTED, alice.sender.send(bob.userId, entry("err1")).single().status)
 
-            // fetchAll non-404 HTTP error
-            assertEquals(REJECTED, sender.send(bob.userId, entry("err1")).single().status)
+            alice.directory.add(bob.userId, listOf(bob.deviceId))
+            assertEquals(REJECTED, alice.sender.send(bob.userId, entry("err2")).single().status)
 
-            // fetchOne non-404 HTTP error
-            dir.add(bob.userId, listOf(bob.deviceId))
-            assertEquals(REJECTED, sender.send(bob.userId, entry("err2")).single().status)
-
-            // fetchOne returns bundle naming a different deviceId -> ProtocolViolation
-            mode = "wrong-device"
-            val wrongDev = sender.send(bob.userId, entry("err3")).single()
+            server.bundleStatusOverride = null
+            server.overrideBundleDeviceId = UUID.randomUUID().toString()
+            val wrongDev = alice.sender.send(bob.userId, entry("err3")).single()
             assertEquals(REJECTED, wrongDev.status)
             assertTrue(wrongDev.error!!.contains("names device"))
         } finally {
-            customHttp.stop(0)
+            server.bundleStatusOverride = null
+            server.overrideBundleDeviceId = null
         }
     }
 }

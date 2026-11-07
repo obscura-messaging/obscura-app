@@ -106,6 +106,16 @@ final class LinkConformanceTests: XCTestCase {
         }
     }
 
+    func testLinkEnvelopeWithInvalidNonceLengthFailsToOpen() {
+        var badEnvelope = Obscura_Client_V1_LinkEnvelope()
+        badEnvelope.ephemeralPublicKey = Data(PrivateKey.generate().publicKey.serialize())
+        badEnvelope.nonce = Data([1, 2, 3])
+        badEnvelope.ciphertext = Data(repeating: 0, count: 32)
+        XCTAssertThrowsError(try LinkCrypto.open(badEnvelope, with: PrivateKey.generate())) {
+            XCTAssertEqual($0 as? ObscuraError, .linkFailed("envelope nonce has invalid length"))
+        }
+    }
+
     private func hex(_ object: [String: Any], _ key: String) throws -> Data {
         let string = try XCTUnwrap(object[key] as? String, "missing \(key)")
         var data = Data()

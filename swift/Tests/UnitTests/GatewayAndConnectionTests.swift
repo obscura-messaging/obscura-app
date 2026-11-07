@@ -216,7 +216,7 @@ final class GatewayAndConnectionTests: XCTestCase {
         }
     }
 
-    func testClientConnectReceiveOverGatewayReconnectAndDisconnect() async throws {
+    func testClientConnectReceivesAndAcknowledgesEnvelopesOverGateway() async throws {
         let server = FakeObscuraServer()
         defer { server.close() }
         let gw = try FakeGatewayServer()
@@ -233,23 +233,10 @@ final class GatewayAndConnectionTests: XCTestCase {
         ))
 
         try await client.connect()
-        // Calling connect() when already connected returns immediately.
         try await client.connect()
         XCTAssertEqual(client.connectionState, .connected)
         _ = try await gw.waitForConnection()
 
-        // Server sends preKeyStatus below threshold -> triggers replenishPreKeys.
-        var statusFrame = Obscura_V1_WebSocketFrame()
-        statusFrame.preKeyStatus.oneTimePreKeyCount = 3
-        statusFrame.preKeyStatus.minThreshold = 20
-        gw.sendBinary(try statusFrame.serializedData())
-        for _ in 0..<40 {
-            if server.preKeyUploadCount() > 0 { break }
-            try await Task.sleep(nanoseconds: 25_000_000)
-        }
-        XCTAssertEqual(server.preKeyUploadCount(), 1)
-
-        // Server sends an encrypted message envelope over the gateway socket.
         try await send(clientMessage {
             $0.timestamp = 1_000
             $0.directMessage.id = "gw_msg_1"
@@ -274,7 +261,70 @@ final class GatewayAndConnectionTests: XCTestCase {
         XCTAssertEqual(messages.map(\.id), ["gw_msg_1"])
         XCTAssertEqual(gw.ackedIds(), [pendingEnv.id])
 
-        // Server closes socket -> client enters .reconnecting and then reconnects after 1s backoff.
+        await client.disconnect()
+        XCTAssertEqual(client.connectionState, .disconnected)
+        try await client.logout()
+    }
+
+    func testGatewayPreKeyStatusTriggersReplenishmentAndLogsFailure() async throws {
+        let server = FakeObscuraServer()
+        defer { server.close() }
+        let gw = try FakeGatewayServer()
+        defer { gw.close() }
+        server.setGatewayTicket("valid-ticket")
+
+        let phone = try await server.register(UUID().uuidString.lowercased())
+        let client = try makeClient(apiURL: "http://127.0.0.1:\(gw.port)", database: phone.db)
+        try await client.begin(Session(
+            token: phone.deviceId, refreshToken: "rt",
+            expiresAt: Int64(Date().timeIntervalSince1970) + 3600,
+            userId: phone.userId, deviceId: phone.deviceId, username: "alice"
+        ))
+
+        try await client.connect()
+        _ = try await gw.waitForConnection()
+
+        var statusFrame = Obscura_V1_WebSocketFrame()
+        statusFrame.preKeyStatus.oneTimePreKeyCount = 3
+        statusFrame.preKeyStatus.minThreshold = 20
+        gw.sendBinary(try statusFrame.serializedData())
+        for _ in 0..<40 {
+            if server.preKeyUploadCount() > 0 { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertEqual(server.preKeyUploadCount(), 1)
+
+        server.failPreKeyUpload(status: 500)
+        gw.sendBinary(try statusFrame.serializedData())
+        for _ in 0..<40 {
+            if client.getDebugLog().contains(where: { $0.contains("prekey replenish failed") }) { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTAssertTrue(client.getDebugLog().contains { $0.contains("prekey replenish failed") })
+
+        await client.disconnect()
+        try await client.logout()
+    }
+
+    func testGatewayDropReconnectsAndCompleteLinkConnects() async throws {
+        let server = FakeObscuraServer()
+        defer { server.close() }
+        let gw = try FakeGatewayServer()
+        defer { gw.close() }
+        server.setGatewayTicket("valid-ticket")
+
+        let phone = try await server.register(UUID().uuidString.lowercased())
+        server.account("alice", userId: phone.userId)
+        let client = try makeClient(apiURL: "http://127.0.0.1:\(gw.port)", database: phone.db)
+        try await client.begin(Session(
+            token: phone.deviceId, refreshToken: "rt",
+            expiresAt: Int64(Date().timeIntervalSince1970) + 3600,
+            userId: phone.userId, deviceId: phone.deviceId, username: "alice"
+        ))
+
+        try await client.connect()
+        _ = try await gw.waitForConnection()
+
         gw.sendClose()
         for _ in 0..<40 {
             if client.connectionState == .reconnecting { break }
@@ -286,34 +336,23 @@ final class GatewayAndConnectionTests: XCTestCase {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
         XCTAssertEqual(client.connectionState, .connected)
-
-        // Failed preKey replenish logs preKeyReplenishFailed.
-        server.failPreKeyUpload(status: 500)
-        gw.sendBinary(try statusFrame.serializedData())
-        for _ in 0..<40 {
-            if client.getDebugLog().contains(where: { $0.contains("prekey replenish failed") }) { break }
-            try await Task.sleep(nanoseconds: 25_000_000)
-        }
-        XCTAssertTrue(client.getDebugLog().contains { $0.contains("prekey replenish failed") })
-
         await client.disconnect()
-        XCTAssertEqual(client.connectionState, .disconnected)
-        try await client.logout()
 
-        // CompleteLink with live gateway completes end-to-end into .connected state.
-        server.account("alice", userId: phone.userId)
-        let phoneClient = try await authenticatedClient(phone, username: "alice")
         let linkClient = try makeClient(apiURL: "http://127.0.0.1:\(gw.port)")
         let req = try await linkClient.beginLink("alice", "password", deviceName: "LiveLink")
-        try await phoneClient.approveLink(req.code)
+        try await client.approveLink(req.code)
         try await linkClient.completeLink(req)
         XCTAssertEqual(linkClient.authState, .authenticated)
         XCTAssertEqual(linkClient.connectionState, .connected)
         await linkClient.disconnect()
         try await linkClient.logout()
-        try await phoneClient.logout()
+        try await client.logout()
+    }
 
-        // Pre-cancelled GatewaySocket.open closes immediately and throws CancellationError.
+    func testPersistIgnoresDuplicateEnvelopeAndSessionRejectsInvalidAuthResponse() async throws {
+        let gw = try FakeGatewayServer()
+        defer { gw.close() }
+
         let cancelledOpen = Task {
             try await GatewaySocket.open(URL(string: "ws://127.0.0.1:\(gw.port)/v1/gateway?ticket=t")!, logger: SilentLogger())
         }
@@ -326,7 +365,6 @@ final class GatewayAndConnectionTests: XCTestCase {
             XCTAssertTrue(error is CancellationError)
         }
 
-        // Persist duplicate envelope check and invalid AuthResponse check.
         let db = try ObscuraDatabase.inMemory()
         let dupOutcome = try await db.write { db -> PersistedContent in
             try ContentStore.recordEnvelope("dup-env", in: db)
@@ -337,9 +375,10 @@ final class GatewayAndConnectionTests: XCTestCase {
         }
         XCTAssertEqual(dupOutcome, .handled)
 
+        let client = try makeClient()
         let badAuth = AuthResponse(token: "", refreshToken: "r", expiresAt: 100, userId: "not-uuid", deviceId: "not-uuid")
         await assertThrows(.protocolViolation("invalid auth response")) {
-            _ = try await linkClient.session(badAuth, username: "u")
+            _ = try await client.session(badAuth, username: "u")
         }
     }
 }

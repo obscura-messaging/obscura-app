@@ -1,4 +1,3 @@
-import React from 'react';
 import { Platform } from 'react-native';
 import { Camera } from 'react-native-vision-camera';
 import {
@@ -10,12 +9,12 @@ import {
   useSession, useIdentity, useAcceptedFriends, usePendingFriends,
   useMessages, useStories, useProfiles, ObscuraBootstrap,
 } from '../store';
-import { usePeerTyping } from '../chat';
 import { canPromptFor, requestStartupPermissions } from '../permissions';
 import { Obscura } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 import { openPixViewer } from '../../navigation/openPixViewer';
-import { getJsLog, logError } from '../../utils/log';
+import { logError } from '../../utils/log';
+import { installHookHarness } from './hookHarness';
 
 jest.mock('react-native-vision-camera', () => ({
   Camera: {
@@ -375,37 +374,12 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
     expect(bridge.clipboard).toBe('copied-text');
 
     expect(await getFriendCode()).toBe(`${SELF}:me`);
-
-    for (let i = 0; i < 205; i += 1) {
-      logError('ring', `line-${i}`);
-    }
-    const ring = getJsLog();
-    expect(ring).toHaveLength(200);
-    expect(ring[ring.length - 1]).toContain('line-204');
     warn.mockRestore();
   });
 
-  it('wires selectors, ObscuraBootstrap, and usePeerTyping hooks to the store and bridge', async () => {
-    const cleanups: Array<() => void> = [];
-    const stateTransforms: Array<(prev: boolean) => boolean> = [];
-    const refObj = { current: false };
-
-    jest.spyOn(React, 'useSyncExternalStore').mockImplementation((_sub, getSnap) => getSnap());
-    jest.spyOn(React, 'useCallback').mockImplementation((fn) => fn);
-    jest.spyOn(React, 'useDebugValue').mockImplementation(() => {});
-    jest.spyOn(React, 'useMemo').mockImplementation((fn) => fn());
-    jest.spyOn(React, 'useRef').mockImplementation(() => ({ current: undefined } as any));
-    jest.spyOn(React, 'useState').mockImplementation(((init?: unknown) => {
-      const val = typeof init === 'function' ? (init as () => unknown)() : init;
-      const set = (next: unknown) => {
-        if (typeof next === 'function') stateTransforms.push(next as (prev: boolean) => boolean);
-      };
-      return [val, set];
-    }) as typeof React.useState);
-    jest.spyOn(React, 'useEffect').mockImplementation((fn) => {
-      const cleanup = fn();
-      if (typeof cleanup === 'function') cleanups.push(cleanup);
-    });
+  it('wires selectors and ObscuraBootstrap hooks to the store and bridge', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const harness = installHookHarness();
 
     session();
     useStore.setState({
@@ -424,10 +398,9 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
     expect(useStories()).toEqual([]);
     expect(useProfiles()).toEqual([]);
 
-    jest.spyOn(React, 'useRef').mockImplementation(() => refObj as any);
     jest.useFakeTimers();
     expect(ObscuraBootstrap()).toBeNull();
-    expect(refObj.current).toBe(true);
+    expect(harness.refObj.current).toBe(true);
     jest.advanceTimersByTime(60_000);
     // Second render while already requested skips re-requesting permissions.
     expect(ObscuraBootstrap()).toBeNull();
@@ -435,32 +408,21 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
     // Signed-out render resets permissionsRequested ref and skips session/sweep effects.
     useStore.setState({ authed: false, connState: 'disconnected' });
     expect(ObscuraBootstrap()).toBeNull();
-    expect(refObj.current).toBe(false);
+    expect(harness.refObj.current).toBe(false);
     jest.useRealTimers();
 
-    expect(usePeerTyping(BOB)).toBe(false);
-    bridge.__emit({ type: 'typingChanged', peerUserId: BOB, typing: true });
-    expect(stateTransforms[stateTransforms.length - 1](false)).toBe(true);
-
-    // Also cover error paths in ObscuraBootstrap permission request and usePeerTyping observe/unobserve.
+    // Also cover error path in ObscuraBootstrap permission request.
     useStore.setState({ authed: true, connState: 'connected' });
-    refObj.current = false;
+    harness.refObj.current = false;
     (Camera.getCameraPermissionStatus as jest.Mock).mockReturnValueOnce('not-determined');
     (Camera.requestCameraPermission as jest.Mock).mockRejectedValueOnce(new Error('perm boom'));
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     expect(ObscuraBootstrap()).toBeNull();
+    bridge.__emit({ type: 'connectionChanged', state: 'disconnected' });
     await Promise.resolve();
     await Promise.resolve();
-
-    bridge.__failNext('observeTyping', 'OBSERVE_TYPING_ERROR', 'obs boom');
-    bridge.__failNext('stopObservingTyping', 'STOP_OBSERVING_TYPING_ERROR', 'unobs boom');
-    expect(usePeerTyping(BOB)).toBe(false);
     await Promise.resolve();
 
-    while (cleanups.length > 0) {
-      cleanups.pop()?.();
-    }
-    await Promise.resolve();
+    harness.cleanup();
     warn.mockRestore();
   });
 

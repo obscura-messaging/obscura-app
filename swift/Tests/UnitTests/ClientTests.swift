@@ -114,8 +114,7 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(woken, ["story"])
     }
 
-    func testSendMessagePixSeenReceiptAndOutboxFlush() async throws {
-        // Sending to a non-friend stores locally with undelivered=1 and throws SEND_FAILED.
+    func testSendMessageToNonFriendQueuesInOutboxAndFlushesWhenAccepted() async throws {
         do {
             _ = try await client.sendMessage(peerUserId: bob.userId, content: "queued")
             XCTFail("expected send to non-friend to fail")
@@ -126,14 +125,15 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(stored.count, 1)
         XCTAssertEqual(stored[0].content, "queued")
 
-        // Once bob is an accepted friend, flushOutbox delivers it.
         try await client.friends.add(bob.userId, username: "bob", status: .accepted)
         let flushed = try await client.flushOutbox()
         XCTAssertEqual(flushed, 1)
         let bobReceived = try await bob.receive()
         XCTAssertEqual(bobReceived.map(\.message.directMessage.content), ["queued"])
+    }
 
-        // Incoming pix and seen receipt:
+    func testIncomingPixIsStoredAndMarkSeenRecordsViewedTimestamp() async throws {
+        try await client.friends.add(bob.userId, username: "bob", status: .accepted)
         let key = Data(repeating: 1, count: 32)
         let nonce = Data(repeating: 2, count: 12)
         _ = try await receive(clientMessage {
@@ -229,13 +229,16 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(afterLogout, [], "typing state is cleared on logout")
     }
 
-    func testSendMessageAndSendPixValidationAndDelivery() async throws {
+    func testSendMessageValidationRejectsBlankAndSelfPeer() async throws {
         await assertThrows(.invalidArgument("peerUserId must not be blank")) {
             _ = try await self.client.sendMessage(peerUserId: "  ", content: "hi")
         }
         await assertThrows(.invalidArgument("cannot message yourself")) {
             _ = try await self.client.sendMessage(peerUserId: self.phone.userId, content: "hi")
         }
+    }
+
+    func testSendPixValidationRejectsInvalidPeerAndAttachmentKeyMaterial() async throws {
         await assertThrows(.invalidArgument("peerUserId must not be blank")) {
             _ = try await self.client.sendPix(
                 peerUserId: " ", mediaRef: "m", contentKey: "AQID", nonce: "BAUG",
@@ -262,8 +265,9 @@ final class ClientTests: XCTestCase {
                 mediaType: "photo", caption: "", captionMeta: nil, displayDuration: 5
             )
         }
+    }
 
-        // Send pix to non-friend queues in outbox and throws SEND_FAILED.
+    func testSendMessageAndSendPixQueueWhenUnacceptedAndDeliverWhenAccepted() async throws {
         do {
             _ = try await client.sendPix(
                 peerUserId: bob.userId, mediaRef: "att_queued",
@@ -276,7 +280,6 @@ final class ClientTests: XCTestCase {
             XCTAssertEqual((error as? ObscuraError)?.code, "SEND_FAILED")
         }
 
-        // Accept friend and verify direct sendMessage, sendPix, and flushOutbox.
         try await client.friends.add(bob.userId, username: "bob", status: .accepted)
         let flushed = try await client.flushOutbox()
         XCTAssertEqual(flushed, 1)
@@ -299,7 +302,7 @@ final class ClientTests: XCTestCase {
         try await client.markSeen(entryId: "does_not_exist")
     }
 
-    func testPostStoryAndUpdateProfileAndOutboxRecovery() async throws {
+    func testPostStoryValidatesAttachmentKeyMaterial() async throws {
         await assertThrows(.invalidArgument("invalid story attachment key material")) {
             _ = try await self.client.postStory(
                 content: "bad", mediaRef: "att_1", contentKey: nil, nonce: "BAUG", mediaType: nil, captionMeta: nil
@@ -310,14 +313,15 @@ final class ClientTests: XCTestCase {
                 content: "bad", mediaRef: "att_1", contentKey: "AQID", nonce: "!!!", mediaType: nil, captionMeta: nil
             )
         }
+    }
 
-        // With no friends, postStory and updateProfile succeed immediately.
+    func testPostStoryAndUpdateProfileSucceedWithNoFriendsAndStepProfileTimestampsMonotonically() async throws {
         let s1 = try await client.postStory(
             content: "solo story", mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil
         )
         XCTAssertTrue(s1.hasPrefix("story_"))
         try await client.updateProfile(displayName: "Alice 1", bio: "Bio 1")
-        // Future existing timestamp steps monotonically by +1.
+
         let futureTs = ObscuraClient.nowMs() + 100_000
         try await client.content.upsertProfile(ProfileItem(
             userId: phone.userId, authorDeviceId: phone.deviceId, updatedAt: futureTs, displayName: "Future", bio: "B"
@@ -326,8 +330,9 @@ final class ClientTests: XCTestCase {
         let profiles = try await client.getProfiles()
         XCTAssertEqual(profiles.first?.displayName, "Alice 2")
         XCTAssertEqual(profiles.first?.updatedAt, futureTs + 1)
+    }
 
-        // Add an unreachable accepted friend so story and profile sends fail and mark undelivered.
+    func testUndeliveredStoryAndProfileFlushWhenReachableFriendIsAvailable() async throws {
         let ghostUserId = UUID().uuidString.lowercased()
         try await client.friends.add(ghostUserId, username: "ghost", status: .accepted)
         do {
@@ -348,7 +353,6 @@ final class ClientTests: XCTestCase {
             XCTAssertEqual((error as? ObscuraError)?.code, "SEND_FAILED")
         }
 
-        // Replace ghost with reachable friend bob and flush outbox.
         try await client.friends.remove(ghostUserId)
         try await client.friends.add(bob.userId, username: "bob", status: .accepted)
         let flushed = try await client.flushOutbox()
@@ -359,7 +363,7 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(bobReceived.count, 2)
     }
 
-    func testAttachmentsSweepCacheAndPushToken() async throws {
+    func testUploadDownloadAndCacheAttachmentFromFile() async throws {
         let testDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent(".att-test-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
@@ -399,13 +403,44 @@ final class ClientTests: XCTestCase {
         )
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: cachedPath)), payload)
 
-        // Second call hits the local file cache directly.
         let cachedHit = try await customClient.downloadAttachmentToCache(
             id: uploaded.id, contentKeyBase64: "", nonceBase64: ""
         )
         XCTAssertEqual(cachedHit, cachedPath)
+        try await customClient.logout()
 
-        // sweepExpired purges expired attachment files from cacheDir.
+        let noCacheClient = try ObscuraClient(
+            apiURL: FakeObscuraServer.baseURL, database: phone.db, deviceName: "test-device",
+            sessionStorage: MemorySessionStorage(), logger: SilentLogger(), attachmentCacheDir: nil
+        )
+        await assertThrows(.storageFailed("attachment cache directory unavailable")) {
+            _ = try await noCacheClient.downloadAttachmentToCache(id: "x", contentKeyBase64: "AQID", nonceBase64: "BAUG")
+        }
+    }
+
+    func testSweepExpiredPurgesCachedAttachmentFilesAndRegistersPushToken() async throws {
+        let testDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent(".sweep-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDir) }
+
+        let cacheDir = testDir.appendingPathComponent("cache", isDirectory: true)
+        let customClient = try ObscuraClient(
+            apiURL: FakeObscuraServer.baseURL, database: phone.db, deviceName: "test-device",
+            sessionStorage: MemorySessionStorage(), logger: SilentLogger(), attachmentCacheDir: cacheDir
+        )
+        try await customClient.begin(Session(
+            token: phone.deviceId, refreshToken: "rt",
+            expiresAt: Int64(Date().timeIntervalSince1970) + 3600,
+            userId: phone.userId, deviceId: phone.deviceId, username: "alice"
+        ))
+
+        let uploaded = try await customClient.uploadAttachment(Data("cached-pix".utf8))
+        _ = try await customClient.downloadAttachmentToCache(
+            id: uploaded.id,
+            contentKeyBase64: uploaded.contentKey.base64EncodedString(),
+            nonceBase64: uploaded.nonce.base64EncodedString()
+        )
         try await customClient.content.insertConversationItem(ConversationItem(
             id: "exp_pix", peerUserId: bob.userId, kind: "pix", authorUserId: bob.userId,
             sentAt: 100, viewedAt: 100, content: "",
@@ -419,45 +454,33 @@ final class ClientTests: XCTestCase {
         try await customClient.registerPushToken("apns-token-xyz")
         XCTAssertEqual(server.registeredPushTokens(), ["apns-token-xyz"])
         try await customClient.logout()
-
-        // Client with nil attachmentCacheDir throws STORAGE_ERROR on downloadAttachmentToCache.
-        let noCacheClient = try ObscuraClient(
-            apiURL: FakeObscuraServer.baseURL, database: phone.db, deviceName: "test-device",
-            sessionStorage: MemorySessionStorage(), logger: SilentLogger(), attachmentCacheDir: nil
-        )
-        await assertThrows(.storageFailed("attachment cache directory unavailable")) {
-            _ = try await noCacheClient.downloadAttachmentToCache(id: "x", contentKeyBase64: "AQID", nonceBase64: "BAUG")
-        }
     }
 
-    func testFriendManagementAndMutualFriendRequest() async throws {
+    func testAddAndAcceptFriendRejectSelfAndMissingRequest() async throws {
         await assertThrows(.invalidArgument("cannot befriend yourself")) {
             try await self.client.addFriendByCode(FriendCode.encode(userId: self.phone.userId, username: "alice"))
         }
         await assertThrows(.invalidArgument("no friend request from \(bob.userId)")) {
             try await self.client.acceptFriend(self.bob.userId)
         }
+    }
 
-        // Send friend request to bob.
+    func testFriendRequestLifecycleResendsAutoAcceptsMutualAndPromotesPendingReceived() async throws {
         let bobCode = FriendCode.encode(userId: bob.userId, username: "bob")
         try await client.addFriendByCode(bobCode)
         var status = try await client.friends.friend(bob.userId)?.status
         XCTAssertEqual(status, .pendingSent)
 
-        // Calling addFriendByCode again when .pendingSent resends the request.
         try await client.addFriendByCode(bobCode)
         let bobReceived = try await bob.receive()
         XCTAssertEqual(bobReceived.count, 2)
 
-        // Receiving a friendRequest from bob while .pendingSent auto-accepts bob.
         _ = try await receive(clientMessage { $0.friendRequest.username = "bob" }, from: bob)
         status = try await client.friends.friend(bob.userId)?.status
         XCTAssertEqual(status, .accepted)
 
-        // Calling addFriendByCode when already .accepted is a no-op.
         try await client.addFriendByCode(bobCode)
 
-        // Calling addFriendByCode when .pendingReceived accepts the friend.
         let carol = try await server.register(UUID().uuidString.lowercased())
         try await client.friends.add(carol.userId, username: "carol", status: .pendingReceived)
         try await client.addFriendByCode(FriendCode.encode(userId: carol.userId, username: "carol"))
@@ -465,7 +488,7 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(carolStatus, .accepted)
     }
 
-    func testPeerTypingHelpersAndRateLimiting() async throws {
+    func testPeerTypingValidatesArgumentsAndComputesCanonicalConversationId() async throws {
         await assertThrows(.invalidArgument("peerUserId must not be blank")) {
             try await self.client.sendTyping(peerUserId: "  ", state: .started)
         }
@@ -474,7 +497,9 @@ final class ClientTests: XCTestCase {
         }
         XCTAssertEqual(ObscuraClient.typingConvId("a", "b"), "a_b")
         XCTAssertEqual(ObscuraClient.typingConvId("b", "a"), "a_b")
+    }
 
+    func testObservePeerTypingTracksIncomingStartedAndStoppedSignals() async throws {
         let stream = try await client.observeTyping(peerUserId: bob.userId)
         var iterator = stream.makeAsyncIterator()
         let initial = await iterator.next()
@@ -494,24 +519,23 @@ final class ClientTests: XCTestCase {
         }, from: bob)
         let afterStop = await iterator.next()
         XCTAssertEqual(afterStop, false)
+    }
 
-        // Rate limiting: second .started within 2s is suppressed, .stopped sends immediately.
+    func testSendPeerTypingRateLimitsStartedAndLogsDeliveryFailure() async throws {
         try await client.sendTyping(peerUserId: bob.userId, state: .started)
         try await client.sendTyping(peerUserId: bob.userId, state: .started)
         try await client.sendTyping(peerUserId: bob.userId, state: .stopped)
         let bobTyping = try await bob.receive()
         XCTAssertEqual(bobTyping.count, 2)
 
-        // Failed typing delivery logs and does not throw.
         let ghost = UUID().uuidString.lowercased()
         try await client.sendTyping(peerUserId: ghost, state: .started)
         XCTAssertTrue(client.getDebugLog().contains { $0.contains("typing signal to \(ghost) failed") })
     }
 
-    func testReceiveValidationAcrossAllPayloadArmsAndPreKeyReplenish() async throws {
+    func testReceiveDirectMessageHandlesSelfSyncAndDropsInvalidPeerOrBlankId() async throws {
         let laptop = try await server.register(phone.userId)
 
-        // Self-sync directMessage from own linked device: valid peer vs invalid peer.
         try await send(clientMessage {
             $0.timestamp = 1_000
             $0.directMessage.id = "self_dm_1"
@@ -533,22 +557,31 @@ final class ClientTests: XCTestCase {
         }, from: bob, to: phone.userId)
         _ = await deliver(phone, to: client)
 
-        var msgs = try await client.getMessages()
+        let msgs = try await client.getMessages()
         XCTAssertEqual(msgs.map(\.id), ["self_dm_1"])
         XCTAssertEqual(msgs.first?.peerUserId, bob.userId)
         XCTAssertEqual(msgs.first?.authorUserId, phone.userId)
+    }
 
-        // Seen receipt from bob for self_dm_1 (authored by phone.userId) updates viewedAt.
+    func testReceiveSeenReceiptUpdatesAuthoredEntryOnceAndIgnoresBlankEntryId() async throws {
+        let laptop = try await server.register(phone.userId)
+        try await send(clientMessage {
+            $0.timestamp = 1_000
+            $0.directMessage.id = "self_dm_1"
+            $0.directMessage.peerUserID = bob.userId
+            $0.directMessage.content = "from laptop"
+        }, from: laptop, to: phone.userId)
+        _ = await deliver(phone, to: client)
+
         _ = try await receive(clientMessage {
             $0.timestamp = 2_000
             $0.seenReceipt.entryID = "self_dm_1"
             $0.seenReceipt.peerUserID = phone.userId
             $0.seenReceipt.viewedAt = 1_800
         }, from: bob)
-        msgs = try await client.getMessages()
+        var msgs = try await client.getMessages()
         XCTAssertEqual(msgs.first?.viewedAt, 1_800)
 
-        // Invalid seen receipt (blank entryID) and duplicate seen receipt.
         _ = try await receive(clientMessage {
             $0.seenReceipt.entryID = " "
             $0.seenReceipt.peerUserID = phone.userId
@@ -561,8 +594,9 @@ final class ClientTests: XCTestCase {
         }, from: bob)
         msgs = try await client.getMessages()
         XCTAssertEqual(msgs.first?.viewedAt, 1_800)
+    }
 
-        // Invalid pix (missing attachment), valid story with attachment, invalid story (blank id), and profile.
+    func testReceiveValidatesPixStoryAndProfilePayloads() async throws {
         _ = try await receive(clientMessage {
             $0.pix.id = "bad_pix"
             $0.pix.peerUserID = phone.userId
@@ -591,8 +625,9 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(stories.first?.attachment?.mediaType, "photo")
         let profiles = try await client.getProfiles()
         XCTAssertEqual(profiles.first { $0.userId == bob.userId }?.displayName, "Bob Name")
+    }
 
-        // Low prekey count after receive triggers replenishPreKeys().
+    func testReceiveTriggersPreKeyReplenishmentWhenLocalCountIsLow() async throws {
         try await client.db.write { db in
             try db.execute(sql: "DELETE FROM signal_prekeys WHERE key_id > 5")
         }

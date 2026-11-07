@@ -1,4 +1,4 @@
-package scenarios
+package dev.barrelmaker.obscura.kit.wire
 
 import org.json.JSONObject
 import java.io.File

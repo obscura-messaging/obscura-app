@@ -396,18 +396,16 @@ class AccountTest {
         assertTrue(runCatching { signalOnly.register("self", " ") }.exceptionOrNull() is ObscuraError.InvalidArgument)
     }
 
-    @Test fun `login link-session cache misses, unprovisioned login errors, device mismatch variants, and provision account mismatch`() = runBlocking {
+    @Test fun `unprovisioned login maps 401 to invalid credentials, rethrows server errors, and invalidates stale cached link sessions`() = runBlocking {
         val now = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
         val unprovisioned = newClient(url, MemoryStorage(), clock = { now.get() })
 
-        // Unprovisioned login with 401 returns INVALID_CREDENTIALS; 500 rethrows
         account.linkSessionStatus = 401
         assertEquals(LoginScenario.INVALID_CREDENTIALS, unprovisioned.login("self", "wrong"))
         account.linkSessionStatus = 500
         assertTrue(runCatching { unprovisioned.login("self", "wrong") }.exceptionOrNull() is ObscuraError.Http)
         account.linkSessionStatus = 200
 
-        // Cached link session is discarded when username differs, password differs, or session is near expiry
         assertEquals(LoginScenario.LINK_REQUIRED, unprovisioned.login("self", "password"))
         unprovisioned.beginLink("other-user", "password", "Tablet")
         assertEquals(4, requestsTo("/v1/link-sessions").size)
@@ -420,8 +418,9 @@ class AccountTest {
         now.addAndGet(600_000L)
         unprovisioned.beginLink("self", "password", "Tablet")
         assertEquals(8, requestsTo("/v1/link-sessions").size)
+    }
 
-        // Provisioned login: 500 rethrows; mismatched response.deviceId or missing Signal identity returns DEVICE_MISMATCH
+    @Test fun `provisioned login detects server errors, device mismatch, missing identity, and provisionLinked account mismatch`() = runBlocking {
         val provisioned = sessionClient(url, MemoryStorage())
         account.loginStatus = 500
         assertTrue(runCatching { provisioned.login("self", "password") }.exceptionOrNull() is ObscuraError.Http)
@@ -433,7 +432,7 @@ class AccountTest {
         account.loginDeviceId = SELF_DEVICE_ID
         assertEquals(LoginScenario.DEVICE_MISMATCH, noSignal.login("self", "password"))
 
-        // provisionLinked with default persist parameter and mismatched userId throws ProtocolViolation
+        val unprovisioned = newClient(url, MemoryStorage())
         unprovisioned.auth.publishAuthenticated()
         assertEquals(AuthState.LOGGED_OUT, unprovisioned.authState.value)
         account.provisionUserId = "019f025a-0000-7de6-84b6-000000000999"

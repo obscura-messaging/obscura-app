@@ -1,4 +1,4 @@
-package scenarios
+package dev.barrelmaker.obscura.kit.wire
 
 import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.TypingState

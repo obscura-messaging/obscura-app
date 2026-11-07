@@ -429,22 +429,19 @@ class SessionLifecycleTest {
         Unit
     }
 
-    @Test fun `refresh generation races, mismatched session response, and automatic refresh loop branches`() = runBlocking {
+    @Test fun `in-flight refresh completing after logout or session replacement does not clobber current auth state`() = runBlocking {
         val storage = storedSession()
         val c = sessionClient(url, storage)
         assertTrue(c.auth.restore())
         val initialCreds = c.auth.requireCredentials()
 
-        // Calling restore() again while already authenticated cancels the previous refreshLoop
         assertTrue(c.auth.restore())
 
-        // end() with non-matching expected credentials or non-matching expectedGeneration returns null without ending
         val otherCreds = initialCreds.copy(token = "other")
         assertNull(c.auth.end(expected = otherCreds))
         assertNull(c.auth.end(expected = c.auth.requireCredentials(), expectedGeneration = 999L))
         assertEquals(AuthState.AUTHENTICATED, c.authState.value)
 
-        // Start a refresh, then end(expected = current) so refreshInFlight is not cancelled:
         // 1) Fails with 500 while logged out -> returns REJECTED
         server.enqueue(refresh(500))
         val failWhileLoggedOut = async(Dispatchers.Default) { c.auth.refresh() }
@@ -480,15 +477,23 @@ class SessionLifecycleTest {
         storage.data = storedSession(refreshToken = "rep4").data
         assertTrue(c.auth.restore())
         assertEquals(TokenStatus.FRESH, okAfterReplace.await())
+        c.auth.end()
+        Unit
+    }
 
-        // 5) Calling restore() while a refresh is in flight cancels refreshInFlight directly in start()
+    @Test fun `restore cancels in-flight refresh, handles replacement during rejection callback, and rejects mismatched refresh identity`() = runBlocking {
+        val storage = storedSession()
+        val c = sessionClient(url, storage)
+        assertTrue(c.auth.restore())
+
+        // Calling restore() while a refresh is in flight cancels refreshInFlight directly in start()
         server.enqueue(refresh(200))
         val canceledByStart = async(Dispatchers.Default) { runCatching { c.auth.refresh() } }
         assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
         assertTrue(c.auth.restore())
         canceledByStart.await()
 
-        // 6) Refresh 401 where logger callback restores a replacement session before onRejected runs
+        // Refresh 401 where logger callback restores a replacement session before onRejected runs
         c.logger = object : ObscuraLogger by NoOpLogger {
             override fun tokenRefreshFailed(attempt: Int, reason: String) {
                 c.auth.end(expected = c.auth.credentials)
@@ -501,7 +506,7 @@ class SessionLifecycleTest {
         assertEquals(AuthState.AUTHENTICATED, c.authState.value)
         c.logger = NoOpLogger
 
-        // 7) Refresh returning credentials for a different userId or deviceId throws ProtocolViolation
+        // Refresh returning credentials for a different userId or deviceId throws ProtocolViolation
         server.enqueue(MockResponse.Builder().body(authResponseJson(userId = UUID.randomUUID().toString()).toString()).build())
         assertTrue(runCatching { c.auth.refresh() }.exceptionOrNull() is ObscuraError.ProtocolViolation)
         server.enqueue(MockResponse.Builder().body(authResponseJson(deviceId = UUID.randomUUID().toString()).toString()).build())
