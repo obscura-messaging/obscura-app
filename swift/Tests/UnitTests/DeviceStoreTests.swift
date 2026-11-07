@@ -94,10 +94,12 @@ final class DeviceStoreTests: XCTestCase {
         try await friends.add("b", username: "b", status: .pendingSent)
         let removedPending = try await friends.removePendingSent("b")
         try await friends.remove("a")
+        let afterRemoveExisting = try await version()
         try await friends.remove("missing")
 
         XCTAssertFalse(removedAccepted)
         XCTAssertTrue(removedPending)
+        XCTAssertEqual(afterRemoveExisting, 5)
         let final = try await version()
         XCTAssertEqual(final, 5)
     }

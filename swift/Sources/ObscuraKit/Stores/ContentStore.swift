@@ -134,7 +134,7 @@ public struct ConversationItem: Sendable, Equatable {
     func toClientMessage() -> Obscura_Client_V1_ClientMessage {
         var message = Obscura_Client_V1_ClientMessage()
         message.timestamp = sentAt
-        if kind == "pix", let attachment {
+        if let attachment {
             message.pix.id = id
             message.pix.peerUserID = peerUserId
             message.pix.attachment = attachment.proto

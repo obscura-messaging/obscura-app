@@ -300,12 +300,18 @@ class ContentStoreTest {
         )
         assertEquals("photo", decodedDefaultType?.mediaType)
 
-        // ContentStore profile upsert when newer timestamp wins, raw attachment edge cases, and envelope check failure
+        // ContentStore profile upsert when newer timestamp wins, equal timestamp/device is rejected, raw attachment edge cases, and envelope check failure
         assertTrue(
             targetStore.upsertProfileIfNewerInTransaction(
                 ProfileItem(peer, "dev_0", 999L, "Bob Newer", "New Bio"),
             ),
         )
+        assertFalse(
+            targetStore.upsertProfileIfNewerInTransaction(
+                ProfileItem(peer, "dev_0", 999L, "Duplicate Timestamp And Device", "Ignored"),
+            ),
+        )
+        assertEquals("Bob Newer", targetStore.getProfileInTransaction(peer)?.displayName)
         db.contentQueries.insertStory("st_no_key", peer, 10L, 100L, "c", "ref", null, byteArrayOf(1), "photo", null, 0L)
         db.contentQueries.insertStory("st_no_nonce", peer, 10L, 100L, "c", "ref", byteArrayOf(1), null, "photo", null, 0L)
         db.contentQueries.insertStory("st_null_type", peer, 10L, 100L, "c", "ref", byteArrayOf(1), byteArrayOf(2), null, null, 0L)
