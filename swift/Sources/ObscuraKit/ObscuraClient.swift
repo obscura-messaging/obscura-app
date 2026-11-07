@@ -88,7 +88,6 @@ public actor ObscuraClient {
 
     var session: Session?
     var sender: MessageSender?
-    var typingSentAt: [String: Date] = [:]
     var pendingLinkSession: (username: String, password: String, session: LinkSessionResponse)?
 
     var sessionGeneration = 0
@@ -181,8 +180,16 @@ public actor ObscuraClient {
 
     // MARK: - Auth
 
+    static func validateCredentials(_ username: String, _ password: String) throws {
+        if username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw ObscuraError.invalidArgument("username and password must not be blank")
+        }
+    }
+
     /// Creates the account and provisions this device as its primary.
     public func register(_ username: String, _ password: String) async throws {
+        try Self.validateCredentials(username, password)
         try await requireUnprovisionedDevice()
         let keys = try SignalKeys.generate()
         let response = try await api.registerUser(keys.accountRequest(username: username, password: password, name: deviceName))
@@ -191,6 +198,7 @@ public actor ObscuraClient {
 
     /// Only `.existingDevice` changes the client's state.
     public func login(_ username: String, _ password: String) async throws -> LoginScenario {
+        try Self.validateCredentials(username, password)
         guard let localDeviceId = try await directory.localDeviceId() else {
             let linkSession: LinkSessionResponse
             do {
@@ -218,6 +226,7 @@ public actor ObscuraClient {
     /// Deletes every device of the account and its identity on the server, wipes this device's local
     /// data, and provisions this device as the new primary with a new identity.
     public func resetAccount(_ username: String, _ password: String) async throws {
+        try Self.validateCredentials(username, password)
         let keys = try SignalKeys.generate()
         let response = try await api.resetAccount(keys.accountRequest(username: username, password: password, name: deviceName))
         let newSession = try session(response, username: username)
@@ -292,7 +301,6 @@ public actor ObscuraClient {
         sender = nil
         api.setToken(nil)
         typing.clear()
-        typingSentAt = [:]
         auth.set(.loggedOut)
         try storeSession { try sessionStorage.clear() }
         if revoking, let ended {

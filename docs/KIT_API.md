@@ -269,7 +269,8 @@ reconnect or foreground.
 
 `sweepExpired()` deletes expired conversation and story rows with
 `PRAGMA secure_delete = ON`, records their IDs in `ErasedEntry`, truncates the
-WAL, and returns `purgedMediaRefs` and `touchedModels`.
+WAL, purges expired media files from `attachmentCacheDir`, and returns the set
+of `touchedModels`.
 
 ## Typing, attachments and push
 

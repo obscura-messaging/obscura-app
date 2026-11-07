@@ -68,7 +68,7 @@ final class LinkConformanceTests: XCTestCase {
         XCTAssertEqual(bundle.friends.map(\.userID), friends.map { $0["userId"] as? String ?? "" }, name)
         XCTAssertEqual(bundle.friends.map(\.username), friends.map { $0["username"] as? String ?? "" }, name)
         XCTAssertEqual(bundle.friends.map(\.status), friends.map { statusByWire[$0["status"] as? String ?? ""] ?? .unspecified }, name)
-        XCTAssertNoThrow(try WireCodec.friends(bundle.friends), name)
+        XCTAssertEqual(try WireCodec.friends(bundle.friends).map(WireCodec.friendRecord), bundle.friends, name)
         if let history = expected["history"] as? [String: Any] {
             XCTAssertTrue(bundle.hasHistory, name)
             XCTAssertEqual(bundle.history.attachmentID, history["attachmentId"] as? String, name)

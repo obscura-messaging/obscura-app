@@ -94,10 +94,12 @@ final class DeviceStoreTests: XCTestCase {
         try await friends.add("b", username: "b", status: .pendingSent)
         let removedPending = try await friends.removePendingSent("b")
         try await friends.remove("a")
+        let afterRemoveExisting = try await version()
         try await friends.remove("missing")
 
         XCTAssertFalse(removedAccepted)
         XCTAssertTrue(removedPending)
+        XCTAssertEqual(afterRemoveExisting, 5)
         let final = try await version()
         XCTAssertEqual(final, 5)
     }
@@ -106,7 +108,7 @@ final class DeviceStoreTests: XCTestCase {
         try await friends.add("old", username: "old", status: .accepted)
 
         try await db.write {
-            try FriendStore.replace([("new", "new", .pendingReceived)], version: 42, in: $0)
+            try FriendStore.replace([Friend(userId: "new", username: "new", status: .pendingReceived)], version: 42, in: $0)
         }
 
         let all = try await friends.all()

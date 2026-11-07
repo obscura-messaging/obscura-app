@@ -2,7 +2,7 @@ package dev.barrelmaker.obscura.kit
 
 import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.crypto.toBase64
-import dev.barrelmaker.obscura.kit.stores.FriendData
+import dev.barrelmaker.obscura.kit.stores.Friend
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -343,7 +343,7 @@ class ReceivePathTest {
     fun `a request from a stranger is stored as pending with its username`() = runBlocking {
         val c = authenticatedClient()
         c.receive(friendRequest("alice"))
-        assertEquals(listOf(FriendData(peer, "alice", FriendStatus.PENDING_RECEIVED)), c.getFriends())
+        assertEquals(listOf(Friend(peer, "alice", FriendStatus.PENDING_RECEIVED)), c.getFriends())
     }
 
     @Test
@@ -351,14 +351,14 @@ class ReceivePathTest {
         val c = authenticatedClient()
         c.receive(friendRequest("alice"), envelopeId = "env-1")
         c.receive(friendRequest("mallory"), envelopeId = "env-2")
-        assertEquals(listOf(FriendData(peer, "alice", FriendStatus.PENDING_RECEIVED)), c.getFriends())
+        assertEquals(listOf(Friend(peer, "alice", FriendStatus.PENDING_RECEIVED)), c.getFriends())
     }
 
     @Test
     fun `an unsolicited accept is ignored`() = runBlocking {
         val c = authenticatedClient()
         c.receive(friendAccept())
-        assertEquals(emptyList<FriendData>(), c.getFriends())
+        assertEquals(emptyList<Friend>(), c.getFriends())
 
         c.receive(friendRequest("alice"), envelopeId = "env-2")
         c.receive(friendAccept(), envelopeId = "env-3")
@@ -387,7 +387,7 @@ class ReceivePathTest {
         c.db.friendQueries.insert(peer, "alice", FriendStatus.ACCEPTED.value)
         assertTrue(runCatching { c.receive(friendRequest("mallory")) }.exceptionOrNull() is ObscuraError.SendFailed)
         c.receive(friendAccept(), envelopeId = "env-2")
-        assertEquals(listOf(FriendData(peer, "alice", FriendStatus.ACCEPTED)), c.getFriends())
+        assertEquals(listOf(Friend(peer, "alice", FriendStatus.ACCEPTED)), c.getFriends())
     }
 
     @Test
@@ -398,7 +398,7 @@ class ReceivePathTest {
 
         c.removeFriend(peer)
 
-        assertEquals(emptyList<FriendData>(), c.getFriends())
+        assertEquals(emptyList<Friend>(), c.getFriends())
         assertEquals(emptyList<String>(), c.devices.devicesOf(peer))
     }
 

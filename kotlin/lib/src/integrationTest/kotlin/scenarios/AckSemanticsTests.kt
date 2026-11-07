@@ -31,6 +31,7 @@ class AckSemanticsTests {
         override fun tokenRefreshFailed(attempt: Int, reason: String) {}
         override fun preKeyReplenishFailed(reason: String) {}
         override fun identityChanged(userId: String) {}
+        override fun sessionEstablishFailed(userId: String, reason: String) {}
         override fun databaseError(store: String, operation: String, reason: String) {}
     }
 

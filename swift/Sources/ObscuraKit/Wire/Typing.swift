@@ -9,6 +9,7 @@ public enum TypingState: String, Sendable, Codable {
 /// renewed; `stopped` ends it.
 final class TypingTracker: Sendable {
     static let expiry: UInt64 = 5_000_000_000
+    static let throttleMs: UInt64 = 2_000
     let expiryNanoseconds: UInt64
 
     init(expiryNanoseconds: UInt64 = TypingTracker.expiry) {
@@ -25,10 +26,22 @@ final class TypingTracker: Sendable {
         var typers: [String: [String: Typer]] = [:]  // contextId -> senderDeviceId -> typer
         var subscribers: [String: [UUID: AsyncStream<[String]>.Continuation]] = [:]
         var published: [String: [String]] = [:]
+        var lastSent: [String: UInt64] = [:]
     }
 
     private let state = Locked(State())
     private let delivery = DispatchQueue(label: "ObscuraKit.typing-delivery")
+
+    func shouldSend(contextId: String, state typingState: TypingState, nowMs: UInt64 = ObscuraClient.nowMs()) -> Bool {
+        let key = "\(typingState.rawValue):\(contextId)"
+        return state.withLock { state in
+            if let last = state.lastSent[key], nowMs >= last, nowMs - last < Self.throttleMs {
+                return false
+            }
+            state.lastSent[key] = nowMs
+            return true
+        }
+    }
 
     func started(contextId: String, userId: String, deviceId: String) {
         let token = UUID()
@@ -49,6 +62,7 @@ final class TypingTracker: Sendable {
 
     func clear() {
         state.withLock { state in
+            state.lastSent.removeAll()
             for context in Array(state.typers.keys) {
                 state.typers[context]?.values.forEach { $0.expiry.cancel() }
                 state.typers[context] = nil

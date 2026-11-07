@@ -255,10 +255,6 @@ data class ProfileItem(
             .build()
 }
 
-typealias ConversationItemData = ConversationItem
-typealias StoryItemData = StoryItem
-typealias ProfileItemData = ProfileItem
-
 data class SweepOutcome(
     val purgedMediaRefs: List<String>,
     val touchedModels: List<String>,

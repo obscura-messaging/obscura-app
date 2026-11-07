@@ -148,6 +148,31 @@ final class ContentStoreTests: XCTestCase {
         let afterMaxAge = try await store.messages()
         XCTAssertTrue(afterMaxAge.isEmpty)
 
+        // Exact tombstone pruning boundary at now == maxEphemeralAgeMs: erased_at <= 0 is deleted, erased_at == 1 is kept.
+        let boundaryDb = try ObscuraDatabase.inMemory()
+        let boundaryStore = ContentStore(db: boundaryDb)
+        XCTAssertNil(StoryItem(id: "s", authorUserId: "u", sentAt: 1, content: "c", captionMeta: "").captionMeta)
+        XCTAssertEqual(StoryItem(id: "s", authorUserId: "u", sentAt: 1, content: "c", captionMeta: "m").captionMeta, "m")
+        _ = try await boundaryStore.insertConversationItem(message("tomb_0", sentAt: 0))
+        _ = try await boundaryStore.insertConversationItem(message("tomb_1", sentAt: 1))
+        _ = try await boundaryStore.sweepExpired(now: ContentStore.maxEphemeralAgeMs)
+        let reinsertAtZero = try await boundaryStore.insertConversationItem(message("tomb_0", sentAt: 10))
+        XCTAssertFalse(reinsertAtZero, "tomb_0 was just erased at maxEphemeralAgeMs")
+        try await boundaryDb.write { db in
+            try db.execute(
+                sql: "INSERT INTO erased_entries (id, erased_at) VALUES (?, 0), (?, 1)",
+                arguments: ["tomb_zero".storedText, "tomb_one".storedText]
+            )
+        }
+        _ = try await boundaryStore.sweepExpired(now: ContentStore.maxEphemeralAgeMs - 1)
+        let zeroBeforeBoundary = try await boundaryStore.insertConversationItem(message("tomb_zero", sentAt: 10))
+        XCTAssertFalse(zeroBeforeBoundary)
+        _ = try await boundaryStore.sweepExpired(now: ContentStore.maxEphemeralAgeMs)
+        let zeroAtBoundary = try await boundaryStore.insertConversationItem(message("tomb_zero", sentAt: 10))
+        let oneAtBoundary = try await boundaryStore.insertConversationItem(message("tomb_one", sentAt: 10))
+        XCTAssertTrue(zeroAtBoundary, "erased_at == 0 is pruned at now == maxEphemeralAgeMs")
+        XCTAssertFalse(oneAtBoundary, "erased_at == 1 is retained at now == maxEphemeralAgeMs")
+
         // At 30d after tombstone creation: old tombstones in erased_entries are cleaned up.
         let afterTombstoneMaxAge = try await store.sweepExpired(
             now: viewedAt + ContentStore.expireAfterViewMs + ContentStore.maxEphemeralAgeMs
@@ -344,6 +369,32 @@ final class ContentStoreTests: XCTestCase {
         _ = try await store.sweepExpired(now: 100 + ContentStore.maxEphemeralAgeMs)
         for file in [path, path + "-wal"] {
             XCTAssertFalse(contains(file, secret))
+        }
+        XCTAssertEqual(FileManager.default.contents(atPath: path + "-wal")?.count ?? 0, 0)
+
+        // Story-only expiry and tombstone-only pruning also zero the main database and truncate the WAL.
+        let storySecret = "WAL-STORY-SECRET-9bc112"
+        try await store.insertStoryItem(StoryItem(
+            id: "erase_story", authorUserId: "u", sentAt: 200,
+            content: storySecret + String(repeating: "y", count: 6000)
+        ))
+        try await db.writeWithoutTransaction { try $0.execute(sql: "PRAGMA wal_checkpoint(FULL)") }
+        XCTAssertTrue(contains(path, storySecret))
+        _ = try await store.sweepExpired(now: 200 + ContentStore.storyMaxAgeMs)
+        for file in [path, path + "-wal"] {
+            XCTAssertFalse(contains(file, storySecret))
+        }
+        XCTAssertEqual(FileManager.default.contents(atPath: path + "-wal")?.count ?? 0, 0)
+
+        let tombSecret = "WAL-TOMB-SECRET-3de441" + String(repeating: "x", count: 6000)
+        try await db.write { db in
+            try db.execute(sql: "INSERT INTO erased_entries (id, erased_at) VALUES (?, 0)", arguments: [tombSecret.storedText])
+        }
+        try await db.writeWithoutTransaction { try $0.execute(sql: "PRAGMA wal_checkpoint(FULL)") }
+        XCTAssertTrue(contains(path, "WAL-TOMB-SECRET-3de441"))
+        _ = try await store.sweepExpired(now: ContentStore.maxEphemeralAgeMs)
+        for file in [path, path + "-wal"] {
+            XCTAssertFalse(contains(file, "WAL-TOMB-SECRET-3de441"))
         }
         XCTAssertEqual(FileManager.default.contents(atPath: path + "-wal")?.count ?? 0, 0)
 

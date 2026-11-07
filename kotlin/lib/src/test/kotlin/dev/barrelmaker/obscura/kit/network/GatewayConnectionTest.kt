@@ -25,7 +25,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class GatewayConnectionTest {
     private val server = MockWebServer().apply { start() }
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
+    private val scope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.test.StandardTestDispatcher(scheduler))
     private val logs = Collections.synchronizedList(mutableListOf<String>())
     private val beforeConnectCalls = AtomicInteger()
     private val gateway = GatewayConnection(
@@ -40,12 +41,31 @@ class GatewayConnectionTest {
         server.close()
     }
 
+    private fun advanceVirtualTime(ms: Long = 1_500L) {
+        scheduler.advanceTimeBy(ms)
+        scheduler.runCurrent()
+    }
+
+    private suspend fun awaitReconnectAndAdvance(ms: Long = 1_001L) {
+        withTimeout(5_000) { gateway.state.first { it == ConnectionState.RECONNECTING } }
+        advanceVirtualTime(ms)
+    }
+
     private fun enqueueGateway(onOpen: (WebSocket) -> Unit = {}) {
         server.enqueue(MockResponse.Builder().body("""{"ticket":"t"}""").build())
         server.enqueue(MockResponse.Builder().webSocketUpgrade(object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) = onOpen(webSocket)
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(1000, null) }
         }).build())
+    }
+
+    private suspend fun awaitConnected(minRequests: Int = 0) {
+        withTimeout(5_000) {
+            while (gateway.state.value != ConnectionState.CONNECTED || server.requestCount < minRequests) {
+                scheduler.runCurrent()
+                delay(5)
+            }
+        }
     }
 
     @Test
@@ -67,9 +87,9 @@ class GatewayConnectionTest {
         enqueueGateway()
 
         gateway.connect()
-        withTimeout(5_000) { gateway.state.first { it == ConnectionState.RECONNECTING } }
-        withTimeout(5_000) { gateway.state.first { it == ConnectionState.CONNECTED } }
-        delay(1_500)
+        awaitReconnectAndAdvance()
+        awaitConnected(minRequests = 4)
+        advanceVirtualTime(30_000L)
 
         assertEquals(4, server.requestCount)
         assertEquals(2, beforeConnectCalls.get())
@@ -80,7 +100,7 @@ class GatewayConnectionTest {
         server.enqueue(MockResponse.Builder().code(500).build())
 
         assertTrue(runCatching { gateway.connect() }.isFailure)
-        delay(1_500)
+        advanceVirtualTime(30_000L)
 
         assertEquals(ConnectionState.DISCONNECTED, gateway.state.value)
         assertEquals(1, server.requestCount)
@@ -93,8 +113,8 @@ class GatewayConnectionTest {
         gateway.connect()
         withTimeout(5_000) { gateway.state.first { it == ConnectionState.RECONNECTING } }
 
-        withTimeout(900) { List(5) { async { gateway.connect() } }.awaitAll() }
-        delay(1_200)
+        withTimeout(5_000) { List(5) { async { gateway.connect() } }.awaitAll() }
+        advanceVirtualTime(30_000L)
 
         assertEquals(ConnectionState.CONNECTED, gateway.state.value)
         assertEquals(4, server.requestCount)
@@ -108,7 +128,7 @@ class GatewayConnectionTest {
 
         gateway.connect()
         gateway.disconnect()
-        delay(1_500)
+        advanceVirtualTime(30_000L)
 
         assertEquals(ConnectionState.DISCONNECTED, gateway.state.value)
         assertEquals(2, server.requestCount)
@@ -120,11 +140,9 @@ class GatewayConnectionTest {
         enqueueGateway()
 
         gateway.connect()
-        withTimeout(5_000) { while (logs.none { it.contains("undecodable frame") }) delay(10) }
-
-        withTimeout(5_000) {
-            while (server.requestCount < 4 || gateway.state.value != ConnectionState.CONNECTED) delay(10)
-        }
+        withTimeout(5_000) { while (logs.none { it.contains("undecodable frame") }) delay(5) }
+        awaitReconnectAndAdvance()
+        awaitConnected(minRequests = 4)
     }
 
     @Test
@@ -150,9 +168,8 @@ class GatewayConnectionTest {
             }
             enqueueGateway()
             gateway.connect()
-            withTimeout(5_000) {
-                while (server.requestCount < previousRequests + 4 || gateway.state.value != ConnectionState.CONNECTED) delay(10)
-            }
+            awaitReconnectAndAdvance()
+            awaitConnected(minRequests = previousRequests + 4)
             assertTrue(logs.any { it.contains(if (payload is String) "invalid text frame" else "invalid server frame") })
             gateway.disconnect()
         }
@@ -202,12 +219,15 @@ class GatewayConnectionTest {
         enqueueGateway()
 
         gateway.connect()
+        awaitReconnectAndAdvance(1_001L)
         withTimeout(5_000) {
-            while (logs.none { it.contains("GATEWAY reconnect failed") }) delay(10)
+            while (logs.none { it.contains("GATEWAY reconnect failed") }) {
+                scheduler.runCurrent()
+                delay(5)
+            }
         }
-        withTimeout(5_000) {
-            while (gateway.state.value != ConnectionState.CONNECTED) delay(10)
-        }
+        awaitReconnectAndAdvance(2_001L)
+        awaitConnected()
 
         // An oversized (>16 MiB) frame causes OkHttp WebSocket.send() to return false and closes the socket
         val ackErr = runCatching {

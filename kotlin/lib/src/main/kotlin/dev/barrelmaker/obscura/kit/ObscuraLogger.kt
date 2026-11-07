@@ -7,6 +7,7 @@ interface ObscuraLogger {
     fun tokenRefreshFailed(attempt: Int, reason: String)
     fun preKeyReplenishFailed(reason: String)
     fun identityChanged(userId: String)
+    fun sessionEstablishFailed(userId: String, reason: String)
     fun databaseError(store: String, operation: String, reason: String)
 }
 
@@ -17,5 +18,6 @@ object NoOpLogger : ObscuraLogger {
     override fun tokenRefreshFailed(attempt: Int, reason: String) {}
     override fun preKeyReplenishFailed(reason: String) {}
     override fun identityChanged(userId: String) {}
+    override fun sessionEstablishFailed(userId: String, reason: String) {}
     override fun databaseError(store: String, operation: String, reason: String) {}
 }

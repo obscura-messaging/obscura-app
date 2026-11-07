@@ -44,15 +44,24 @@ data class SubmissionResult(
 data class SendReport(val recipients: List<SubmissionResult>, val selfSync: List<SubmissionResult>)
 
 /** An uploaded attachment: its server id and the key material that decrypts it. */
-class AttachmentUpload(val id: String, val contentKey: ByteArray, val nonce: ByteArray)
+class AttachmentUpload(val id: String, val contentKey: ByteArray, val nonce: ByteArray) {
+    override fun equals(other: Any?): Boolean =
+        this === other || (other is AttachmentUpload &&
+            id == other.id &&
+            contentKey.contentEquals(other.contentKey) &&
+            nonce.contentEquals(other.nonce))
+
+    override fun hashCode(): Int {
+        var result = id.hashCode()
+        result = 31 * result + contentKey.contentHashCode()
+        result = 31 * result + nonce.contentHashCode()
+        return result
+    }
+}
 
 typealias MediaAttachment = dev.barrelmaker.obscura.kit.stores.MediaAttachment
 typealias ConversationItem = dev.barrelmaker.obscura.kit.stores.ConversationItem
 typealias StoryItem = dev.barrelmaker.obscura.kit.stores.StoryItem
 typealias ProfileItem = dev.barrelmaker.obscura.kit.stores.ProfileItem
-typealias ConversationItemData = dev.barrelmaker.obscura.kit.stores.ConversationItem
-typealias StoryItemData = dev.barrelmaker.obscura.kit.stores.StoryItem
-typealias ProfileItemData = dev.barrelmaker.obscura.kit.stores.ProfileItem
-typealias FriendData = dev.barrelmaker.obscura.kit.stores.Friend
 typealias SweepOutcome = dev.barrelmaker.obscura.kit.stores.SweepOutcome
 

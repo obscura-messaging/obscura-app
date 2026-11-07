@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import obscura.client.v1.Client
 
 enum class FriendStatus(val value: String) {
     PENDING_SENT("pending_sent"),
@@ -13,9 +14,30 @@ enum class FriendStatus(val value: String) {
     ACCEPTED("accepted"),
 }
 
-data class Friend(val userId: String, val username: String, val status: FriendStatus)
+data class Friend(val userId: String, val username: String, val status: FriendStatus) {
+    internal fun toProto(): Client.FriendRecord =
+        Client.FriendRecord.newBuilder()
+            .setUserId(userId)
+            .setUsername(username)
+            .setStatus(when (status) {
+                FriendStatus.PENDING_SENT -> Client.FriendStatus.FRIEND_STATUS_PENDING_SENT
+                FriendStatus.PENDING_RECEIVED -> Client.FriendStatus.FRIEND_STATUS_PENDING_RECEIVED
+                FriendStatus.ACCEPTED -> Client.FriendStatus.FRIEND_STATUS_ACCEPTED
+            })
+            .build()
 
-typealias FriendData = Friend
+    companion object {
+        internal fun fromProto(record: Client.FriendRecord): Friend? {
+            val status = when (record.status) {
+                Client.FriendStatus.FRIEND_STATUS_PENDING_SENT -> FriendStatus.PENDING_SENT
+                Client.FriendStatus.FRIEND_STATUS_PENDING_RECEIVED -> FriendStatus.PENDING_RECEIVED
+                Client.FriendStatus.FRIEND_STATUS_ACCEPTED -> FriendStatus.ACCEPTED
+                Client.FriendStatus.FRIEND_STATUS_UNSPECIFIED, Client.FriendStatus.UNRECOGNIZED -> return null
+            }
+            return if (record.userId.isBlank()) null else Friend(record.userId, record.username, status)
+        }
+    }
+}
 
 /** The whole friend list at one version. */
 internal data class FriendList(val version: Long, val friends: List<Friend>)

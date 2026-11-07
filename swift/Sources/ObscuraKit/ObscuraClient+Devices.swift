@@ -24,7 +24,7 @@ public struct DeviceInfo: Sendable, Equatable {
 struct LinkContents {
     let identity: IdentityKeyPair
     let primaryDeviceId: String
-    let friends: [(userId: String, username: String, status: FriendStatus)]
+    let friends: [Friend]
     let friendListVersion: UInt64
     let history: Obscura_Client_V1_HistorySnapshot?
 }
@@ -36,6 +36,7 @@ extension ObscuraClient {
 
     /// For `.linkRequired`: opens a link session for this device to show to the primary.
     public func beginLink(_ username: String, _ password: String, deviceName: String) async throws -> LinkRequest {
+        try Self.validateCredentials(username, password)
         guard !deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ObscuraError.invalidArgument("deviceName must not be blank")
         }

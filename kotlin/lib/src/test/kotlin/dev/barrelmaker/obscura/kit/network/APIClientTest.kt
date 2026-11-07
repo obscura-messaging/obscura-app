@@ -20,6 +20,17 @@ class APIClientTest {
         .apply { if (retryAfter != null) setHeader("Retry-After", retryAfter) }.build()
 
     @Test
+    fun `retryAfterMs clamps missing, non-numeric, zero, and large values to 1 to 10 seconds`() {
+        assertEquals(1_000L, APIClient.retryAfterMs(null))
+        assertEquals(1_000L, APIClient.retryAfterMs("0"))
+        assertEquals(1_000L, APIClient.retryAfterMs("-5"))
+        assertEquals(1_000L, APIClient.retryAfterMs("soon"))
+        assertEquals(3_000L, APIClient.retryAfterMs(" 3 "))
+        assertEquals(10_000L, APIClient.retryAfterMs("10"))
+        assertEquals(10_000L, APIClient.retryAfterMs("120"))
+    }
+
+    @Test
     fun `429 and 503 are retried twice after Retry-After`() = runBlocking {
         server.enqueue(status(429, retryAfter = "0"))
         server.enqueue(status(503))

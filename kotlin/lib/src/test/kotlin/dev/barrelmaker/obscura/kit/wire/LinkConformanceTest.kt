@@ -3,7 +3,7 @@ package dev.barrelmaker.obscura.kit.wire
 import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.crypto.LinkCrypto
-import dev.barrelmaker.obscura.kit.stores.FriendData
+import dev.barrelmaker.obscura.kit.stores.Friend
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import dev.barrelmaker.obscura.kit.wire.WireCodec
 import obscura.client.v1.Client.HistorySnapshot
@@ -69,7 +69,7 @@ class LinkConformanceTest {
         assertEquals(expected.getString("primaryDeviceId"), bundle.primaryDeviceId)
         assertEquals(expected.getLong("friendListVersion"), bundle.friendListVersion)
         val friends = objects(expected.getJSONArray("friends")).map {
-            FriendData(it.getString("userId"), it.getString("username"), status(it.getString("status")))
+            Friend(it.getString("userId"), it.getString("username"), status(it.getString("status")))
         }
         assertEquals(friends, bundle.friendsList.map { WireCodec.decodeFriend(it) })
         assertEquals(expected.has("history"), bundle.hasHistory())

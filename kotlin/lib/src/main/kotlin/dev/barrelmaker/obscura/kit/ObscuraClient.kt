@@ -22,6 +22,7 @@ import dev.barrelmaker.obscura.kit.persistence.SessionStorage
 import dev.barrelmaker.obscura.kit.stores.ContentStore
 import dev.barrelmaker.obscura.kit.stores.ConversationItem
 import dev.barrelmaker.obscura.kit.stores.DeviceStore
+import dev.barrelmaker.obscura.kit.stores.Friend
 import dev.barrelmaker.obscura.kit.stores.FriendList
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import dev.barrelmaker.obscura.kit.stores.FriendStore
@@ -132,7 +133,7 @@ class ObscuraClient(
         authRef = auth
         gateway = GatewayConnection(api, scope, beforeConnect = { requireFreshToken() }, log = ::log)
         messenger = Messenger(signalStore, api)
-        sender = MessageSender(api, messenger, devices) { auth.credentials?.deviceId }
+        sender = MessageSender(api, messenger, devices, logger = { logger }) { auth.credentials?.deviceId }
     }
 
     val authState: StateFlow<AuthState> get() = auth.state
@@ -1138,7 +1139,7 @@ class ObscuraClient(
         if (removed) syncFriendList()
     }
 
-    suspend fun getFriends(): List<FriendData> = friends.getAll()
+    suspend fun getFriends(): List<Friend> = friends.getAll()
 
     /**
      * Send the whole friend list to this account's other devices after a change. Best effort and

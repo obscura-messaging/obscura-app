@@ -11,6 +11,37 @@ public struct Friend: Codable, Sendable, Equatable {
     public let userId: String
     public let username: String
     public let status: FriendStatus
+
+    public init(userId: String, username: String, status: FriendStatus) {
+        self.userId = userId
+        self.username = username
+        self.status = status
+    }
+
+    init(proto record: Obscura_Client_V1_FriendRecord) throws {
+        let status: FriendStatus
+        switch record.status {
+        case .pendingSent: status = .pendingSent
+        case .pendingReceived: status = .pendingReceived
+        case .accepted: status = .accepted
+        case .unspecified, .UNRECOGNIZED:
+            throw ObscuraError.protocolViolation("friend record \(record.userID) has status \(record.status.rawValue)")
+        }
+        guard !record.userID.isEmpty else { throw ObscuraError.protocolViolation("friend record without a user id") }
+        self.init(userId: record.userID, username: record.username, status: status)
+    }
+
+    var proto: Obscura_Client_V1_FriendRecord {
+        var record = Obscura_Client_V1_FriendRecord()
+        record.userID = userId
+        record.username = username
+        switch status {
+        case .pendingSent: record.status = .pendingSent
+        case .pendingReceived: record.status = .pendingReceived
+        case .accepted: record.status = .accepted
+        }
+        return record
+    }
 }
 
 /// The friend list and its version. Every change bumps the version in the same transaction; a
@@ -121,13 +152,13 @@ actor FriendStore {
         try await db.read { db in
             var sync = Obscura_Client_V1_FriendListSync()
             sync.version = try Self.version(in: db)
-            sync.friends = try Self.all(in: db).map(WireCodec.friendRecord)
+            sync.friends = try Self.all(in: db).map(\.proto)
             return sync
         }
     }
 
     /// Replaces the whole list and its version with a primary's.
-    static func replace(_ friends: [(userId: String, username: String, status: FriendStatus)], version: UInt64,
+    static func replace(_ friends: [Friend], version: UInt64,
                         in db: Database) throws {
         guard let stored = Int64(exactly: version) else { throw DatabaseError(message: "friend list version \(version)") }
         try db.execute(sql: "DELETE FROM friends")

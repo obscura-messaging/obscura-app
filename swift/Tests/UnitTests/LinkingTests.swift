@@ -229,6 +229,17 @@ final class LinkingTests: XCTestCase {
         try await registered.logout()
     }
 
+    func testBlankCredentialsAreRejectedAcrossAuthAndLinking() async throws {
+        let client = try freshClient()
+        let expected = ObscuraError.invalidArgument("username and password must not be blank")
+        for (username, password) in [("", "password"), (" \t\n ", "password"), ("alice", ""), ("alice", " \t\n ")] {
+            await assertThrows(expected) { try await client.register(username, password) }
+            await assertThrows(expected) { _ = try await client.login(username, password) }
+            await assertThrows(expected) { try await client.resetAccount(username, password) }
+            await assertThrows(expected) { _ = try await client.beginLink(username, password, deviceName: "iPad") }
+        }
+    }
+
     func testBeginLinkValidatesDeviceNameAndReusesCachedLinkSession() async throws {
         let linkClient = try freshClient()
         await assertThrows(.invalidArgument("deviceName must not be blank")) {

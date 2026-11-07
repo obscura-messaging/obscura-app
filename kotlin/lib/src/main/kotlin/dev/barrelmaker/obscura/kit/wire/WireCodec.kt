@@ -2,7 +2,6 @@ package dev.barrelmaker.obscura.kit.wire
 
 import dev.barrelmaker.obscura.kit.TypingState
 import dev.barrelmaker.obscura.kit.stores.Friend
-import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import obscura.client.v1.Client
 
 /** Payload arm, typing state and friend records <-> app-facing forms. Pinned by `protocol/conformance/wire.json`. */
@@ -22,24 +21,8 @@ internal object WireCodec {
         TypingState.STOPPED -> Client.TypingState.TYPING_STATE_STOPPED
     }
 
-    fun encodeFriend(friend: Friend): Client.FriendRecord = Client.FriendRecord.newBuilder()
-        .setUserId(friend.userId)
-        .setUsername(friend.username)
-        .setStatus(when (friend.status) {
-            FriendStatus.PENDING_SENT -> Client.FriendStatus.FRIEND_STATUS_PENDING_SENT
-            FriendStatus.PENDING_RECEIVED -> Client.FriendStatus.FRIEND_STATUS_PENDING_RECEIVED
-            FriendStatus.ACCEPTED -> Client.FriendStatus.FRIEND_STATUS_ACCEPTED
-        })
-        .build()
+    fun encodeFriend(friend: Friend): Client.FriendRecord = friend.toProto()
 
     /** Null for a record without a user id or with an unspecified status. */
-    fun decodeFriend(record: Client.FriendRecord): Friend? {
-        val status = when (record.status) {
-            Client.FriendStatus.FRIEND_STATUS_PENDING_SENT -> FriendStatus.PENDING_SENT
-            Client.FriendStatus.FRIEND_STATUS_PENDING_RECEIVED -> FriendStatus.PENDING_RECEIVED
-            Client.FriendStatus.FRIEND_STATUS_ACCEPTED -> FriendStatus.ACCEPTED
-            Client.FriendStatus.FRIEND_STATUS_UNSPECIFIED, Client.FriendStatus.UNRECOGNIZED -> return null
-        }
-        return if (record.userId.isBlank()) null else Friend(record.userId, record.username, status)
-    }
+    fun decodeFriend(record: Client.FriendRecord): Friend? = Friend.fromProto(record)
 }

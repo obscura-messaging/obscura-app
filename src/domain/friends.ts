@@ -50,3 +50,54 @@ export function friendProfileEntries<P extends { userId: string }>(
     return name === null ? [] : [{ entry, name }];
   });
 }
+
+export function pendingFriendSubtitle(friend: Pick<Friend, 'status'>, isPrimary: boolean | null): string {
+  if (friend.status !== 'pending_received') return 'Request sent';
+  return isPrimary === false ? 'Wants to be friends · accept on your primary' : 'Wants to be friends';
+}
+
+export function removeFriendPrompt(friend: Pick<Friend, 'username' | 'status'>): {
+  title: string;
+  body: string;
+  actionLabel: string;
+} {
+  switch (friend.status) {
+    case 'pending_received':
+      return {
+        title: `Decline ${friend.username}?`,
+        body: 'This pending friend request will be removed.',
+        actionLabel: 'Decline',
+      };
+    case 'pending_sent':
+      return {
+        title: `Cancel request to ${friend.username}?`,
+        body: 'This pending friend request will be removed.',
+        actionLabel: 'Cancel Request',
+      };
+    case 'accepted':
+      return {
+        title: `Remove ${friend.username}?`,
+        body: 'You will no longer be friends with this user.',
+        actionLabel: 'Remove',
+      };
+  }
+}
+
+export function sendOutcomeToast(
+  recipientCount: number,
+  includeStory: boolean,
+  undelivered: readonly string[],
+): { kind: 'success' | 'error'; message: string } {
+  if (undelivered.length > 0) {
+    return { kind: 'error', message: `Not delivered to ${undelivered.join(', ')}` };
+  }
+  const suffix = recipientCount === 1 ? '' : 's';
+  const storyPart = includeStory ? ' + story' : '';
+  return { kind: 'success', message: `Sent to ${recipientCount} friend${suffix}${storyPart}` };
+}
+
+export function sendButtonLabel(selectedCount: number, includeStory: boolean, sending: boolean): string {
+  if (sending) return 'Sending…';
+  const total = selectedCount + (includeStory ? 1 : 0);
+  return total === 0 ? 'Select recipients' : `Send to ${total}`;
+}

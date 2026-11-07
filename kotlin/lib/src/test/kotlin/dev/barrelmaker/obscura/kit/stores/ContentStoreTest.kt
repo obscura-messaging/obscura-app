@@ -60,9 +60,9 @@ class ContentStoreTest {
 
     @Test
     fun `messages are ordered by sentAt ASC then id ASC`() = runBlocking {
-        store.putConversation(ConversationItemData("dm_b", peer, "message", SELF_USER_ID, 100, null, expiresAt(100, null), "b"))
-        store.putConversation(ConversationItemData("dm_a", peer, "message", SELF_USER_ID, 100, null, expiresAt(100, null), "a"))
-        store.putConversation(ConversationItemData("dm_0", peer, "message", SELF_USER_ID, 50, null, expiresAt(50, null), "0"))
+        store.putConversation(ConversationItem("dm_b", peer, "message", SELF_USER_ID, 100, null, expiresAt(100, null), "b"))
+        store.putConversation(ConversationItem("dm_a", peer, "message", SELF_USER_ID, 100, null, expiresAt(100, null), "a"))
+        store.putConversation(ConversationItem("dm_0", peer, "message", SELF_USER_ID, 50, null, expiresAt(50, null), "0"))
 
         assertEquals(listOf("dm_0", "dm_a", "dm_b"), store.getMessages().map { it.id })
     }
@@ -300,12 +300,18 @@ class ContentStoreTest {
         )
         assertEquals("photo", decodedDefaultType?.mediaType)
 
-        // ContentStore profile upsert when newer timestamp wins, raw attachment edge cases, and envelope check failure
+        // ContentStore profile upsert when newer timestamp wins, equal timestamp/device is rejected, raw attachment edge cases, and envelope check failure
         assertTrue(
             targetStore.upsertProfileIfNewerInTransaction(
                 ProfileItem(peer, "dev_0", 999L, "Bob Newer", "New Bio"),
             ),
         )
+        assertFalse(
+            targetStore.upsertProfileIfNewerInTransaction(
+                ProfileItem(peer, "dev_0", 999L, "Duplicate Timestamp And Device", "Ignored"),
+            ),
+        )
+        assertEquals("Bob Newer", targetStore.getProfileInTransaction(peer)?.displayName)
         db.contentQueries.insertStory("st_no_key", peer, 10L, 100L, "c", "ref", null, byteArrayOf(1), "photo", null, 0L)
         db.contentQueries.insertStory("st_no_nonce", peer, 10L, 100L, "c", "ref", byteArrayOf(1), null, "photo", null, 0L)
         db.contentQueries.insertStory("st_null_type", peer, 10L, 100L, "c", "ref", byteArrayOf(1), byteArrayOf(2), null, null, 0L)
@@ -342,8 +348,8 @@ class ContentStoreTest {
             .filter { it.exists() }
             .any { String(it.readBytes(), Charsets.ISO_8859_1).contains(secret) }
 
-        fileStore.putConversation(ConversationItemData("dm_0", peer, "message", peer, 1, null, 10, secrets[0]))
-        fileStore.putStory(StoryItemData("st_0", peer, 1, 10, secrets[1]))
+        fileStore.putConversation(ConversationItem("dm_0", peer, "message", peer, 1, null, 10, secrets[0]))
+        fileStore.putStory(StoryItem("st_0", peer, 1, 10, secrets[1]))
         assertTrue(secrets.all(::onDisk))
 
         fileStore.sweepExpired(now = 20)
@@ -447,7 +453,7 @@ class ContentStoreTest {
                 c.markSeen("non_existent_id")
                 c.markSeen(c.getMessages().first { it.authorUserId == SELF_USER_ID }.id)
                 c.content.putConversation(
-                    ConversationItemData("in_1", peer, "message", peer, 500, null, expiresAt(500, null), "from peer"),
+                    ConversationItem("in_1", peer, "message", peer, 500, null, expiresAt(500, null), "from peer"),
                 )
                 c.markSeen("in_1")
                 val seenRow = c.getMessages().first { it.id == "in_1" }
