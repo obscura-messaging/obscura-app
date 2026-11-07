@@ -2,12 +2,12 @@ package dev.barrelmaker.obscura.kit
 
 import dev.barrelmaker.obscura.kit.crypto.LinkCrypto
 import dev.barrelmaker.obscura.kit.crypto.fromBase64
-import dev.barrelmaker.obscura.kit.stores.ConversationItemData
-import dev.barrelmaker.obscura.kit.stores.FriendData
+import dev.barrelmaker.obscura.kit.stores.ConversationItem
+import dev.barrelmaker.obscura.kit.stores.Friend
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
-import dev.barrelmaker.obscura.kit.stores.ProfileItemData
+import dev.barrelmaker.obscura.kit.stores.ProfileItem
 import dev.barrelmaker.obscura.kit.stores.STORY_MAX_AGE_MS
-import dev.barrelmaker.obscura.kit.stores.StoryItemData
+import dev.barrelmaker.obscura.kit.stores.StoryItem
 import dev.barrelmaker.obscura.kit.stores.expiresAt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -168,7 +168,7 @@ class AccountTest {
         assertTrue(c.auth.restore())
         val oldIdentity = c.signalStore.identityKeyPair.publicKey
         c.content.putConversation(
-            ConversationItemData("e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
+            ConversationItem("e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
         )
 
         c.resetAccount("self", "password")
@@ -191,12 +191,12 @@ class AccountTest {
         val primary = sessionClient(url, storedSession())
         assertTrue(primary.auth.restore())
         val peerId = "019f025a-0000-7de6-84b6-000000000002"
-        val friends = listOf(FriendData(peerId, "alice", FriendStatus.ACCEPTED))
+        val friends = listOf(Friend(peerId, "alice", FriendStatus.ACCEPTED))
         primary.db.friendQueries.insert(friends[0].userId, friends[0].username, friends[0].status.value)
         primary.db.friendQueries.incrementVersion()
-        val msg = ConversationItemData("dm_1", peerId, "message", SELF_USER_ID, 42, null, expiresAt(42, null), "hi", undelivered = true)
-        val story = StoryItemData("st_1", SELF_USER_ID, 100, 100 + STORY_MAX_AGE_MS, "my story", undelivered = true)
-        val profile = ProfileItemData(SELF_USER_ID, SELF_DEVICE_ID, 50, "Self", "Bio", undelivered = true)
+        val msg = ConversationItem("dm_1", peerId, "message", SELF_USER_ID, 42, null, expiresAt(42, null), "hi", undelivered = true)
+        val story = StoryItem("st_1", SELF_USER_ID, 100, 100 + STORY_MAX_AGE_MS, "my story", undelivered = true)
+        val profile = ProfileItem(SELF_USER_ID, SELF_DEVICE_ID, 50, "Self", "Bio", undelivered = true)
         primary.content.putConversation(msg)
         primary.content.putStory(story)
         primary.content.putProfile(profile)
@@ -239,7 +239,7 @@ class AccountTest {
         val primary = sessionClient(url, storedSession())
         assertTrue(primary.auth.restore())
         primary.content.putConversation(
-            ConversationItemData("e1", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
+            ConversationItem("e1", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
         )
         val storage = MemoryStorage()
         val tablet = newClient(url, storage)

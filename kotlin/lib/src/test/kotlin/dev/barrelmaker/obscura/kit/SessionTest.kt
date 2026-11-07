@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test
 import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.first
-import dev.barrelmaker.obscura.kit.stores.ConversationItemData
+import dev.barrelmaker.obscura.kit.stores.ConversationItem
 
 /** Session restore, refresh, logout and wipe against a local stand-in server. */
 class SessionTest {
@@ -172,13 +172,13 @@ class SessionTest {
         c.route(friendRequest(), "019f025a-0000-7de6-84b6-000000000002", "dev", "env-1")
         c.route(ClientMessage.getDefaultInstance(), "019f025a-0000-7de6-84b6-000000000002", "dev", "env-2")
         c.content.putConversation(
-            ConversationItemData("e", "019f025a-0000-7de6-84b6-000000000002", "message", SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
+            ConversationItem("e", "019f025a-0000-7de6-84b6-000000000002", "message", SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
         )
 
         c.wipeDevice()
 
         assertEquals(emptyList<Any>(), c.getFriends())
-        assertEquals(emptyList<ConversationItemData>(), c.getMessages())
+        assertEquals(emptyList<ConversationItem>(), c.getMessages())
         assertNull(c.devices.getIdentity())
         assertThrows(IllegalStateException::class.java) { c.signalStore.identityKeyPair }
         Unit

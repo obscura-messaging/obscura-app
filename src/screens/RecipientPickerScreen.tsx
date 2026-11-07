@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { errorMessage } from '../utils/log';
+import { sendButtonLabel, sendOutcomeToast } from '../domain/friends';
 import { toast } from '../components/Toast';
 import { CheckIcon } from '../components/icons';
 import { Avatar } from '../components/Avatar';
@@ -35,13 +36,9 @@ export function RecipientPickerScreen({ route }: RootStackScreenProps<'Recipient
       const undelivered = await sendCapture(route.params, recipients, includeStory);
       // Off the stack, so the sent capture cannot be navigated back into.
       nav.popToTop();
-      if (undelivered.length > 0) {
-        toast.error(`Not delivered to ${undelivered.join(', ')}`);
-      } else {
-        toast.success(
-          `Sent to ${recipients.length} friend${recipients.length !== 1 ? 's' : ''}${includeStory ? ' + story' : ''}`,
-        );
-      }
+      const outcome = sendOutcomeToast(recipients.length, includeStory, undelivered);
+      if (outcome.kind === 'error') toast.error(outcome.message);
+      else toast.success(outcome.message);
     } catch (e) {
       toast.error(errorMessage(e));
       setSending(false);
@@ -93,9 +90,7 @@ export function RecipientPickerScreen({ route }: RootStackScreenProps<'Recipient
         onPress={send}
         disabled={count === 0 || sending}
       >
-        <Text style={s.primaryBtnText}>
-          {sending ? 'Sending…' : count === 0 ? 'Select recipients' : `Send to ${count}`}
-        </Text>
+        <Text style={s.primaryBtnText}>{sendButtonLabel(selected.size, includeStory, sending)}</Text>
       </TouchableOpacity>
     </SafeAreaView>
   );

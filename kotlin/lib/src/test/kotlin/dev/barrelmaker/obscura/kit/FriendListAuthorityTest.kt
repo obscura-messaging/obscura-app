@@ -2,7 +2,7 @@ package dev.barrelmaker.obscura.kit
 
 import dev.barrelmaker.obscura.kit.crypto.UuidCodec
 import dev.barrelmaker.obscura.kit.managers.FakeObscuraServer
-import dev.barrelmaker.obscura.kit.stores.FriendData
+import dev.barrelmaker.obscura.kit.stores.Friend
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import dev.barrelmaker.obscura.kit.wire.WireCodec
 import kotlinx.coroutines.runBlocking
@@ -32,7 +32,7 @@ class FriendListAuthorityTest {
 
     private fun friendAccept() = ClientMessage.newBuilder().setFriendAccept(obscura.client.v1.friendAccept {}).build()
 
-    private fun sync(version: Long, vararg friends: FriendData) = ClientMessage.newBuilder().setFriendListSync(
+    private fun sync(version: Long, vararg friends: Friend) = ClientMessage.newBuilder().setFriendListSync(
         FriendListSync.newBuilder().setVersion(version).addAllFriends(friends.map(WireCodec::encodeFriend))
     ).build()
 
@@ -46,15 +46,15 @@ class FriendListAuthorityTest {
         c.db.friendQueries.insert(peer, "alice", FriendStatus.PENDING_SENT.value)
         c.route(friendAccept(), peer, peerDevice, "env-2")
 
-        assertEquals(listOf(FriendData(peer, "alice", FriendStatus.PENDING_SENT)), c.getFriends())
+        assertEquals(listOf(Friend(peer, "alice", FriendStatus.PENDING_SENT)), c.getFriends())
         assertEquals(0L, c.version())
     }
 
     @Test fun `a linked device replaces its list with a newer sync from its primary`() = runBlocking {
         val c = linked()
         c.db.friendQueries.insert("stale", "stale", FriendStatus.ACCEPTED.value)
-        val alice = FriendData(peer, "alice", FriendStatus.ACCEPTED)
-        val bob = FriendData("019f025a-0000-7de6-84b6-000000000004", "bob", FriendStatus.PENDING_RECEIVED)
+        val alice = Friend(peer, "alice", FriendStatus.ACCEPTED)
+        val bob = Friend("019f025a-0000-7de6-84b6-000000000004", "bob", FriendStatus.PENDING_RECEIVED)
 
         c.route(sync(3, alice, bob), SELF_USER_ID, primary, "env-1")
 
@@ -64,9 +64,9 @@ class FriendListAuthorityTest {
 
     @Test fun `a sync that is not newer, not from the primary, or malformed is ignored`() = runBlocking {
         val c = linked()
-        val alice = FriendData(peer, "alice", FriendStatus.ACCEPTED)
+        val alice = Friend(peer, "alice", FriendStatus.ACCEPTED)
         c.route(sync(5, alice), SELF_USER_ID, primary, "env-0")
-        val mallory = FriendData("019f025a-0000-7de6-84b6-000000000009", "mallory", FriendStatus.ACCEPTED)
+        val mallory = Friend("019f025a-0000-7de6-84b6-000000000009", "mallory", FriendStatus.ACCEPTED)
         val unspecified = ClientMessage.newBuilder().setFriendListSync(FriendListSync.newBuilder().setVersion(9)
             .addFriends(FriendRecord.newBuilder().setUserId(peer).setUsername("x").setStatus(WireFriendStatus.FRIEND_STATUS_UNSPECIFIED))).build()
 
@@ -83,8 +83,8 @@ class FriendListAuthorityTest {
 
     @Test fun `the primary ignores a sync`() = runBlocking {
         val c = authenticatedClient()
-        c.route(sync(9, FriendData(peer, "alice", FriendStatus.ACCEPTED)), SELF_USER_ID, otherLinked, "env-1")
-        assertEquals(emptyList<FriendData>(), c.getFriends())
+        c.route(sync(9, Friend(peer, "alice", FriendStatus.ACCEPTED)), SELF_USER_ID, otherLinked, "env-1")
+        assertEquals(emptyList<Friend>(), c.getFriends())
         assertEquals(0L, c.version())
     }
 
@@ -101,7 +101,7 @@ class FriendListAuthorityTest {
             assertTrue(error is ObscuraError.NotPrimary, "got $error")
             assertEquals("NOT_PRIMARY", (error as ObscuraError).code)
         }
-        assertEquals(listOf(FriendData(peer, "alice", FriendStatus.PENDING_RECEIVED)), c.getFriends())
+        assertEquals(listOf(Friend(peer, "alice", FriendStatus.PENDING_RECEIVED)), c.getFriends())
     }
 
     @Test fun `every change on the primary increments the version and sends the whole list to its other devices`() = runBlocking {
@@ -136,7 +136,7 @@ class FriendListAuthorityTest {
                         .friendListSync
                 }
                 assertEquals(listOf(1L, 2L), syncs.map { it.version })
-                assertEquals(listOf(FriendData(peer, "alice", FriendStatus.PENDING_RECEIVED)), syncs[0].friendsList.map { WireCodec.decodeFriend(it) })
+                assertEquals(listOf(Friend(peer, "alice", FriendStatus.PENDING_RECEIVED)), syncs[0].friendsList.map { WireCodec.decodeFriend(it) })
                 assertEquals(0, syncs[1].friendsCount)
                 assertEquals(2L, c.version())
                 c.auth.end()

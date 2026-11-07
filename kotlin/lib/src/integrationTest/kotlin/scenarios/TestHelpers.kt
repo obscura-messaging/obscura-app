@@ -1,7 +1,7 @@
 package scenarios
 
 import dev.barrelmaker.obscura.kit.AuthState
-import dev.barrelmaker.obscura.kit.ConversationItemData
+import dev.barrelmaker.obscura.kit.ConversationItem
 import dev.barrelmaker.obscura.kit.MemoryStorage
 import dev.barrelmaker.obscura.kit.NoOpLogger
 import dev.barrelmaker.obscura.kit.ObscuraClient
@@ -89,8 +89,8 @@ suspend fun becomeFriends(a: ObscuraClient, b: ObscuraClient) {
 }
 
 /** The stored message matching [predicate], waiting for it to arrive. */
-suspend fun ObscuraClient.awaitRow(timeoutMs: Long = 15_000, predicate: (ConversationItemData) -> Boolean): ConversationItemData {
-    var row: ConversationItemData? = null
+suspend fun ObscuraClient.awaitRow(timeoutMs: Long = 15_000, predicate: (ConversationItem) -> Boolean): ConversationItem {
+    var row: ConversationItem? = null
     eventually(timeoutMs, "message row") { getMessages().find(predicate).also { row = it } != null }
     return row!!
 }
@@ -104,7 +104,7 @@ suspend fun sendText(
     text: String,
 ): String = sender.sendMessage(receiver.userId!!, text)
 
-suspend fun sendAndVerify(sender: ObscuraClient, receiver: ObscuraClient, text: String): ConversationItemData {
+suspend fun sendAndVerify(sender: ObscuraClient, receiver: ObscuraClient, text: String): ConversationItem {
     sendText(sender, receiver, text)
     val row = receiver.awaitContent(text)
     assertEquals(sender.userId, row.authorUserId)

@@ -1,5 +1,6 @@
 package dev.barrelmaker.obscura.kit.crypto
 
+import dev.barrelmaker.obscura.kit.AttachmentUpload
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -71,6 +72,20 @@ class AttachmentCryptoTest {
         val enc = AttachmentCrypto.encrypt(ByteArray(0))
         val decoded = AttachmentCrypto.decrypt(enc.ciphertext, enc.contentKey, enc.nonce)
         assertEquals(0, decoded.size)
+    }
+
+    @Test
+    fun `AttachmentUpload compares contentKey and nonce by value`() {
+        val a = AttachmentUpload("att_1", byteArrayOf(1, 2, 3), byteArrayOf(4, 5))
+        val b = AttachmentUpload("att_1", byteArrayOf(1, 2, 3), byteArrayOf(4, 5))
+        assertTrue(a.equals(a))
+        assertFalse(a.equals("not-an-upload"))
+        assertFalse(a.equals(null))
+        assertEquals(a, b)
+        assertEquals(a.hashCode(), b.hashCode())
+        assertNotEquals(a, AttachmentUpload("att_2", byteArrayOf(1, 2, 3), byteArrayOf(4, 5)))
+        assertNotEquals(a, AttachmentUpload("att_1", byteArrayOf(9, 2, 3), byteArrayOf(4, 5)))
+        assertNotEquals(a, AttachmentUpload("att_1", byteArrayOf(1, 2, 3), byteArrayOf(9, 5)))
     }
 
     @Test

@@ -106,7 +106,7 @@ final class DeviceStoreTests: XCTestCase {
         try await friends.add("old", username: "old", status: .accepted)
 
         try await db.write {
-            try FriendStore.replace([("new", "new", .pendingReceived)], version: 42, in: $0)
+            try FriendStore.replace([Friend(userId: "new", username: "new", status: .pendingReceived)], version: 42, in: $0)
         }
 
         let all = try await friends.all()

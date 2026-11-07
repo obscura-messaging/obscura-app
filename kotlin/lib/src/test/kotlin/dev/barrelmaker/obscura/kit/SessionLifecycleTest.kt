@@ -191,7 +191,7 @@ class SessionLifecycleTest {
         assertEquals(ConnectionState.DISCONNECTED, c.connectionState.value)
         assertEquals(emptyList<String>(), c.observeTyping("ctx").first())
         c.content.putConversation(
-            dev.barrelmaker.obscura.kit.stores.ConversationItemData(
+            ConversationItem(
                 "e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), "kept",
             ),
         )
@@ -266,7 +266,7 @@ class SessionLifecycleTest {
         val c = ObscuraClient(ObscuraConfig(url, "test"), driver, MemoryStorage())
         val secret = "DEVICE-WIPE-SECRET-83a10"
         c.content.putConversation(
-            dev.barrelmaker.obscura.kit.stores.ConversationItemData(
+            ConversationItem(
                 "e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), secret,
             ),
         )

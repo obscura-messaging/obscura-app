@@ -1,5 +1,6 @@
 import {
   acceptedFriends, displayNameFor, friendProfileEntries, pendingFriends,
+  pendingFriendSubtitle, removeFriendPrompt, sendButtonLabel, sendOutcomeToast,
   type Friend, type ProfileItem,
 } from '../friends';
 
@@ -41,5 +42,50 @@ describe('friendProfileEntries', () => {
     expect(friendProfileEntries(profiles, identity)).toEqual([
       { entry: profiles[1], name: 'bob' },
     ]);
+  });
+});
+
+describe('pendingFriendSubtitle, removeFriendPrompt, sendOutcomeToast & sendButtonLabel', () => {
+  it('derives pending row subtitles from relationship status and primary authority', () => {
+    expect(pendingFriendSubtitle(SENT, true)).toBe('Request sent');
+    expect(pendingFriendSubtitle(DAVE, true)).toBe('Wants to be friends');
+    expect(pendingFriendSubtitle(DAVE, null)).toBe('Wants to be friends');
+    expect(pendingFriendSubtitle(DAVE, false)).toBe('Wants to be friends · accept on your primary');
+  });
+
+  it('derives confirmation dialog copy for declining, cancelling, or removing a friend', () => {
+    expect(removeFriendPrompt(DAVE)).toEqual({
+      title: 'Decline dave?',
+      body: 'This pending friend request will be removed.',
+      actionLabel: 'Decline',
+    });
+    expect(removeFriendPrompt(SENT)).toEqual({
+      title: 'Cancel request to eve?',
+      body: 'This pending friend request will be removed.',
+      actionLabel: 'Cancel Request',
+    });
+    expect(removeFriendPrompt(BOB)).toEqual({
+      title: 'Remove bob?',
+      body: 'You will no longer be friends with this user.',
+      actionLabel: 'Remove',
+    });
+  });
+
+  it('formats recipient picker send outcomes and button labels', () => {
+    expect(sendOutcomeToast(2, true, ['bob'])).toEqual({
+      kind: 'error',
+      message: 'Not delivered to bob',
+    });
+    expect(sendOutcomeToast(1, false, [])).toEqual({
+      kind: 'success',
+      message: 'Sent to 1 friend',
+    });
+    expect(sendOutcomeToast(2, true, [])).toEqual({
+      kind: 'success',
+      message: 'Sent to 2 friends + story',
+    });
+    expect(sendButtonLabel(0, false, false)).toBe('Select recipients');
+    expect(sendButtonLabel(2, true, false)).toBe('Send to 3');
+    expect(sendButtonLabel(1, false, true)).toBe('Sending…');
   });
 });

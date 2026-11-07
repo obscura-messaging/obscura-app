@@ -3,11 +3,11 @@ package scenarios
 import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.LoginScenario
 import dev.barrelmaker.obscura.kit.ObscuraError
-import dev.barrelmaker.obscura.kit.stores.ConversationItemData
+import dev.barrelmaker.obscura.kit.stores.ConversationItem
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
-import dev.barrelmaker.obscura.kit.stores.ProfileItemData
+import dev.barrelmaker.obscura.kit.stores.ProfileItem
 import dev.barrelmaker.obscura.kit.stores.STORY_MAX_AGE_MS
-import dev.barrelmaker.obscura.kit.stores.StoryItemData
+import dev.barrelmaker.obscura.kit.stores.StoryItem
 import dev.barrelmaker.obscura.kit.stores.expiresAt
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -173,7 +173,7 @@ class MultiDeviceTests {
         requireServer()
         val alice = registerAndConnect("history_alice")
         val messages = (1..3).map {
-            ConversationItemData(
+            ConversationItem(
                 id = "e$it",
                 peerUserId = "019f025a-0000-7de6-84b6-000000000002",
                 kind = "message",
@@ -186,9 +186,9 @@ class MultiDeviceTests {
             )
         }
         messages.forEach { alice.content.putConversation(it) }
-        val story = StoryItemData("s1", alice.userId!!, 5_000L, 5_000L + STORY_MAX_AGE_MS, "story 1")
+        val story = StoryItem("s1", alice.userId!!, 5_000L, 5_000L + STORY_MAX_AGE_MS, "story 1")
         alice.content.putStory(story)
-        val profile = ProfileItemData(alice.userId!!, alice.deviceId!!, 6_000L, "Alice", "Bio")
+        val profile = ProfileItem(alice.userId!!, alice.deviceId!!, 6_000L, "Alice", "Bio")
         alice.content.putProfile(profile)
 
         val tablet = linkDevice(alice, "Alice Tablet")

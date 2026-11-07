@@ -34,7 +34,10 @@ final class FakeObscuraServer: @unchecked Sendable {
     private var attachments: [String: Data] = [:]
     private var createDeviceStatus = 201
     private var tokenRejections = 0
+    private var refreshStatus = 401
     private var refreshed: [String: Any]?
+    private var offline = false
+    private var totalRequests = 0
     private var preKeyUploads = 0
     private var preKeyStatus = 204
     private var pushTokens: [String] = []
@@ -45,6 +48,12 @@ final class FakeObscuraServer: @unchecked Sendable {
     func setCustomDevicesResponse(_ list: [[String: Any]]?) { lock.withLock { customDevicesResponse = list } }
     func failDeviceCreation(status: Int) { lock.withLock { createDeviceStatus = status } }
     func failPreKeyUpload(status: Int) { lock.withLock { preKeyStatus = status } }
+    func failRefresh(status: Int) { lock.withLock { refreshed = nil; refreshStatus = status } }
+    func setOffline(_ isOffline: Bool = true) { lock.withLock { offline = isOffline } }
+    fileprivate var isOffline: Bool { lock.withLock { offline } }
+    func requestCount() -> Int { lock.withLock { totalRequests } }
+    func resetRequestCount() { lock.withLock { totalRequests = 0 } }
+    fileprivate func recordRequest() { lock.withLock { totalRequests += 1 } }
     func setGatewayTicket(_ ticket: String?) { lock.withLock { gatewayTicket = ticket } }
     func preKeyUploadCount() -> Int { lock.withLock { preKeyUploads } }
     func registeredPushTokens() -> [String] { lock.withLock { pushTokens } }
@@ -53,6 +62,7 @@ final class FakeObscuraServer: @unchecked Sendable {
     /// Lets refreshes succeed with these tokens instead of being rejected.
     func acceptRefresh(token: String, refreshToken: String, userId: String = "u1", deviceId: String = "d1") {
         lock.withLock {
+            sessionTokens[token] = userId
             refreshed = [
                 "token": token,
                 "refreshToken": refreshToken,
@@ -76,6 +86,8 @@ final class FakeObscuraServer: @unchecked Sendable {
 
     func close() {
         FakeServerProtocol.onDeviceList.withLock { $0 = nil }
+        FakeServerProtocol.onRefresh.withLock { $0 = nil }
+        FakeServerProtocol.pendingRefresh.withLock { $0 = nil }
         FakeServerProtocol.messageResponse.withLock { $0 = nil }
         URLProtocol.unregisterClass(FakeServerProtocol.self)
         Self.active = nil
@@ -201,7 +213,13 @@ final class FakeObscuraServer: @unchecked Sendable {
         }
         if request.httpMethod == "DELETE", path == "/v1/session" { return (204, Data()) }
         if path == "/v1/session/refresh" {
-            return lock.withLock { refreshed.map { (200, try! JSONSerialization.data(withJSONObject: $0)) } ?? (401, Data()) }
+            let accepted: [String: Any]? = lock.withLock { refreshed }
+            if let accepted {
+                // Slow enough that concurrent callers overlap.
+                Thread.sleep(forTimeInterval: 0.2)
+                return (200, try! JSONSerialization.data(withJSONObject: accepted))
+            }
+            return lock.withLock { (refreshStatus, Data("{}".utf8)) }
         }
         if request.httpMethod == "DELETE", path.hasPrefix("/v1/devices/") {
             return lock.withLock {
@@ -343,8 +361,19 @@ final class FakeObscuraServer: @unchecked Sendable {
 
 final class FakeServerProtocol: URLProtocol {
     static let onDeviceList = Locked<(@Sendable () -> Void)?>(nil)
+    static let onRefresh = Locked<(@Sendable () -> Void)?>(nil)
+    static let pendingRefresh = Locked<(@Sendable () -> Void)?>(nil)
     /// Answers `POST /v1/messages` instead of the server when it returns a response; gets the request body.
     static let messageResponse = Locked<(@Sendable (Data) -> (Int, Data)?)?>(nil)
+
+    static func releasePendingRefresh() {
+        let release = pendingRefresh.withLock { pending in
+            defer { pending = nil }
+            return pending
+        }
+        release?()
+    }
+
     override class func canInit(with request: URLRequest) -> Bool {
         guard let url = request.url else { return false }
         if url.host == FakeObscuraServer.host { return true }
@@ -355,20 +384,40 @@ final class FakeServerProtocol: URLProtocol {
     }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        guard let server = FakeObscuraServer.active else { return }
+        server.recordRequest()
+        if request.url?.path == "/v1/session", request.httpMethod == "DELETE" {
+            respond(server.handle(request, body: Data()))
+            return
+        }
+        if server.isOffline {
+            client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+            return
+        }
         if request.url?.path == "/v1/devices", request.httpMethod == "GET",
            let held = Self.onDeviceList.withLock({ $0 }) {
             held()
             return
         }
         let body = Self.body(of: request)
+        if request.url?.path == "/v1/session/refresh",
+           let onRefresh = Self.onRefresh.withLock({ $0 }) {
+            Self.pendingRefresh.withLock { $0 = { [self] in respond(server.handle(request, body: body)) } }
+            onRefresh()
+            return
+        }
         let override = request.url?.path == "/v1/messages" ? Self.messageResponse.withLock { $0 }?(body) : nil
-        let (status, data) = override ?? FakeObscuraServer.active!.handle(request, body: body)
+        respond(override ?? server.handle(request, body: body))
+    }
+    override func stopLoading() {}
+
+    private func respond(_ response: (Int, Data)) {
+        let (status, data) = response
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!,
                             cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
     }
-    override func stopLoading() {}
 
     private static func body(of request: URLRequest) -> Data {
         if let body = request.httpBody { return body }

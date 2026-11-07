@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { activityPreview, friendActivities, type PixBadge } from '../domain/chats';
+import { pendingFriendSubtitle, removeFriendPrompt } from '../domain/friends';
 import {
   useSession, useMessages, useAcceptedFriends, usePendingFriends,
   acceptFriend, removeFriend, type Friend,
@@ -60,9 +61,7 @@ function PendingRow({ friend, accepting, isPrimary, onAccept, onLongPress }: Pen
       <Avatar name={friend.username} size={48} background={colors.surfaceMuted} color={colors.text} />
       <View style={cl.info}>
         <Text style={cl.username}>{friend.username}</Text>
-        <Text style={cl.preview}>
-          {!received ? 'Request sent' : isPrimary === false ? 'Wants to be friends · accept on your primary' : 'Wants to be friends'}
-        </Text>
+        <Text style={cl.preview}>{pendingFriendSubtitle(friend, isPrimary)}</Text>
       </View>
       {actionable && (
         <View style={cl.acceptBtn}>
@@ -117,19 +116,7 @@ export function ChatListScreen() {
 
   const confirmRemoveFriend = async (friend: Friend) => {
     if (isPrimary !== true) return;
-    const title = friend.status === 'pending_received'
-      ? `Decline ${friend.username}?`
-      : friend.status === 'pending_sent'
-      ? `Cancel request to ${friend.username}?`
-      : `Remove ${friend.username}?`;
-    const body = friend.status === 'accepted'
-      ? 'You will no longer be friends with this user.'
-      : 'This pending friend request will be removed.';
-    const actionLabel = friend.status === 'pending_received'
-      ? 'Decline'
-      : friend.status === 'pending_sent'
-      ? 'Cancel Request'
-      : 'Remove';
+    const { title, body, actionLabel } = removeFriendPrompt(friend);
     const confirmed = await confirm(title, body, actionLabel, true);
     if (!confirmed) return;
     try {

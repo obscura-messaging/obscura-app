@@ -340,7 +340,7 @@ extension ObscuraClient {
                   try !DeviceStore.isPrimary(in: db) else { return .ignored("friend list sync not from this account's primary") }
             let held = try FriendStore.version(in: db)
             guard sync.version > held else { return .ignored("friend list version \(sync.version), holding \(held)") }
-            let friends: [(userId: String, username: String, status: FriendStatus)]
+            let friends: [Friend]
             do {
                 friends = try WireCodec.friends(sync.friends)
             } catch {
