@@ -5,9 +5,8 @@ default:
     @just --list
 
 # Install submodules and JavaScript dependencies.
-setup:
+setup: install
     git submodule update --init --recursive
-    npm ci
 
 # Install JavaScript dependencies from the lockfile.
 install:
@@ -67,6 +66,9 @@ lint:
 
 # Run every JavaScript CI gate.
 check: test typecheck lint
+
+# Test the release verification script.
+release-script-test:
     python3 scripts/test-verify-release-build.py -q
 
 # Bundle the JavaScript for Android and iOS the way a release build does.
@@ -88,16 +90,10 @@ protocol-lint:
 protocol-vectors:
     python3 protocol/conformance/validate.py
 
-# Run Kotlin unit tests.
-kotlin-unit:
-    cd kotlin && ./gradlew :lib:test
-
-# Run the Kotlin CI tasks in one Gradle process.
-kotlin-ci:
+# Run protocol conformance, then the Kotlin unit tests with coverage reports
+# and thresholds, in one Gradle process.
+kotlin-check: protocol-vectors
     cd kotlin && ./gradlew :lib:test :lib:koverHtmlReport :lib:koverXmlReport :lib:koverVerify
-
-# Run the full fast Kotlin CI gate.
-kotlin-check: protocol-vectors kotlin-ci
 
 # Build and start a local obscura-server with Postgres, Valkey and MinIO
 # (ref: server git ref, default its HEAD). See scripts/local-server.sh for
