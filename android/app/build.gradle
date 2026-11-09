@@ -27,15 +27,6 @@ def releaseSigningConfigured =
 
 def signedBundleBuild =
     (findProperty("obscuraSignedBundle") ?: "false").toBoolean()
-def obscuraEnv =
-    (findProperty("obscuraEnv") ?: "dev").toString()
-if (obscuraEnv != "dev" && obscuraEnv != "prod") {
-    throw new GradleException("obscuraEnv must be 'dev' or 'prod' (found '${obscuraEnv}')")
-}
-def isProdEnv = obscuraEnv == "prod"
-def obscuraAppId = isProdEnv ? "dev.barrelmaker.obscura" : "dev.barrelmaker.obscura.dev"
-def obscuraAppName = isProdEnv ? "Obscura" : "Obscura Dev"
-def obscuraApiUrl = isProdEnv ? "https://obscura.barrelmaker.dev" : "https://devscura.barrelmaker.dev"
 def packageJsonVersion = new groovy.json.JsonSlurper().parse(file("../../package.json")).version.toString()
 def obscuraVersionCode =
     (findProperty("obscuraVersionCode") ?: "1").toString().toInteger()
@@ -90,8 +81,8 @@ react {
     /* Variants */
     //   The list of variants to that are debuggable. For those we're going to
     //   skip the bundling of the JS bundle and the assets. Default is "debug", "debugOptimized".
-    //   If you add flavors like lite, prod, etc. you'll have to list your debuggableVariants.
-    // debuggableVariants = ["liteDebug", "liteDebugOptimized", "prodDebug", "prodDebugOptimized"]
+    //   The dev/prod product flavors below make every debug variant flavor-qualified.
+    debuggableVariants = ["devDebug", "devDebugOptimized", "prodDebug", "prodDebugOptimized"]
 
     /* Bundling */
     //   A list containing the node command and its flags. Default is just 'node'.
@@ -142,13 +133,28 @@ android {
         buildConfig true
     }
     defaultConfig {
-        applicationId obscuraAppId
+        applicationId "dev.barrelmaker.obscura"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode obscuraVersionCode
         versionName obscuraVersionName
-        resValue "string", "app_name", obscuraAppName
-        buildConfigField "String", "OBSCURA_API_URL", "\"${obscuraApiUrl}\""
+    }
+
+    // Each environment is a separate app with its own server, so dev and prod
+    // installs can sit side by side on one device.
+    flavorDimensions "env"
+    productFlavors {
+        dev {
+            dimension "env"
+            applicationIdSuffix ".dev"
+            resValue "string", "app_name", "Obscura Dev"
+            buildConfigField "String", "OBSCURA_API_URL", '"https://devscura.barrelmaker.dev"'
+        }
+        prod {
+            dimension "env"
+            resValue "string", "app_name", "Obscura"
+            buildConfigField "String", "OBSCURA_API_URL", '"https://obscura.barrelmaker.dev"'
+        }
     }
 
     compileOptions {
@@ -234,8 +240,8 @@ dependencies {
     }
     // JSC fallback intentionally omitted — Hermes is on (gradle.properties).
 
-    // ObscuraKit — E2E encrypted data layer
-    implementation("dev.barrelmaker.obscura.kit:obscura-kit:0.1.0")
+    // ObscuraKit — E2E encrypted data layer, built from ../kotlin (settings.gradle)
+    implementation("dev.barrelmaker.obscura.kit:obscura-kit")
 
     // Android SQLDelight driver (replaces JVM driver from ObscuraKit)
     implementation("app.cash.sqldelight:android-driver:2.0.2")

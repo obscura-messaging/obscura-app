@@ -2,8 +2,8 @@
 
 PR and `main` CI never distribute, and PRs never see distribution credentials
 (they use the Firebase stub and debug signing). To ship, an owner
-(`barrelmaker97` or `rhelsing`) runs `just release-dev` (**Actions → Release /
-Dev**) or `just release-prod` (**Actions → Release / Prod**) on `main`.
+(`barrelmaker97` or `rhelsing`) runs `just release-dev` (**Actions → Release
+Dev**) or `just release-prod` (**Actions → Release Prod**) on `main`.
 `scripts/verify-release-build.sh` checks the starting and rerunning actor,
 requires the commit to be the current `main` tip with a successful `main` CI
 run, and reads the `X.Y.Z` version from `package.json`. Android and iOS then run
@@ -21,7 +21,7 @@ a GitHub artifact for 30 days. A second job verifies the bundle's checksum and
 commit, then uploads it to the app's Google Play Console **Internal testing**
 track (`Obscura Dev` stays permanently on Internal testing; `Obscura` can be
 promoted from Internal testing to Production in Play Console). The version name
-comes from `package.json` (`1.0.0`), and the version code is 1000 plus the
+comes from `package.json` (`1.0.0`), and the version code is 1010 plus the
 release run number. Never rerun a release that has already uploaded; retry the
 failed jobs or start a new run.
 
@@ -60,7 +60,7 @@ For a local signed bundle, create the gitignored `android/keystore.properties`.
 The matching `ANDROID_RELEASE_STORE_FILE`, `ANDROID_RELEASE_STORE_PASSWORD`,
 `ANDROID_RELEASE_KEY_ALIAS` and `ANDROID_RELEASE_KEY_PASSWORD` environment
 variables override it. Then run `just android-bundle 1 1.0.0 dev` (or `prod`).
-Unlike `just android-apk`, it fails if signing, version metadata or the real
+Unlike `just android-build`, it fails if signing, version metadata or the real
 Firebase config is missing.
 
 ```properties

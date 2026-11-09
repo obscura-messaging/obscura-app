@@ -1,0 +1,5 @@
+// The prod environment: Obscura against the production server.
+PRODUCT_BUNDLE_IDENTIFIER = dev.barrelmaker.obscura
+OBSCURA_DISPLAY_NAME = Obscura
+OBSCURA_API_HOST = obscura.barrelmaker.dev
+PROVISIONING_PROFILE_SPECIFIER[config=Release][sdk=iphoneos*] = Obscura App Store

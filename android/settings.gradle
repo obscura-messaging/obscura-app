@@ -5,19 +5,10 @@ rootProject.name = 'Obscura'
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')
 
-// ── obscura-native Kotlin composite build ───────────────────────────
-// The app pins the native repo as a submodule. Rather than publish it to a
-// registry, we compose its Gradle build directly.
-//
-// `implementation("dev.barrelmaker.obscura.kit:obscura-kit:0.1.0")` in app/build.gradle
-// stays as-is — the explicit substitution below rewrites it to the local
-// :lib project. The declared 0.1.0 is ignored while composed; it only
-// matters if/when we graduate the kit to a real published artifact.
-//
-// OBSCURA_KIT_PATH can point at another checkout while developing coordinated
-// native changes; committed and CI builds use the pinned submodule.
-def obscuraKitPath = System.getenv('OBSCURA_KIT_PATH') ?: '../kotlin'
-includeBuild(obscuraKitPath) {
+// The Kotlin kit in ../kotlin is its own Gradle build, because CI also tests it
+// standalone. The app composes that build and substitutes its :lib project for
+// the kit dependency in app/build.gradle.
+includeBuild('../kotlin') {
     dependencySubstitution {
         substitute(module('dev.barrelmaker.obscura.kit:obscura-kit')).using(project(':lib'))
     }

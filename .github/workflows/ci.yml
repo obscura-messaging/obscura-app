@@ -12,62 +12,141 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  LIBSIGNAL_REF: 7ef4efdb85d8b2ebd77f3cf1e2b542a2115033c5
+
 jobs:
+  # Pull requests run a native job only when its inputs change. Pushes to main
+  # run everything, because a release requires a fully green main commit.
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      kotlin: ${{ github.event_name != 'pull_request' || steps.filter.outputs.kotlin == 'true' }}
+      android: ${{ github.event_name != 'pull_request' || steps.filter.outputs.android == 'true' }}
+      swift: ${{ github.event_name != 'pull_request' || steps.filter.outputs.swift == 'true' }}
+      ios: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ios == 'true' }}
+    steps:
+      - name: Filter paths
+        uses: dorny/paths-filter@v4.0.3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            shared: &shared
+              - '.github/workflows/ci.yml'
+              - '.gitmodules'
+              - 'justfile'
+              - 'proto/**'
+              - 'protocol/**'
+            app: &app
+              - '.nvmrc'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'app.json'
+              - 'index.js'
+              - 'babel.config.js'
+              - 'metro.config.js'
+            kotlin:
+              - *shared
+              - 'kotlin/**'
+              - 'scripts/ci-install-rust.sh'
+              - 'scripts/run-with-java-21.sh'
+              - 'scripts/local-server.sh'
+            android:
+              - *shared
+              - *app
+              - 'android/**'
+              - 'kotlin/**'
+              - 'scripts/run-with-android-env.sh'
+              - 'scripts/run-with-java-21.sh'
+              - '.java-version'
+            swift:
+              - *shared
+              - 'swift/**'
+              - 'scripts/ci-install-rust.sh'
+              - 'scripts/local-server.sh'
+            ios:
+              - *shared
+              - *app
+              - 'ios/**'
+              - 'swift/**'
+              - 'scripts/ci-install-rust.sh'
+
   javascript:
     name: JavaScript
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
-      - uses: extractions/setup-just@v4
-      - uses: actions/setup-node@v7
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
+      - name: Install Node
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
-      - run: just install
+      - name: Install dependencies
+        run: just install
       # Domain, bridge-facade, and state tests run without a native simulator.
       # ESLint errors fail the job; warnings remain non-fatal.
-      - run: just check
+      - name: Check
+        run: just check
 
   kotlin-unit:
-    name: Kotlin Kit (unit tests + coverage)
+    name: Kotlin
+    needs: changes
+    if: needs.changes.outputs.kotlin == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
-      - uses: extractions/setup-just@v4
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
 
-      - uses: actions/setup-java@v6.1.0
+      - name: Install Java
+        uses: actions/setup-java@v6.2.0
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - uses: gradle/actions/setup-gradle@v6.4.1
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v6.4.1
 
-      - uses: bufbuild/buf-setup-action@v1
+      - name: Install buf
+        uses: bufbuild/buf-action@v1.7.0
         with:
+          setup_only: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lint client protocol
+      - name: Lint protocol
         run: just protocol-lint
 
-      - name: Validate client protocol vectors and run Kotlin unit tests + coverage
+      - name: Unit tests
         run: just kotlin-check
 
-      - name: Upload unit-test report on failure
+      - name: Test report
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: kotlin-unit-test-report
           path: kotlin/lib/build/reports/tests/test/
           retention-days: 7
 
-      - name: Upload coverage report
+      - name: Coverage report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: kotlin-coverage-report
           path: |
@@ -76,141 +155,309 @@ jobs:
           retention-days: 14
 
   kotlin-integration:
-    name: Kotlin Kit (integration, native server)
+    name: Kotlin Integration
+    needs: changes
+    if: needs.changes.outputs.kotlin == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
-      - uses: extractions/setup-just@v4
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
 
-      - uses: actions/setup-java@v6.1.0
+      - name: Install Java
+        uses: actions/setup-java@v6.2.0
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - uses: gradle/actions/setup-gradle@v6.4.1
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v6.4.1
 
-      - name: Resolve latest obscura-server commit
+      - name: Resolve server
         id: server-ref
-        run: |
-          for i in 1 2 3; do
-            sha=$(git ls-remote https://github.com/obscura-messaging/obscura-server.git HEAD | cut -f1) && break
-            sleep 15
-          done
-          [ -n "$sha" ] || { echo "could not resolve server HEAD" >&2; exit 1; }
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        run: echo "sha=$(scripts/local-server.sh ref)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache obscura-server binary
+      - name: Cache server
         id: server-bin
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
-          path: ~/obscura-server-bin
+          path: ~/.cache/obscura-server/bin
           key: obscura-server-${{ steps.server-ref.outputs.sha }}-ubuntu
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
         if: steps.server-bin.outputs.cache-hit != 'true'
+        run: scripts/ci-install-rust.sh
 
-      - name: Install protobuf when building Rust dependencies
+      - name: Install protobuf
         if: steps.server-bin.outputs.cache-hit != 'true'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      - name: Clone obscura-server
-        run: |
-          for i in 1 2 3; do
-            git clone --depth 1 --recurse-submodules \
-              https://github.com/obscura-messaging/obscura-server /tmp/obscura-server && break
-            rm -rf /tmp/obscura-server; sleep 15
-          done
-
-      - name: Build obscura-server (only when upstream changed)
-        if: steps.server-bin.outputs.cache-hit != 'true'
-        run: |
-          cd /tmp/obscura-server
-          cargo build --release
-          mkdir -p ~/obscura-server-bin
-          cp target/release/obscura-server ~/obscura-server-bin/
-
-      - name: Start backing services
-        run: |
-          cd /tmp/obscura-server
-          docker compose up -d --wait db minio valkey
-          docker compose exec -T db sh -c 'until pg_isready -h 127.0.0.1 -U user -d signal_server; do sleep 1; done'
-          AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin \
-            aws --endpoint-url http://localhost:9000 --region us-east-1 \
-            s3api create-bucket --bucket test-bucket
-
-      - name: Start obscura-server
+      # Builds only on a cache miss; backing services come from the server's
+      # docker-compose.yml.
+      - name: Start server
         env:
-          OBSCURA_DATABASE_URL: "postgres://user:password@localhost:5432/signal_server"
-          OBSCURA_PUBSUB_URL: redis://localhost:6379
-          OBSCURA_AUTH_JWT_SECRET: test_secret
-          OBSCURA_STORAGE_BUCKET: test-bucket
-          OBSCURA_STORAGE_ENDPOINT: http://localhost:9000
-          OBSCURA_STORAGE_ACCESS_KEY: minioadmin
-          OBSCURA_STORAGE_SECRET_KEY: minioadmin
-          OBSCURA_STORAGE_FORCE_PATH_STYLE: "true"
-          OBSCURA_RATE_LIMIT_PER_SECOND: 1000
-          OBSCURA_RATE_LIMIT_BURST: 2000
-          OBSCURA_RATE_LIMIT_AUTH_PER_SECOND: 1000
-          OBSCURA_RATE_LIMIT_AUTH_BURST: 2000
-          RUST_LOG: info
-        run: |
-          ~/obscura-server-bin/obscura-server > /tmp/obscura-server.log 2>&1 &
-          for i in $(seq 1 30); do
-            if curl -s -o /dev/null http://localhost:3000/; then echo "server up"; exit 0; fi
-            sleep 2
-          done
-          echo "server did not become ready" >&2
-          tail -100 /tmp/obscura-server.log
-          exit 1
+          SERVER_SHA: ${{ steps.server-ref.outputs.sha }}
+        run: just server-up "$SERVER_SHA"
 
       - name: Integration tests
-        env:
-          OBSCURA_TEST_API: http://localhost:3000
         run: just kotlin-integration http://localhost:3000
 
-      - name: Server log on failure
+      - name: Server log
         if: failure()
-        run: tail -200 /tmp/obscura-server.log 2>/dev/null || true
+        run: just server-logs 200 || true
 
-      - name: Upload integration-test report
+      - name: Test report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: kotlin-integration-test-report
           path: kotlin/lib/build/reports/tests/integrationTest/
           retention-days: 14
 
   android:
-    name: Android Release Build
-    if: github.event_name == 'pull_request'
+    name: Android
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
-      - name: Checkout app
-        uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
         with:
-          # Native is pinned by the app's gitlink and contains the transport proto
-          # submodule required by Kotlin protobuf codegen.
+          # The proto submodule is required by Kotlin protobuf codegen.
           submodules: recursive
 
-      - uses: extractions/setup-just@v4
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
 
-      - uses: actions/setup-node@v7
+      - name: Install Node
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
 
-      - uses: actions/setup-java@v6.1.0
+      - name: Install Java
+        uses: actions/setup-java@v6.2.0
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - uses: gradle/actions/setup-gradle@v6.4.1
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v6.4.1
 
-      - run: just install
+      - name: Install dependencies
+        run: just install
 
       # Main builds a signed bundle once in the separate release workflow.
-      - name: Compile arm64 release APK
-        run: just android-apk arm64-v8a false
+      - name: Build app
+        run: just android-build arm64-v8a false
+
+  swift-unit:
+    name: Swift
+    needs: changes
+    if: needs.changes.outputs.swift == 'true'
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$(
+            find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' -print |
+              sort -V |
+              tail -n 1
+          )"
+
+      - name: Swift version
+        id: swift-toolchain
+        run: echo "version=$(xcrun swift --version | shasum -a 256 | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache libsignal
+        id: libsignal
+        uses: actions/cache@v6.1.0
+        with:
+          path: swift/vendored/libsignal
+          key: libsignal-${{ env.LIBSIGNAL_REF }}-host-macos26
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v6.1.0
+        with:
+          path: swift/.build
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-toolchain.outputs.version }}-${{ env.LIBSIGNAL_REF }}-${{ hashFiles('swift/Package.swift', 'swift/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-toolchain.outputs.version }}-${{ env.LIBSIGNAL_REF }}-${{ hashFiles('swift/Package.swift', 'swift/Package.resolved') }}-
+
+      - name: Install Rust
+        if: steps.libsignal.outputs.cache-hit != 'true'
+        run: scripts/ci-install-rust.sh
+
+      - name: Install protobuf
+        if: steps.libsignal.outputs.cache-hit != 'true'
+        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
+
+      - name: Unit tests
+        run: just swift-unit
+
+  swift-integration:
+    name: Swift Integration
+    needs: changes
+    if: needs.changes.outputs.swift == 'true'
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$(
+            find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' -print |
+              sort -V |
+              tail -n 1
+          )"
+
+      - name: Swift version
+        id: swift-toolchain
+        run: echo "version=$(xcrun swift --version | shasum -a 256 | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache libsignal
+        id: libsignal
+        uses: actions/cache@v6.1.0
+        with:
+          path: swift/vendored/libsignal
+          key: libsignal-${{ env.LIBSIGNAL_REF }}-host-macos26
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v6.1.0
+        with:
+          path: swift/.build
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-toolchain.outputs.version }}-${{ env.LIBSIGNAL_REF }}-${{ hashFiles('swift/Package.swift', 'swift/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-toolchain.outputs.version }}-${{ env.LIBSIGNAL_REF }}-${{ hashFiles('swift/Package.swift', 'swift/Package.resolved') }}-
+
+      - name: Resolve server
+        id: server-ref
+        run: echo "sha=$(scripts/local-server.sh ref)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache server
+        id: server-bin
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/obscura-server/bin
+          key: obscura-server-${{ steps.server-ref.outputs.sha }}-macos26
+
+      - name: Install Rust
+        if: steps.libsignal.outputs.cache-hit != 'true' || steps.server-bin.outputs.cache-hit != 'true'
+        run: scripts/ci-install-rust.sh
+
+      - name: Install protobuf
+        if: steps.libsignal.outputs.cache-hit != 'true' || steps.server-bin.outputs.cache-hit != 'true'
+        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
+
+      # macOS runners have no Docker, so the services run as local processes.
+      - name: Install services
+        run: |
+          brew install postgresql@18 minio valkey
+          command -v aws >/dev/null || brew install awscli
+
+      # Builds only on a cache miss.
+      - name: Start server
+        env:
+          OBSCURA_SERVER_SERVICES: native
+          SERVER_SHA: ${{ steps.server-ref.outputs.sha }}
+        run: just server-up "$SERVER_SHA"
+
+      - name: Integration tests
+        run: just swift-integration http://localhost:3000
+
+      - name: Server log
+        if: failure()
+        run: just server-logs 200 || true
+
+      - name: Stop server
+        if: always()
+        run: just server-down || true
+
+  ios:
+    name: iOS
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true'
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
+
+      - name: Install Node
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install Rust
+        run: scripts/ci-install-rust.sh aarch64-apple-ios-sim
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$(
+            find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' -print |
+              sort -V |
+              tail -n 1
+          )"
+
+      - name: Cache libsignal
+        id: libsignal
+        uses: actions/cache@v6.1.0
+        with:
+          path: swift/vendored/libsignal
+          key: libsignal-${{ env.LIBSIGNAL_REF }}-ios-sim-macos26
+
+      - name: Install protobuf
+        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
+
+      - name: Install dependencies
+        run: just install
+
+      - name: Install CocoaPods
+        run: sudo gem install cocoapods -v 1.17.0 -N
+
+      - name: Build app
+        run: just ios-build arm64
+
+  # The one check branch protection needs: skipped jobs pass, while a failed
+  # or cancelled job (including change detection) fails the gate.
+  gate:
+    name: Gate
+    if: always()
+    needs: [changes, javascript, kotlin-unit, kotlin-integration, android, swift-unit, swift-integration, ios]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for result in $RESULTS; do
+            [[ "$result" == success || "$result" == skipped ]] || exit 1
+          done

@@ -1,4 +1,4 @@
-name: Release / Dev
+name: Release Dev
 
 on:
   workflow_dispatch:
@@ -12,8 +12,9 @@ permissions:
 
 jobs:
   verify:
-    name: Verify main and CI
+    name: Verify
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       actions: read
@@ -22,17 +23,19 @@ jobs:
       build_number: ${{ steps.release.outputs.build_number }}
       version: ${{ steps.release.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
-      - name: Verify selected commit
+      - name: Verify commit
         id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/verify-release-build.sh
 
   android:
+    name: Android
     needs: verify
     permissions:
       contents: read
@@ -46,6 +49,7 @@ jobs:
     secrets: inherit
 
   ios:
+    name: iOS
     needs: verify
     uses: ./.github/workflows/distribute-ios.yml
     with:

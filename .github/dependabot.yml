@@ -80,18 +80,14 @@ updates:
         patterns:
           - "androidx.lifecycle:*"
     ignore:
-      # Owned by obscura-native/kotlin — bumps must happen there first so the
-      # package re-publishes against the new version, then the app follows.
-      # Verified: bumping sqldelight in the app alone breaks compileReleaseKotlin
-      # because the kit jar references the older API surface.
+      # Shared with the Kotlin kit (kotlin/gradle/libs.versions.toml), which
+      # Dependabot does not watch. Bump both together: bumping sqldelight in
+      # the app alone breaks compileReleaseKotlin against the kit's API.
       - dependency-name: "org.signal:libsignal-android"
       - dependency-name: "com.google.protobuf:protobuf-java"
       - dependency-name: "app.cash.sqldelight:*"
-      # Bumped via the kit's own publication. Dependabot can't see
-      # mavenLocal anyway.
-      - dependency-name: "dev.barrelmaker.obscura.kit:obscura-kit"
       # RN owns the AGP/toolchain compatibility line. Wrapper updates are
-      # made manually and validated with the app and native composite build.
+      # made manually and validated with the app and kit composite build.
       - dependency-name: "com.android.tools.build:gradle"
       - dependency-name: "gradle"
       - dependency-name: "gradle-wrapper"

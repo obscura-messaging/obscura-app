@@ -75,6 +75,24 @@ kotlin-ci:
 # Run the full fast Kotlin CI gate.
 kotlin-check: protocol-vectors kotlin-ci
 
+# Build and start a local obscura-server with Postgres, Valkey and MinIO
+# (ref: server git ref, default its HEAD). See scripts/local-server.sh for
+# OBSCURA_SERVER_SRC and OBSCURA_SERVER_SERVICES.
+server-up ref="":
+    ./scripts/local-server.sh up {{quote(ref)}}
+
+# Stop the local obscura-server and delete its data.
+server-down:
+    ./scripts/local-server.sh down
+
+# Report whether the local obscura-server is running.
+server-status:
+    ./scripts/local-server.sh status
+
+# Print the end of the local obscura-server log.
+server-logs lines="200":
+    ./scripts/local-server.sh logs {{quote(lines)}}
+
 # Run Kotlin server-dependent tests against an explicit local endpoint.
 kotlin-integration api="http://localhost:3000":
     @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
@@ -102,26 +120,36 @@ swift-integration api="http://localhost:3000": swift-bootstrap
 android-config:
     @if [[ ! -f android/app/google-services.json ]] || grep -q '"project_id": "local-stub"' android/app/google-services.json; then cp android/app/google-services.stub.json android/app/google-services.json; echo "Prepared Firebase stub for compile-only builds."; else echo "Using existing android/app/google-services.json."; fi
 
-# Run the Android app.
-android-run: android-config ensure-node-modules
-    ./scripts/run-with-android-env.sh npm run android
+# Reject an env other than dev or prod.
+[private]
+check-env env:
+    @[[ {{quote(env)}} == dev || {{quote(env)}} == prod ]] || { echo "error: env must be 'dev' or 'prod'" >&2; exit 1; }
+
+# Run the Android app on a device or emulator (env: dev or prod).
+android-run env="dev": (check-env env) android-config ensure-node-modules
+    ./scripts/run-with-android-env.sh npm run android -- --mode {{env}}Debug {{ if env == "dev" { "--appIdSuffix dev" } else { "" } }}
 
 # Assemble a compile-only Android release APK (env: dev or prod). Pass an
 # architecture list and false to skip R8 for a faster build:
-# just android-apk arm64-v8a false
-android-apk architectures="" minify="true" env="dev": android-config ensure-node-modules
-    architectures={{quote(architectures)}}; minify={{quote(minify)}}; env={{quote(env)}}; args=("-PenableProguardInReleaseBuilds=$minify" "-PobscuraEnv=$env"); [[ -z "$architectures" ]] || args+=("-PreactNativeArchitectures=$architectures"); ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:assembleRelease --parallel "${args[@]}"
+# just android-build arm64-v8a false
+android-build architectures="" minify="true" env="dev": (check-env env) android-config ensure-node-modules
+    ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:assemble{{capitalize(env)}}Release --parallel -PenableProguardInReleaseBuilds={{quote(minify)}} {{ if architectures != "" { "-PreactNativeArchitectures=" + quote(architectures) } else { "" } }}
 
 # Bundle a signed, minified Android App Bundle (.aab) with real Firebase configuration.
 # Signing credentials are read from android/keystore.properties or the
 # ANDROID_RELEASE_* environment variables.
-android-bundle version_code version_name env="dev": android-config ensure-node-modules
-    version_code={{quote(version_code)}}; version_name={{quote(version_name)}}; env={{quote(env)}}; [[ "$version_code" =~ ^[1-9][0-9]*$ ]] || { echo "error: bundle version code must be a positive integer" >&2; exit 1; }; [[ -n "$version_name" ]] || { echo "error: bundle version name is required" >&2; exit 1; }; ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:bundleRelease --parallel -PenableProguardInReleaseBuilds=true -PobscuraSignedBundle=true -PobscuraEnv="$env" -PobscuraVersionCode="$version_code" -PobscuraVersionName="$version_name"
+android-bundle version_code version_name env="dev": (check-env env) android-config ensure-node-modules
+    ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:bundle{{capitalize(env)}}Release --parallel -PenableProguardInReleaseBuilds=true -PobscuraSignedBundle=true -PobscuraVersionCode={{quote(version_code)}} -PobscuraVersionName={{quote(version_name)}}
 
 # Clean Android build outputs.
 android-clean: ensure-node-modules
     rm -rf android/app/.cxx
     ./scripts/run-with-android-env.sh ./android/gradlew -p android clean --parallel
+
+# Clean iOS build outputs.
+ios-clean:
+    rm -rf ios/build
+    @if [[ -d ios/Pods ]]; then GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura clean; fi
 
 # Prepare all native iOS dependencies.
 [private]
@@ -132,12 +160,23 @@ ios-prepare libsignal_target="ios-sim": ensure-node-modules
 
 # Build the iOS app for a generic simulator (env: dev or prod). Pass an
 # architecture for a faster compile-only build, for example: just ios-build arm64
-ios-build architecture="" env="dev": ios-prepare
-    architecture={{quote(architecture)}}; env={{quote(env)}}; if [[ "$env" == "prod" ]]; then bundle_id="dev.barrelmaker.obscura"; display_name="Obscura"; api_host="obscura.barrelmaker.dev"; elif [[ "$env" == "dev" ]]; then bundle_id="dev.barrelmaker.obscura.dev"; display_name="Obscura Dev"; api_host="devscura.barrelmaker.dev"; else echo "error: env must be 'dev' or 'prod'" >&2; exit 1; fi; args=(COMPILER_INDEX_STORE_ENABLE=NO PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" OBSCURA_DISPLAY_NAME="$display_name" OBSCURA_API_HOST="$api_host"); [[ -z "$architecture" ]] || args+=(ARCHS="$architecture" ONLY_ACTIVE_ARCH=YES); GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura -destination 'generic/platform=iOS Simulator' -configuration Debug CODE_SIGNING_ALLOWED=NO "${args[@]}" build
+ios-build architecture="" env="dev": (check-env env) ios-prepare
+    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura -configuration Debug -xcconfig ios/Config/{{capitalize(env)}}.xcconfig -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO {{ if architecture != "" { "ARCHS=" + quote(architecture) + " ONLY_ACTIVE_ARCH=YES" } else { "" } }} build
 
-# Archive the iOS device build for App Store Connect / TestFlight (env: dev or prod).
-ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="" env="dev" profile_specifier="": (ios-prepare "ios-device")
-    build_number={{quote(build_number)}}; version={{quote(version)}}; env={{quote(env)}}; profile_specifier={{quote(profile_specifier)}}; [[ -n "$version" ]] || version="$(node -p "require('./package.json').version")"; if [[ "$env" == "prod" ]]; then bundle_id="dev.barrelmaker.obscura"; display_name="Obscura"; api_host="obscura.barrelmaker.dev"; default_profile="Obscura App Store"; elif [[ "$env" == "dev" ]]; then bundle_id="dev.barrelmaker.obscura.dev"; display_name="Obscura Dev"; api_host="devscura.barrelmaker.dev"; default_profile="Obscura Dev App Store"; else echo "error: env must be 'dev' or 'prod'" >&2; exit 1; fi; args=(PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" OBSCURA_DISPLAY_NAME="$display_name" OBSCURA_API_HOST="$api_host" PROVISIONING_PROFILE_SPECIFIER="${profile_specifier:-$default_profile}" MARKETING_VERSION="$version"); [[ -z "$build_number" ]] || args+=(CURRENT_PROJECT_VERSION="$build_number"); GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura -configuration Release -destination 'generic/platform=iOS' -archivePath {{quote(archive_path)}} "${args[@]}" archive
+# Archive the iOS device build for App Store Connect / TestFlight (env: dev or
+# prod). The version defaults to package.json's.
+ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="" env="dev": (check-env env) (ios-prepare "ios-device")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version={{quote(version)}}
+    build_number={{quote(build_number)}}
+    args=(MARKETING_VERSION="${version:-$(node -p "require('./package.json').version")}")
+    [[ -z "$build_number" ]] || args+=(CURRENT_PROJECT_VERSION="$build_number")
+    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura -configuration Release -xcconfig ios/Config/{{capitalize(env)}}.xcconfig -destination 'generic/platform=iOS' -archivePath {{quote(archive_path)}} "${args[@]}" archive
+
+# Export a signed App Store IPA from an archive (env: dev or prod).
+ios-export archive_path="ios/build/Obscura.xcarchive" export_path="ios/build/export" env="dev": (check-env env)
+    xcodebuild -exportArchive -archivePath {{quote(archive_path)}} -exportPath {{quote(export_path)}} -exportOptionsPlist ios/Config/{{capitalize(env)}}-ExportOptions.plist
 
 # Dispatch a dev release build (Obscura Dev -> Play Internal + TestFlight) from main.
 release-dev:

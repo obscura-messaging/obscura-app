@@ -49,29 +49,15 @@ case "${1:-test}" in
         exit 1
       fi
       BINARY="$BUNDLE/Contents/MacOS/$(basename "$BUNDLE" .xctest)"
-      REPORT="$(xcrun llvm-cov report \
-        "$BINARY" \
-        -instr-profile="$PROFDATA" \
-        --ignore-filename-regex='.build|Tests|Sources/ObscuraKit/Proto' \
-        Sources/ObscuraKit)"
-      echo "$REPORT"
-      awk '
-        /^TOTAL/ {
-          found = 1
-          regions = $4; gsub(/%/, "", regions)
-          lines = $10; gsub(/%/, "", lines)
-          if (lines + 0 < 95.0 || regions + 0 < 90.0) {
-            printf "error: coverage below threshold (lines %.2f%% < 95%%, regions %.2f%% < 90%%)\n", lines, regions > "/dev/stderr"
-            exit 1
-          }
-        }
-        END {
-          if (!found) {
-            print "error: missing TOTAL line in llvm-cov report" > "/dev/stderr"
-            exit 1
-          }
-        }
-      ' <<< "$REPORT"
+      COV_ARGS=("$BINARY" -instr-profile="$PROFDATA" --ignore-filename-regex='.build|Tests|Sources/ObscuraKit/Proto' Sources/ObscuraKit)
+      xcrun llvm-cov report "${COV_ARGS[@]}"
+      SUMMARY="$(xcrun llvm-cov export -summary-only "${COV_ARGS[@]}")"
+      LINES="$(plutil -extract data.0.totals.lines.percent raw -o - - <<< "$SUMMARY")"
+      REGIONS="$(plutil -extract data.0.totals.regions.percent raw -o - - <<< "$SUMMARY")"
+      if ! awk -v lines="$LINES" -v regions="$REGIONS" 'BEGIN { exit !(lines >= 95 && regions >= 90) }'; then
+        printf 'error: coverage below threshold (lines %.2f%% < 95%%, regions %.2f%% < 90%%)\n' "$LINES" "$REGIONS" >&2
+        exit 1
+      fi
     else
       LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test "${@:2}"
     fi
