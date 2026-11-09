@@ -60,7 +60,7 @@ For a local signed bundle, create the gitignored `android/keystore.properties`.
 The matching `ANDROID_RELEASE_STORE_FILE`, `ANDROID_RELEASE_STORE_PASSWORD`,
 `ANDROID_RELEASE_KEY_ALIAS` and `ANDROID_RELEASE_KEY_PASSWORD` environment
 variables override it. Then run `just android-bundle 1 1.0.0 dev` (or `prod`).
-Unlike `just android-apk`, it fails if signing, version metadata or the real
+Unlike `just android-build`, it fails if signing, version metadata or the real
 Firebase config is missing.
 
 ```properties

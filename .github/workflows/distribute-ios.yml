@@ -20,8 +20,8 @@ permissions:
   contents: read
 
 jobs:
-  archive:
-    name: Signed iOS archive
+  build:
+    name: Build signed IPA
     runs-on: macos-26
     timeout-minutes: 90
     environment: ios-${{ inputs.env }}
@@ -38,22 +38,21 @@ jobs:
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       APPLE_BUNDLE_ID: ${{ inputs.env == 'prod' && 'dev.barrelmaker.obscura' || 'dev.barrelmaker.obscura.dev' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ env.DISTRIBUTION_REF }}
           submodules: recursive
           persist-credentials: false
 
-      - uses: extractions/setup-just@v4
+      - uses: extractions/setup-just@v4.0.0
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: '.nvmrc'
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios
+      - name: Install Rust
+        run: scripts/ci-install-rust.sh aarch64-apple-ios
 
       - name: Select latest Xcode
         run: |
@@ -63,7 +62,7 @@ jobs:
               tail -n 1
           )"
 
-      - uses: actions/cache@v6
+      - uses: actions/cache@v6.1.0
         with:
           path: swift/vendored/libsignal
           key: libsignal-${{ env.LIBSIGNAL_REF }}-ios-device-macos26
@@ -194,23 +193,23 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent \
             "$RUNNER_TEMP/Obscura.xcarchive/dSYMs" dist/Obscura.dSYMs.zip
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ steps.metadata.outputs.artifact_name }}
           path: dist/
           if-no-files-found: error
           retention-days: 30
 
-  testflight:
+  distribute:
     name: Upload to TestFlight
-    needs: archive
+    needs: build
     runs-on: macos-26
     timeout-minutes: 45
     environment: ios-${{ inputs.env }}
     env:
-      BUILD_SHA: ${{ needs.archive.outputs.sha }}
+      BUILD_SHA: ${{ needs.build.outputs.sha }}
       EXPECTED_REF: ${{ inputs.sha }}
-      EXPECTED_SHA256: ${{ needs.archive.outputs.ipa_sha256 }}
+      EXPECTED_SHA256: ${{ needs.build.outputs.ipa_sha256 }}
       APP_STORE_CONNECT_KEY_ID: ${{ vars.APP_STORE_CONNECT_KEY_ID }}
       APP_STORE_CONNECT_ISSUER_ID: ${{ vars.APP_STORE_CONNECT_ISSUER_ID }}
     steps:
@@ -222,9 +221,9 @@ jobs:
               tail -n 1
           )"
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v8.0.2
         with:
-          name: ${{ needs.archive.outputs.artifact_name }}
+          name: ${{ needs.build.outputs.artifact_name }}
           path: dist/
 
       - name: Verify exported IPA

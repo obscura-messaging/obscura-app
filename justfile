@@ -126,8 +126,8 @@ android-run: android-config ensure-node-modules
 
 # Assemble a compile-only Android release APK (env: dev or prod). Pass an
 # architecture list and false to skip R8 for a faster build:
-# just android-apk arm64-v8a false
-android-apk architectures="" minify="true" env="dev": android-config ensure-node-modules
+# just android-build arm64-v8a false
+android-build architectures="" minify="true" env="dev": android-config ensure-node-modules
     architectures={{quote(architectures)}}; minify={{quote(minify)}}; env={{quote(env)}}; args=("-PenableProguardInReleaseBuilds=$minify" "-PobscuraEnv=$env"); [[ -z "$architectures" ]] || args+=("-PreactNativeArchitectures=$architectures"); ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:assembleRelease --parallel "${args[@]}"
 
 # Bundle a signed, minified Android App Bundle (.aab) with real Firebase configuration.
@@ -140,6 +140,11 @@ android-bundle version_code version_name env="dev": android-config ensure-node-m
 android-clean: ensure-node-modules
     rm -rf android/app/.cxx
     ./scripts/run-with-android-env.sh ./android/gradlew -p android clean --parallel
+
+# Clean iOS build outputs.
+ios-clean:
+    rm -rf ios/build
+    @if [[ -d ios/Pods ]]; then GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura clean; fi
 
 # Prepare all native iOS dependencies.
 [private]

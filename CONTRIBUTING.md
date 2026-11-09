@@ -1,7 +1,7 @@
 # Contributing
 
-Never commit to `main`. A PR merges once `CI Gate` and `iOS CI Gate` pass on a
-branch that is up to date with `main`.
+Never commit to `main`. A PR merges once `CI Gate` passes on a branch that is up to
+date with `main`.
 
 ## Prerequisites
 
@@ -24,11 +24,11 @@ Gradle recipes reject any JDK except 21. They find it through `JAVA_HOME`, or
 ```bash
 git clone --recurse-submodules https://github.com/obscura-messaging/obscura-app.git
 cd obscura-app && just setup && just doctor
-just doctor-android && just android-apk       # or: just android-run
+just doctor-android && just android-build       # or: just android-run
 just doctor-ios && just ios-build             # simulator
 ```
 
-For a faster build, use `just android-apk arm64-v8a false` (one ABI, no R8)
+For a faster build, use `just android-build arm64-v8a false` (one ABI, no R8)
 or `just ios-build arm64`.
 
 - **Firebase.** Android needs `android/app/google-services.json`. When the
@@ -79,9 +79,9 @@ xcrun devicectl device install app --device <DEVICE_ID> \
 | `JavaScript` | `just check` | PRs, `main` |
 | `Kotlin Kit (unit tests + coverage)` | `just protocol-lint`, `just kotlin-check` | Kotlin PRs, `main` |
 | `Kotlin Kit (integration, native server)` | `just server-up`, `just kotlin-integration` | Kotlin PRs, `main` |
-| `Swift Kit (unit tests)` | `just swift-unit` | Swift PRs, `main` |
+| `Swift Kit (unit tests + coverage)` | `just swift-unit` | Swift PRs, `main` |
 | `Swift Kit (integration, native server)` | `just server-up`, `just swift-integration` | Swift PRs, `main` |
-| `Android Release Build` | `just android-apk arm64-v8a false` | Android PRs |
+| `Android Release Build` | `just android-build arm64-v8a false` | Android PRs |
 | `iOS Debug Build` | `just ios-build arm64` | iOS PRs |
 
 A PR runs a native job only when the job's inputs change: its platform
@@ -89,8 +89,10 @@ directory, `proto/`, `protocol/`, the `justfile`, its workflow, or (for app
 builds) the JavaScript toolchain files. A change under `src/` alone runs only
 `JavaScript`, which typechecks the code the native builds would bundle. Pushes
 to `main` run every job, because a release needs a fully green `main` commit.
-Each workflow ends in a gate job that fails if any job failed or was cancelled,
-so branch protection needs only the two gates.
+The workflow ends in `CI Gate`, which fails if any job failed or was cancelled,
+so branch protection needs only that one check. Every job has a timeout set
+well above its cold-cache duration, so a hung macOS job cannot run for the
+6-hour default.
 
 ## Integration tests
 

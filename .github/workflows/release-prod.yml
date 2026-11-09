@@ -14,6 +14,7 @@ jobs:
   verify:
     name: Verify main and CI
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       actions: read
@@ -22,7 +23,7 @@ jobs:
       build_number: ${{ steps.release.outputs.build_number }}
       version: ${{ steps.release.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 

@@ -70,7 +70,7 @@ approval.
 | `IOS_PROVISIONING_PROFILE_BASE64` | Base64 of the environment's App Store distribution profile (`Obscura Dev App Store` or `Obscura App Store`) |
 | `APP_STORE_CONNECT_API_KEY_P8` | Upload API private key |
 
-The archive job loads the identity into a temporary keychain. It checks the
+The build job loads the identity into a temporary keychain. It checks the
 profile's team, bundle ID and App Group, and the exported IPA's bundle ID,
 version and build. The upload job gets only the artifact, its checksum and the
 API key. These builds run in the foreground only against the live server; push
