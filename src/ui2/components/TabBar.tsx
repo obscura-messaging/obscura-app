@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import Svg, { Path, Polygon } from 'react-native-svg';
@@ -12,6 +12,11 @@ const BAR_H = 72;
 const GLASS_H = 112;
 const SHUTTER = 80;
 const RIM = 5;
+// claude: the white ring sits inside the bar-colored rim; ring line and gap are 4.5 px each
+const RING = SHUTTER - 2 * RIM;
+const RING_LINE = 4.5;
+const DISC = RING - 4 * RING_LINE;
+const WHITE = '#FFFFFF';
 
 const noop = () => undefined;
 
@@ -71,10 +76,26 @@ const glassPath = (w: number, h: number, c: number) =>
   `M0 66A26 26 0 0 1 26 40H${c - 50.53}A8 8 0 0 0 ${c - 42.9} 34.42A45 45 0 0 1 ${c + 42.9} 34.42` +
   `A8 8 0 0 0 ${c + 50.53} 40H${w - 26}A26 26 0 0 1 ${w} 66V${h}H0Z`;
 
+// claude: which button sits in the solid bar. 'yellow' is the camera button's ring and disc; the two lenses keep
+// the shutter blades. Flip this constant to switch.
+export type ShutterLook = 'yellow' | 'whiteLens' | 'yellowLens';
+export const SHUTTER_LOOK: ShutterLook = 'yellow';
+
+// claude: the camera button grows from the solid bar's ring size to its own on arrival, and the solid bar's button
+// shrinks back on leaving, so the size says "camera is active".
+let cameraWasShowing = false;
+const GROW = RING / SHUTTER;
+
 function CameraShutter({ yellow, rec }: { yellow: string; rec: string }) {
   const [pressed, setPressed] = useState(false);
   const scale = useSharedValue(1);
   const domeStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  const grow = useSharedValue(GROW);
+  const growStyle = useAnimatedStyle(() => ({ transform: [{ scale: grow.value }] }));
+  useEffect(() => {
+    cameraWasShowing = true;
+    grow.value = withTiming(1, TIMING.shutterGrow);
+  }, [grow]);
   const press = (down: boolean) => {
     setPressed(down);
     scale.value = withTiming(down ? SHUTTER_PRESS_SCALE : 1, TIMING.shutterPress);
@@ -83,14 +104,50 @@ function CameraShutter({ yellow, rec }: { yellow: string; rec: string }) {
   };
   const color = pressed ? rec : yellow;
   return (
-    <Pressable
-      onPressIn={() => press(true)}
-      onPressOut={() => press(false)}
-      style={[styles.glassShutter, { borderColor: color }]}
-      accessibilityLabel="Take photo"
+    <Animated.View style={[styles.glassShutterWrap, growStyle]}>
+      <Pressable
+        onPressIn={() => press(true)}
+        onPressOut={() => press(false)}
+        style={[styles.glassShutter, { borderColor: color }]}
+        accessibilityLabel="Take photo"
+      >
+        <Animated.View style={[styles.dome, { backgroundColor: color }, domeStyle]} />
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+// claude: the solid bar's button, in the chosen look, inside the bar-colored rim.
+function MainShutter({ look, yellow, bar, onPress }: { look: ShutterLook; yellow: string; bar: string; onPress: () => void }) {
+  const shrink = useSharedValue(cameraWasShowing ? 1 / GROW : 1);
+  const shrinkStyle = useAnimatedStyle(() => ({ transform: [{ scale: shrink.value }] }));
+  useEffect(() => {
+    cameraWasShowing = false;
+    shrink.value = withTiming(1, TIMING.shutterGrow);
+  }, [shrink]);
+  const blades = (
+    <Svg width={look === 'yellowLens' ? RING : DISC} height={look === 'yellowLens' ? RING : DISC} viewBox="2 2 20 20">
+      <Polygon points={SHUTTER_ICON.hexagon} fill={bar} />
+      <Path d={SHUTTER_ICON.blades} fill="none" stroke={bar} strokeWidth={0.9} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+  const face = look === 'yellowLens'
+    ? <View style={[styles.lensFull, { backgroundColor: yellow }]}>{blades}</View>
+    : (
+      <View style={[styles.ring, { borderColor: look === 'yellow' ? yellow : WHITE }]}>
+        <View style={[styles.disc, { backgroundColor: look === 'yellow' ? yellow : WHITE }]}>
+          {look === 'whiteLens' && blades}
+        </View>
+      </View>
+    );
+  return (
+    <TouchableOpacity
+      style={[styles.shutter, { backgroundColor: bar, borderColor: bar }]}
+      onPress={onPress}
+      accessibilityLabel="Open camera"
     >
-      <Animated.View style={[styles.dome, { backgroundColor: color }, domeStyle]} />
-    </Pressable>
+      <Animated.View style={shrinkStyle}>{face}</Animated.View>
+    </TouchableOpacity>
   );
 }
 
@@ -146,19 +203,7 @@ export function TabBar({ state, navigation }: MaterialTopTabBarProps) {
         )}
       </Svg>
       {tabs(
-        <TouchableOpacity
-          style={[styles.shutter, { backgroundColor: theme.yellow, borderColor: theme.bar }]}
-          onPress={() => go('Camera')}
-          accessibilityLabel="Open camera"
-        >
-          <Svg width={SHUTTER - 2 * RIM} height={SHUTTER - 2 * RIM} viewBox="2 2 20 20">
-            <Polygon points={SHUTTER_ICON.hexagon} fill={theme.bar} />
-            <Path
-              d={SHUTTER_ICON.blades} fill="none" stroke={theme.bar} strokeWidth={0.9}
-              strokeLinecap="round" strokeLinejoin="round"
-            />
-          </Svg>
-        </TouchableOpacity>,
+        <MainShutter look={SHUTTER_LOOK} yellow={theme.yellow} bar={theme.bar} onPress={() => go('Camera')} />,
       )}
     </View>
   );
@@ -176,8 +221,12 @@ const styles = StyleSheet.create({
     width: SHUTTER, height: SHUTTER, borderRadius: SHUTTER / 2, borderWidth: RIM, marginTop: -44,
     alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
   },
+  ring: { width: RING, height: RING, borderRadius: RING / 2, borderWidth: RING_LINE, padding: RING_LINE },
+  disc: { flex: 1, borderRadius: DISC / 2, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  lensFull: { width: RING, height: RING, borderRadius: RING / 2, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  glassShutterWrap: { marginTop: -48 },
   glassShutter: {
-    width: SHUTTER, height: SHUTTER, borderRadius: SHUTTER / 2, borderWidth: RIM, padding: 5, marginTop: -48,
+    width: SHUTTER, height: SHUTTER, borderRadius: SHUTTER / 2, borderWidth: RIM, padding: 5,
   },
   dome: { flex: 1, borderRadius: SHUTTER / 2 },
 });

@@ -33,6 +33,8 @@ export const TIMING = {
   swipeRowSnap: { duration: 340, easing: EASING.swipeRowSnap },
   pullSettle: { duration: 260, easing: EASING.pullSettle },
   shutterPress: { duration: 90, easing: EASING.easeOut },
+  // claude: the shutter growing to camera size (and back), a smooth ease with no overshoot
+  shutterGrow: { duration: 280, easing: EASING.easeOut },
   shutterColor: { duration: 120, easing: EASING.easeOut },
   spinnerRover: { duration: 1500, easing: EASING.spinnerRover },
 } as const satisfies Record<string, Timing>;
