@@ -1,11 +1,10 @@
 # Android distribution (`dev` and `prod`)
 
 PR and `main` CI never distribute, and PRs never see distribution credentials
-(they use the Firebase stub and debug signing). To ship, an owner
-(`barrelmaker97` or `rhelsing`) runs `just release-dev` (**Actions → Release
-Dev**) or `just release-prod` (**Actions → Release Prod**) on `main`.
-`scripts/verify-release-build.sh` checks the starting and rerunning actor,
-requires the commit to be the current `main` tip with a successful `main` CI
+(they use the Firebase stub and debug signing). To ship, a maintainer runs
+`just release-dev` (**Actions → Release Dev**) or `just release-prod`
+(**Actions → Release Prod**) on `main`, then approves the deployments.
+`scripts/verify-release-build.sh` requires the commit to be the current `main` tip with a successful `main` CI
 run, and reads the `X.Y.Z` version from `package.json`. Android and iOS then run
 independently via `.github/workflows/distribute-android.yml` and
 `.github/workflows/distribute-ios.yml`.
@@ -13,7 +12,7 @@ independently via `.github/workflows/distribute-android.yml` and
 | Environment | App Name | Package Name | Server | GitHub Environment |
 | --- | --- | --- | --- | --- |
 | `dev` | **Obscura Dev** | `dev.barrelmaker.obscura.dev` | `https://devscura.barrelmaker.dev` | `android-dev` |
-| `prod` | **Obscura** | `dev.barrelmaker.obscura` | `https://obscura.barrelmaker.dev` | `android-prod` (requires review) |
+| `prod` | **Obscura** | `dev.barrelmaker.obscura` | `https://obscura.barrelmaker.dev` | `android-prod` |
 
 `.github/workflows/distribute-android.yml` builds that commit once as a signed,
 minified Android App Bundle (`.aab`). It keeps the `.aab` and release notes as
@@ -72,8 +71,8 @@ keyPassword=...
 
 ## GitHub `android-dev` and `android-prod` environments
 
-Deployments are allowed only from `main`, and `android-prod` requires reviewer
-approval.
+Deployments are allowed only from `main` and require approval from the
+`obscura-maintainers` team.
 
 | Variable | Value |
 | --- | --- |
