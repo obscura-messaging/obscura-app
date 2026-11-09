@@ -6,7 +6,7 @@ after the same verification ([`ANDROID_DISTRIBUTION.md`](ANDROID_DISTRIBUTION.md
 exports a signed IPA. It keeps the IPA and dSYMs as a GitHub artifact for 30
 days. A second job verifies the IPA and uploads it to App Store Connect for
 TestFlight. The marketing
-version comes from `package.json` (`1.0.0`), and the build number is 1000 plus
+version comes from `package.json` (`1.0.0`), and the build number is 1010 plus
 the release run number. An
 uploaded build cannot be replaced under the same version and build, so retry the
 failed jobs or start a new run.
@@ -22,10 +22,10 @@ failed jobs or start a new run.
   it to an internal TestFlight group, or enable automatic distribution for the
   group. Internal testers must be App Store Connect users.
 - `dev` builds (`dev.barrelmaker.obscura.dev`) set
-  `testFlightInternalTestingOnly: true` in `ExportOptions.plist` so a
+  `testFlightInternalTestingOnly: true` in `ios/Config/Dev-ExportOptions.plist` so a
   `devscura` build can never be submitted to external review or the public App
   Store. `prod` builds (`dev.barrelmaker.obscura`) set
-  `testFlightInternalTestingOnly: false` so a tested release candidate can be
+  `testFlightInternalTestingOnly: false` in `Prod-ExportOptions.plist` so a tested release candidate can be
   promoted to the App Store. Builds expire after 90 days.
 - **Export compliance.** For the first build, the Account Holder completed
   Apple's questionnaire, and App Store Connect recorded

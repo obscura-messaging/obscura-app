@@ -19,7 +19,7 @@ jobs:
   # Pull requests run a native job only when its inputs change. Pushes to main
   # run everything, because a release requires a fully green main commit.
   changes:
-    name: Detect changes
+    name: Changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -31,7 +31,8 @@ jobs:
       swift: ${{ github.event_name != 'pull_request' || steps.filter.outputs.swift == 'true' }}
       ios: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ios == 'true' }}
     steps:
-      - uses: dorny/paths-filter@v4.0.3
+      - name: Filter paths
+        uses: dorny/paths-filter@v4.0.3
         id: filter
         if: github.event_name == 'pull_request'
         with:
@@ -81,51 +82,61 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7.0.1
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
-      - uses: extractions/setup-just@v4.0.0
-      - uses: actions/setup-node@v7.1.0
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
+      - name: Install Node
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
-      - run: just install
+      - name: Install dependencies
+        run: just install
       # Domain, bridge-facade, and state tests run without a native simulator.
       # ESLint errors fail the job; warnings remain non-fatal.
-      - run: just check
+      - name: Check
+        run: just check
 
   kotlin-unit:
-    name: Kotlin Kit (unit tests + coverage)
+    name: Kotlin
     needs: changes
     if: needs.changes.outputs.kotlin == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7.0.1
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
-      - uses: extractions/setup-just@v4.0.0
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
 
-      - uses: actions/setup-java@v6.2.0
+      - name: Install Java
+        uses: actions/setup-java@v6.2.0
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - uses: gradle/actions/setup-gradle@v6.4.1
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v6.4.1
 
-      - uses: bufbuild/buf-action@v1.7.0
+      - name: Install buf
+        uses: bufbuild/buf-action@v1.7.0
         with:
           setup_only: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lint client protocol
+      - name: Lint protocol
         run: just protocol-lint
 
-      - name: Validate client protocol vectors and run Kotlin unit tests + coverage
+      - name: Unit tests
         run: just kotlin-check
 
-      - name: Upload unit-test report on failure
+      - name: Test report
         if: failure()
         uses: actions/upload-artifact@v7.0.2
         with:
@@ -133,7 +144,7 @@ jobs:
           path: kotlin/lib/build/reports/tests/test/
           retention-days: 7
 
-      - name: Upload coverage report
+      - name: Coverage report
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
@@ -144,30 +155,34 @@ jobs:
           retention-days: 14
 
   kotlin-integration:
-    name: Kotlin Kit (integration, native server)
+    name: Kotlin Integration
     needs: changes
     if: needs.changes.outputs.kotlin == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7.0.1
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
-      - uses: extractions/setup-just@v4.0.0
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
 
-      - uses: actions/setup-java@v6.2.0
+      - name: Install Java
+        uses: actions/setup-java@v6.2.0
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - uses: gradle/actions/setup-gradle@v6.4.1
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v6.4.1
 
-      - name: Resolve latest obscura-server commit
+      - name: Resolve server
         id: server-ref
         run: echo "sha=$(scripts/local-server.sh ref)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache obscura-server binary
+      - name: Cache server
         id: server-bin
         uses: actions/cache@v6.1.0
         with:
@@ -178,13 +193,13 @@ jobs:
         if: steps.server-bin.outputs.cache-hit != 'true'
         run: scripts/ci-install-rust.sh
 
-      - name: Install protobuf when building Rust dependencies
+      - name: Install protobuf
         if: steps.server-bin.outputs.cache-hit != 'true'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       # Builds only on a cache miss; backing services come from the server's
       # docker-compose.yml.
-      - name: Start obscura-server
+      - name: Start server
         env:
           SERVER_SHA: ${{ steps.server-ref.outputs.sha }}
         run: just server-up "$SERVER_SHA"
@@ -192,11 +207,11 @@ jobs:
       - name: Integration tests
         run: just kotlin-integration http://localhost:3000
 
-      - name: Server log on failure
+      - name: Server log
         if: failure()
         run: just server-logs 200 || true
 
-      - name: Upload integration-test report
+      - name: Test report
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
@@ -205,51 +220,58 @@ jobs:
           retention-days: 14
 
   android:
-    name: Android Release Build
+    name: Android
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - name: Checkout app
+      - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
           # The proto submodule is required by Kotlin protobuf codegen.
           submodules: recursive
 
-      - uses: extractions/setup-just@v4.0.0
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
 
-      - uses: actions/setup-node@v7.1.0
+      - name: Install Node
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
 
-      - uses: actions/setup-java@v6.2.0
+      - name: Install Java
+        uses: actions/setup-java@v6.2.0
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - uses: gradle/actions/setup-gradle@v6.4.1
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v6.4.1
 
-      - run: just install
+      - name: Install dependencies
+        run: just install
 
       # Main builds a signed bundle once in the separate release workflow.
-      - name: Compile arm64 release APK
+      - name: Build app
         run: just android-build arm64-v8a false
 
   swift-unit:
-    name: Swift Kit (unit tests + coverage)
+    name: Swift
     needs: changes
     if: needs.changes.outputs.swift == 'true'
     runs-on: macos-26
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7.0.1
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
-      - uses: extractions/setup-just@v4.0.0
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
 
-      - name: Select latest Xcode
+      - name: Select Xcode
         run: |
           sudo xcode-select -s "$(
             find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' -print |
@@ -257,18 +279,18 @@ jobs:
               tail -n 1
           )"
 
-      - name: Resolve Swift toolchain cache key
+      - name: Swift version
         id: swift-toolchain
         run: echo "version=$(xcrun swift --version | shasum -a 256 | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache libsignal (source + built FFI)
+      - name: Cache libsignal
         id: libsignal
         uses: actions/cache@v6.1.0
         with:
           path: swift/vendored/libsignal
           key: libsignal-${{ env.LIBSIGNAL_REF }}-host-macos26
 
-      - name: Cache SwiftPM build
+      - name: Cache SwiftPM
         uses: actions/cache@v6.1.0
         with:
           path: swift/.build
@@ -280,7 +302,7 @@ jobs:
         if: steps.libsignal.outputs.cache-hit != 'true'
         run: scripts/ci-install-rust.sh
 
-      - name: Install protobuf when building libsignal
+      - name: Install protobuf
         if: steps.libsignal.outputs.cache-hit != 'true'
         run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
 
@@ -288,18 +310,20 @@ jobs:
         run: just swift-unit
 
   swift-integration:
-    name: Swift Kit (integration, native server)
+    name: Swift Integration
     needs: changes
     if: needs.changes.outputs.swift == 'true'
     runs-on: macos-26
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7.0.1
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
-      - uses: extractions/setup-just@v4.0.0
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
 
-      - name: Select latest Xcode
+      - name: Select Xcode
         run: |
           sudo xcode-select -s "$(
             find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' -print |
@@ -307,18 +331,18 @@ jobs:
               tail -n 1
           )"
 
-      - name: Resolve Swift toolchain cache key
+      - name: Swift version
         id: swift-toolchain
         run: echo "version=$(xcrun swift --version | shasum -a 256 | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache libsignal (source + built FFI)
+      - name: Cache libsignal
         id: libsignal
         uses: actions/cache@v6.1.0
         with:
           path: swift/vendored/libsignal
           key: libsignal-${{ env.LIBSIGNAL_REF }}-host-macos26
 
-      - name: Cache SwiftPM build
+      - name: Cache SwiftPM
         uses: actions/cache@v6.1.0
         with:
           path: swift/.build
@@ -326,11 +350,11 @@ jobs:
           restore-keys: |
             swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-toolchain.outputs.version }}-${{ env.LIBSIGNAL_REF }}-${{ hashFiles('swift/Package.swift', 'swift/Package.resolved') }}-
 
-      - name: Resolve latest obscura-server commit
+      - name: Resolve server
         id: server-ref
         run: echo "sha=$(scripts/local-server.sh ref)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache obscura-server binary
+      - name: Cache server
         id: server-bin
         uses: actions/cache@v6.1.0
         with:
@@ -341,18 +365,18 @@ jobs:
         if: steps.libsignal.outputs.cache-hit != 'true' || steps.server-bin.outputs.cache-hit != 'true'
         run: scripts/ci-install-rust.sh
 
-      - name: Install protobuf when building Rust dependencies
+      - name: Install protobuf
         if: steps.libsignal.outputs.cache-hit != 'true' || steps.server-bin.outputs.cache-hit != 'true'
         run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
 
       # macOS runners have no Docker, so the services run as local processes.
-      - name: Install backing services
+      - name: Install services
         run: |
           brew install postgresql@18 minio valkey
           command -v aws >/dev/null || brew install awscli
 
       # Builds only on a cache miss.
-      - name: Start obscura-server
+      - name: Start server
         env:
           OBSCURA_SERVER_SERVICES: native
           SERVER_SHA: ${{ steps.server-ref.outputs.sha }}
@@ -361,29 +385,31 @@ jobs:
       - name: Integration tests
         run: just swift-integration http://localhost:3000
 
-      - name: Server log on failure
+      - name: Server log
         if: failure()
         run: just server-logs 200 || true
 
-      - name: Stop backing services
+      - name: Stop server
         if: always()
         run: just server-down || true
 
   ios:
-    name: iOS Debug Build
+    name: iOS
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true'
     runs-on: macos-26
     timeout-minutes: 60
     steps:
-      - name: Checkout app and native dependencies
+      - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
-      - uses: extractions/setup-just@v4.0.0
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
 
-      - uses: actions/setup-node@v7.1.0
+      - name: Install Node
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
@@ -391,7 +417,7 @@ jobs:
       - name: Install Rust
         run: scripts/ci-install-rust.sh aarch64-apple-ios-sim
 
-      - name: Select latest Xcode
+      - name: Select Xcode
         run: |
           sudo xcode-select -s "$(
             find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' -print |
@@ -399,7 +425,7 @@ jobs:
               tail -n 1
           )"
 
-      - name: Cache libsignal source and simulator FFI
+      - name: Cache libsignal
         id: libsignal
         uses: actions/cache@v6.1.0
         with:
@@ -409,24 +435,25 @@ jobs:
       - name: Install protobuf
         run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
 
-      - run: just install
+      - name: Install dependencies
+        run: just install
 
       - name: Install CocoaPods
         run: sudo gem install cocoapods -v 1.17.0 -N
 
-      - name: Build arm64 iOS app
+      - name: Build app
         run: just ios-build arm64
 
   # The one check branch protection needs: skipped jobs pass, while a failed
   # or cancelled job (including change detection) fails the gate.
   gate:
-    name: CI Gate
+    name: Gate
     if: always()
     needs: [changes, javascript, kotlin-unit, kotlin-integration, android, swift-unit, swift-integration, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every job to succeed or be skipped
+      - name: Check results
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |

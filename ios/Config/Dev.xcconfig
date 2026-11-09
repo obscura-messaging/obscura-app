@@ -1,0 +1,7 @@
+// The dev environment: Obscura Dev against devscura. The project uses this file
+// as its base configuration, so a plain Xcode build is a dev build. The just
+// recipes pass the selected environment's file with `xcodebuild -xcconfig`.
+PRODUCT_BUNDLE_IDENTIFIER = dev.barrelmaker.obscura.dev
+OBSCURA_DISPLAY_NAME = Obscura Dev
+OBSCURA_API_HOST = devscura.barrelmaker.dev
+PROVISIONING_PROFILE_SPECIFIER[config=Release][sdk=iphoneos*] = Obscura Dev App Store
