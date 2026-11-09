@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList,
-  KeyboardAvoidingView, Platform, Animated, PanResponder, StyleSheet, type ViewToken,
+  KeyboardAvoidingView, Platform, Animated, PanResponder, StyleSheet, type ListViewToken,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
@@ -96,7 +96,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const isFocused = useIsFocused();
   const appActive = useAppActive();
   const [visibleIds, setVisibleIds] = useState<ReadonlySet<string>>(new Set());
-  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ListViewToken[] }) => {
     setVisibleIds(new Set(viewableItems.map((v) => (v.item as TimelineItem).id)));
   }).current;
   const marked = useRef(new Set<string>());
@@ -204,7 +204,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
               <View style={[cs.msgRow, cs.msgRowLeft]}>
                 <TypingBubble />
               </View>
-            ) : null}
+            ) : undefined}
           />
         )}
 

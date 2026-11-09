@@ -246,15 +246,13 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
       )}
       {hasCaption && !editing && style === 'bold' && (
         <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, ps.center]}>
-          <Animated.Text
+          {/* Text's typings take no responder events, so the gesture and transform live on a view. */}
+          <Animated.View
             {...boldPanResponder.panHandlers}
-            style={[
-              boldTextStyle(boldLook),
-              { transform: [{ translateX: boldPan.x }, { translateY: boldPan.y }, { rotate: rotateStr }, { scale: boldScale }] },
-            ]}
+            style={{ transform: [{ translateX: boldPan.x }, { translateY: boldPan.y }, { rotate: rotateStr }, { scale: boldScale }] }}
           >
-            {caption}
-          </Animated.Text>
+            <Text style={boldTextStyle(boldLook)}>{caption}</Text>
+          </Animated.View>
         </View>
       )}
 

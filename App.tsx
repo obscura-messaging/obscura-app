@@ -32,7 +32,7 @@ export default function App() {
           },
         }}
       >
-        <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
+        <StatusBar barStyle="light-content" />
         <RootNavigator />
       </NavigationContainer>
       <ConnectionBanner />

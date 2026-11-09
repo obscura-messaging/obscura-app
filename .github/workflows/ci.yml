@@ -57,15 +57,12 @@ jobs:
               - *shared
               - 'kotlin/**'
               - 'scripts/ci-install-rust.sh'
-              - 'scripts/run-with-java-21.sh'
               - 'scripts/local-server.sh'
             android:
               - *shared
               - *app
               - 'android/**'
               - 'kotlin/**'
-              - 'scripts/run-with-android-env.sh'
-              - 'scripts/run-with-java-21.sh'
               - '.java-version'
             swift:
               - *shared

@@ -21,15 +21,28 @@ ensure-node-modules:
 # Verify shared JavaScript prerequisites.
 doctor:
     @command -v git >/dev/null || { echo "error: git is required" >&2; exit 1; }
-    @command -v node >/dev/null || { echo "error: Node 22.11+ is required" >&2; exit 1; }
+    @command -v node >/dev/null || { echo "error: Node 22.13+ is required" >&2; exit 1; }
     @command -v npm >/dev/null || { echo "error: npm is required" >&2; exit 1; }
-    @node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 11)) { console.error(`error: Node 22.11+ is required; found ${process.versions.node}`); process.exit(1); }'
+    @node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 13)) { console.error(`error: Node 22.13+ is required; found ${process.versions.node}`); process.exit(1); }'
     @echo "Shared Obscura prerequisites are ready."
 
-# Verify Android prerequisites.
+# Verify Android prerequisites. Gradle picks JDK 21 itself
+# (gradle/gradle-daemon-jvm.properties); the SDK comes from ANDROID_HOME or
+# sdk.dir in android/local.properties, which Android Studio writes.
 doctor-android: doctor ensure-node-modules
-    @./scripts/run-with-android-env.sh ./android/gradlew -p android --version >/dev/null
-    @echo "Android prerequisites are ready."
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${ANDROID_HOME:-}" ]] && ! grep -qs '^sdk.dir=' android/local.properties; then
+        echo "error: set ANDROID_HOME, or sdk.dir in android/local.properties, to your Android SDK" >&2
+        for sdk in "$HOME/Library/Android/sdk" "$HOME/Android/Sdk"; do
+            if [[ -d "$sdk" ]]; then
+                echo "  found $sdk: echo 'sdk.dir=$sdk' > android/local.properties" >&2
+            fi
+        done
+        exit 1
+    fi
+    ./android/gradlew -p android --version >/dev/null
+    echo "Android prerequisites are ready."
 
 # Verify iOS prerequisites.
 doctor-ios: doctor
@@ -77,11 +90,11 @@ protocol-vectors:
 
 # Run Kotlin unit tests.
 kotlin-unit:
-    cd kotlin && ../scripts/run-with-java-21.sh ./gradlew :lib:test
+    cd kotlin && ./gradlew :lib:test
 
 # Run the Kotlin CI tasks in one Gradle process.
 kotlin-ci:
-    cd kotlin && ../scripts/run-with-java-21.sh ./gradlew :lib:test :lib:koverHtmlReport :lib:koverXmlReport :lib:koverVerify
+    cd kotlin && ./gradlew :lib:test :lib:koverHtmlReport :lib:koverXmlReport :lib:koverVerify
 
 # Run the full fast Kotlin CI gate.
 kotlin-check: protocol-vectors kotlin-ci
@@ -107,7 +120,7 @@ server-logs lines="200":
 # Run Kotlin server-dependent tests against an explicit local endpoint.
 kotlin-integration api="http://localhost:3000":
     @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
-    cd kotlin && OBSCURA_TEST_API="{{ api }}" ../scripts/run-with-java-21.sh ./gradlew :lib:integrationTest
+    cd kotlin && OBSCURA_TEST_API="{{ api }}" ./gradlew :lib:integrationTest
 
 # Fetch and build the pinned host libsignal FFI.
 [private]
@@ -138,24 +151,24 @@ check-env env:
 
 # Run the Android app on a device or emulator (env: dev or prod).
 android-run env="dev": (check-env env) android-config ensure-node-modules
-    ./scripts/run-with-android-env.sh npm run android -- --mode {{env}}Debug {{ if env == "dev" { "--appIdSuffix dev" } else { "" } }}
+    npm run android -- --mode {{env}}Debug {{ if env == "dev" { "--appIdSuffix dev" } else { "" } }}
 
 # Assemble a compile-only Android release APK (env: dev or prod). Pass an
 # architecture list and false to skip R8 for a faster build:
 # just android-build arm64-v8a false
 android-build architectures="" minify="true" env="dev": (check-env env) android-config ensure-node-modules
-    ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:assemble{{capitalize(env)}}Release --parallel -PenableProguardInReleaseBuilds={{quote(minify)}} {{ if architectures != "" { "-PreactNativeArchitectures=" + quote(architectures) } else { "" } }}
+    ./android/gradlew -p android :app:assemble{{capitalize(env)}}Release --parallel -PenableProguardInReleaseBuilds={{quote(minify)}} {{ if architectures != "" { "-PreactNativeArchitectures=" + quote(architectures) } else { "" } }}
 
 # Bundle a signed, minified Android App Bundle (.aab) with real Firebase configuration.
 # Signing credentials are read from android/keystore.properties or the
 # ANDROID_RELEASE_* environment variables.
 android-bundle version_code version_name env="dev": (check-env env) android-config ensure-node-modules
-    ./scripts/run-with-android-env.sh ./android/gradlew -p android :app:bundle{{capitalize(env)}}Release --parallel -PenableProguardInReleaseBuilds=true -PobscuraSignedBundle=true -PobscuraVersionCode={{quote(version_code)}} -PobscuraVersionName={{quote(version_name)}}
+    ./android/gradlew -p android :app:bundle{{capitalize(env)}}Release --parallel -PenableProguardInReleaseBuilds=true -PobscuraSignedBundle=true -PobscuraVersionCode={{quote(version_code)}} -PobscuraVersionName={{quote(version_name)}}
 
 # Clean Android build outputs.
 android-clean: ensure-node-modules
     rm -rf android/app/.cxx
-    ./scripts/run-with-android-env.sh ./android/gradlew -p android clean --parallel
+    ./android/gradlew -p android clean --parallel
 
 # Clean iOS build outputs.
 ios-clean:

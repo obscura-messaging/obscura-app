@@ -13,6 +13,7 @@
 		2A25B6BA6346E5B2E025975A /* KeychainSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B389CC240177117C3ED0446C /* KeychainSession.swift */; };
 		66334826ACC6590D28987E84 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
+		761780EF2CA45674006654EF /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EE2CA45674006654EF /* SceneDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
 		9996910D1B340E197C5E445A /* ObscuraBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A5FB779AE63B4324AD7E05E /* ObscuraBridge.swift */; };
 		A34FF72BABD2AA3D3C7298B7 /* ObscuraSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04DA4A9CC1A1B5B2D06BCF3F /* ObscuraSession.swift */; };
@@ -32,6 +33,7 @@
 		5709B34CF0A7D63546082F79 /* Pods-Obscura.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Obscura.release.xcconfig"; path = "Target Support Files/Pods-Obscura/Pods-Obscura.release.xcconfig"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-Obscura.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Obscura.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Obscura/AppDelegate.swift; sourceTree = "<group>"; };
+		761780EE2CA45674006654EF /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SceneDelegate.swift; path = Obscura/SceneDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = Obscura/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		A37E54F4484E1DFC5514BFBB /* ObscuraBridge.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = Obscura/ObscuraBridge.m; sourceTree = "<group>"; };
 		A752FEB31FD6E940225BE227 /* ScreenSecurity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScreenSecurity.swift; path = Obscura/ScreenSecurity.swift; sourceTree = "<group>"; };
@@ -61,6 +63,7 @@
 			children = (
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
+				761780EE2CA45674006654EF /* SceneDelegate.swift */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
@@ -288,6 +291,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
+				761780EF2CA45674006654EF /* SceneDelegate.swift in Sources */,
 				2A25B6BA6346E5B2E025975A /* KeychainSession.swift in Sources */,
 				C1A7F30D5E4B8A9612340001 /* SharedContainer.swift in Sources */,
 				A34FF72BABD2AA3D3C7298B7 /* ObscuraSession.swift in Sources */,
