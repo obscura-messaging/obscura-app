@@ -1,6 +1,7 @@
 import { useColorScheme } from 'react-native';
 import { create } from 'zustand';
 import { resolveTheme, type PaletteName, type ResolvedTheme } from './theme';
+import type { SampleSize } from './sample';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
@@ -10,10 +11,12 @@ interface Ui2State {
   // claude: profile emoji/color need a data field; null shows the letter and the username's color.
   emoji: string | null;
   color: string | null;
+  // claude: dev sample data (sample.ts); null shows real data.
+  sample: SampleSize | null;
 }
 
 // claude: in memory only; persistence is pending.
-export const useUi2 = create<Ui2State>(() => ({ mode: 'system', palette: 'Sunny', emoji: null, color: null }));
+export const useUi2 = create<Ui2State>(() => ({ mode: 'system', palette: 'Sunny', emoji: null, color: null, sample: null }));
 
 export const setThemeMode = (mode: ThemeMode) => useUi2.setState({ mode });
 export const setPalette = (palette: PaletteName) => useUi2.setState({ palette });

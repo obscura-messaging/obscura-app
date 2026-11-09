@@ -8,13 +8,14 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { activityPreview, conversationItems, friendActivities, type FriendActivity } from '../../domain/chats';
 import { storyGroups } from '../../domain/viewer';
-import { useAcceptedFriends, useIdentity, useMessages, useSession, useStories } from '../../state/store';
 import { usePeerTyping } from '../../state/chat';
 import { openPixViewer } from '../../navigation/openPixViewer';
 import type { RootStackParamList } from '../../navigation/types';
 import { DARK_OVERLAY, withAlpha, type ResolvedTheme } from '../theme';
 import { useUi2, useUi2Theme } from '../store';
 import { TYPING_DOTS } from '../motion';
+import { useChatsData } from '../chatsData';
+import type { SampleFace } from '../sample';
 import { Avatar } from '../components/Avatar';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -92,11 +93,13 @@ interface RowProps {
   myUserId: string;
   unread: number;
   theme: ResolvedTheme;
+  sampleTyping: boolean;
+  face: SampleFace | undefined;
   onPress: () => void;
 }
 
-function ChatRow({ item, myUserId, unread, theme, onPress }: RowProps) {
-  const typing = usePeerTyping(item.friend.userId);
+function ChatRow({ item, myUserId, unread, theme, sampleTyping, face, onPress }: RowProps) {
+  const typing = usePeerTyping(item.friend.userId) || sampleTyping;
   const pix = item.unopenedPix.length > 0;
   const dark = theme.mode === 'dark';
   const avatarLine = dark ? withAlpha(DARK_OVERLAY.avatarOutline.color, DARK_OVERLAY.avatarOutline.alpha) : theme.outline;
@@ -106,7 +109,7 @@ function ChatRow({ item, myUserId, unread, theme, onPress }: RowProps) {
     <TouchableOpacity style={[styles.row, { backgroundColor: theme.paper }]} onPress={onPress}>
       <Avatar
         name={item.friend.username} size={48} radius={14} outline={avatarLine} ink={theme.onSecondary.ink}
-        background={pix ? theme.pix : undefined} cropped={pix}
+        background={pix ? theme.pix : face?.color} emoji={face?.emoji} cropped={pix}
       />
       <View style={styles.rowMain}>
         <Text style={[styles.rowName, { color: nameColor }]} numberOfLines={1}>{item.friend.username}</Text>
@@ -141,11 +144,7 @@ export function ChatListScreen() {
   const myColor = useUi2(s => s.color);
   const on = theme.onSecondary;
   const insets = useSafeAreaInsets();
-  const { myUserId } = useSession();
-  const identity = useIdentity();
-  const friends = useAcceptedFriends();
-  const items = useMessages();
-  const stories = useStories();
+  const { sample, myUserId, identity, friends, items, stories, typingUserId, faces } = useChatsData();
 
   // claude: chats holding unopened photos sort first, then most recent.
   const activities = useMemo(
@@ -163,7 +162,7 @@ export function ChatListScreen() {
       <View>
         <Avatar
           name={username} size={54} radius={14} outline={on.outline} ink={on.ink}
-          emoji={mineBadge ? myEmoji : null} background={(mineBadge && myColor) || undefined}
+          emoji={mineBadge ? myEmoji : faces[key]?.emoji} background={(mineBadge ? myColor : faces[key]?.color) || undefined}
         />
         {mineBadge && (
           <View style={[styles.storyAdd, { backgroundColor: on.sun, borderColor: on.outline }]}>
@@ -175,7 +174,10 @@ export function ChatListScreen() {
     </TouchableOpacity>
   );
 
-  const openStories = (userId: string) => nav.navigate('StoryViewer', { mode: 'stories', initialUserId: userId });
+  // claude: sample stories and pix have no media, so the real viewers never open on sample ids.
+  const openStories = (userId: string) => {
+    if (!sample) nav.navigate('StoryViewer', { mode: 'stories', initialUserId: userId });
+  };
 
   return (
     <View style={[styles.screen, { backgroundColor: theme.sky, paddingTop: insets.top }]}>
@@ -196,7 +198,9 @@ export function ChatListScreen() {
             myUserId={myUserId}
             unread={unreadFrom(item.friend.userId)}
             theme={theme}
-            onPress={() => (item.unopenedPix.length > 0
+            sampleTyping={item.friend.userId === typingUserId}
+            face={faces[item.friend.userId]}
+            onPress={() => (item.unopenedPix.length > 0 && !sample
               ? openPixViewer(nav, item.friend, item.unopenedPix)
               : nav.navigate('Chat', { userId: item.friend.userId, username: item.friend.username }))}
           />

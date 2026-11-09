@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   chatTimeline, conversationItems, pixStatus, unseenVisibleMessageIds, type ChatTimelineItem,
 } from '../../domain/chats';
-import { markSeen, useAcceptedFriends, useMessages, useSession } from '../../state/store';
+import { markSeen } from '../../state/store';
 import { notifyTyping, sendChatMessage, usePeerTyping } from '../../state/chat';
 import { toast } from '../../state/toast';
 import { useAppActive } from '../../hooks/useAppActive';
@@ -19,6 +19,7 @@ import { openPixViewer } from '../../navigation/openPixViewer';
 import type { RootStackParamList, RootStackScreenProps } from '../../navigation/types';
 import { DARK_OVERLAY, withAlpha } from '../theme';
 import { useUi2Theme } from '../store';
+import { sendSampleMessage, useChatsData } from '../chatsData';
 import { Avatar, avatarColor } from '../components/Avatar';
 import { TypingDots } from './ChatListScreen';
 
@@ -40,13 +41,12 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const on = theme.onSecondary;
   const dark = theme.mode === 'dark';
   const insets = useSafeAreaInsets();
-  const { myUserId } = useSession();
-  const friends = useAcceptedFriends();
+  const { sample, myUserId, friends, items: allItems, typingUserId, faces } = useChatsData();
   const friend = friends.find(f => f.userId === route.params.userId)
     ?? { userId: route.params.userId, username: route.params.username, status: 'accepted' as const };
-  const friendColor = avatarColor(friend.username);
-  const allItems = useMessages();
-  const peerTyping = usePeerTyping(friend.userId);
+  const face = faces[friend.userId];
+  const friendColor = face?.color ?? avatarColor(friend.username);
+  const peerTyping = usePeerTyping(friend.userId) || friend.userId === typingUserId;
   const [text, setText] = useState('');
 
   const peerItems = useMemo(() => conversationItems(allItems, friend.userId), [allItems, friend.userId]);
@@ -69,7 +69,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   }).current;
   const marked = useRef(new Set<string>());
   useEffect(() => {
-    if (!isFocused || !appActive) return;
+    if (sample || !isFocused || !appActive) return;
     for (const id of unseenVisibleMessageIds(messages, visibleIds, myUserId, marked.current)) {
       marked.current.add(id);
       markSeen(id).catch(e => {
@@ -77,12 +77,16 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
         logError('seen.message:' + id, e);
       });
     }
-  }, [isFocused, appActive, visibleIds, messages, myUserId]);
+  }, [sample, isFocused, appActive, visibleIds, messages, myUserId]);
 
   const send = async () => {
     if (!text.trim()) return;
     const content = text;
     setText('');
+    if (sample) {
+      sendSampleMessage(friend.userId, myUserId, content);
+      return;
+    }
     try {
       await sendChatMessage(friend.userId, content);
     } catch (e) {
@@ -91,7 +95,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   };
 
   const onChangeText = (t: string) => {
-    notifyTyping(friend.userId, text, t);
+    if (!sample) notifyTyping(friend.userId, text, t);
     setText(t);
   };
 
@@ -112,7 +116,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
     if (item.status === 'received_new') {
       return (
         <View style={styles.fromThem}>
-          <TouchableOpacity style={[bubble, { backgroundColor: theme.pix }]} onPress={() => openPixViewer(nav, friend, unopenedPix)}>
+          <TouchableOpacity style={[bubble, { backgroundColor: theme.pix }]} onPress={() => { if (!sample) openPixViewer(nav, friend, unopenedPix); }}>
             <Text style={[styles.msgText, { color: theme.paper }]}>{PIX_LABEL.received_new}</Text>
           </TouchableOpacity>
         </View>
@@ -134,7 +138,9 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
     <View style={[styles.screen, { backgroundColor: friendColor }]}>
       <View style={[styles.head, { paddingTop: insets.top }]}>
         <View pointerEvents="none" style={styles.peek}>
-          <Avatar name={friend.username} size={PEEK} radius={28} outline={on.outline} ink={on.ink} />
+          <Avatar
+            name={friend.username} size={PEEK} radius={28} outline={on.outline} ink={on.ink} emoji={face?.emoji} background={face?.color}
+          />
         </View>
         <TouchableOpacity style={styles.iconBtn} onPress={() => nav.goBack()} accessibilityLabel="Back">
           <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
