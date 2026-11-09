@@ -45,10 +45,7 @@ class ReleaseBuildVerificationTest(unittest.TestCase):
     def verify(self, **overrides):
         env = dict(
             os.environ,
-            GITHUB_REF="refs/heads/main",
             GITHUB_SHA=self.git("rev-parse", "HEAD"),
-            GITHUB_ACTOR="barrelmaker97",
-            GITHUB_TRIGGERING_ACTOR="barrelmaker97",
             GITHUB_RUN_NUMBER="1",
             GITHUB_OUTPUT=str(self.output),
             GITHUB_REPOSITORY="example/app",
@@ -71,14 +68,8 @@ class ReleaseBuildVerificationTest(unittest.TestCase):
         self.git("push", "-q", "origin", "main")
         self.assertNotEqual(self.verify().returncode, 0)
 
-    def test_rejects_other_branches_and_mismatched_commit(self):
-        self.assertNotEqual(self.verify(GITHUB_REF="refs/heads/feature").returncode, 0)
+    def test_rejects_mismatched_commit(self):
         self.assertNotEqual(self.verify(GITHUB_SHA="0" * 40).returncode, 0)
-
-    def test_rejects_unauthorized_initiator_and_rerun(self):
-        self.assertNotEqual(self.verify(GITHUB_ACTOR="other").returncode, 0)
-        self.assertNotEqual(self.verify(GITHUB_TRIGGERING_ACTOR="other").returncode, 0)
-        self.assertEqual(self.verify(GITHUB_ACTOR="rhelsing", GITHUB_TRIGGERING_ACTOR="rhelsing").returncode, 0)
 
     def test_rejects_unverified_main(self):
         self.assertNotEqual(self.verify(MOCK_CI_RESULT="0").returncode, 0)

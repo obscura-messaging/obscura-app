@@ -56,6 +56,17 @@ lint:
 check: test typecheck lint
     python3 scripts/test-verify-release-build.py -q
 
+# Bundle the JavaScript for Android and iOS the way a release build does.
+bundle: ensure-node-modules
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="$(mktemp -d)"
+    trap 'rm -rf "$out"' EXIT
+    for platform in android ios; do
+        npx react-native bundle --platform "$platform" --dev false --entry-file index.js \
+            --bundle-output "$out/$platform.bundle" --assets-dest "$out/$platform-assets"
+    done
+
 # Lint the client-to-client protocol.
 protocol-lint:
     buf lint protocol

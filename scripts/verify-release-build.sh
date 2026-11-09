@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
-    echo "error: release builds must be started on main" >&2
-    exit 1
-fi
-
-for actor in "${GITHUB_ACTOR:-}" "${GITHUB_TRIGGERING_ACTOR:-}"; do
-    if [[ "$actor" != "barrelmaker97" && "$actor" != "rhelsing" ]]; then
-        echo "error: only Obscura owners can start or rerun release builds" >&2
-        exit 1
-    fi
-done
-
+# Who may release, and from which branch, is enforced by the android-* and
+# ios-* GitHub environments (main only, maintainer review). This checks what
+# GitHub cannot: the commit is main's tip and its CI run passed.
 sha="$(git rev-parse HEAD)"
 if [[ "$sha" != "${GITHUB_SHA:-}" ]]; then
     echo "error: checkout does not match the selected main commit" >&2

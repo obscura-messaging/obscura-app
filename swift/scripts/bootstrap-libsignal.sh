@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SOURCE="$ROOT/vendored/libsignal"
-REF="${LIBSIGNAL_REF:-7ef4efdb85d8b2ebd77f3cf1e2b542a2115033c5}"
+REF="$(tr -d '[:space:]' < "$ROOT/LIBSIGNAL_REF")"
 MODE="${1:-host}"
 
 case "$MODE" in

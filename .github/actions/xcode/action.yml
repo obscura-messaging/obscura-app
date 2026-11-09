@@ -1,0 +1,19 @@
+name: Xcode
+description: Select the Xcode version pinned in .xcode-version.
+runs:
+  using: composite
+  steps:
+    # A runner image drops old Xcodes eventually; failing here, with the list
+    # of what is installed, beats silently building on a different toolchain.
+    - name: Select Xcode
+      shell: bash
+      run: |
+        version="$(tr -d '[:space:]' < .xcode-version)"
+        app="/Applications/Xcode_${version}.app"
+        if [[ ! -d "$app" ]]; then
+          echo "error: Xcode $version is not installed on this runner. Installed:" >&2
+          find /Applications -maxdepth 1 -name 'Xcode_*.app' -print | sort -V >&2
+          exit 1
+        fi
+        sudo xcode-select -s "$app"
+        xcodebuild -version

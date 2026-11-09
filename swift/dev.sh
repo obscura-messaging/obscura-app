@@ -1,6 +1,6 @@
 #!/bin/bash
 # Dev helper - runs swift commands with Xcode's Swift toolchain
-set -e
+set -eo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
@@ -36,28 +36,34 @@ case "${1:-test}" in
     ;;
   test)
     prepare_libsignal_package
+    # Test logs and coverage land here for CI to upload.
+    REPORTS="$ROOT/.build/reports"
+    mkdir -p "$REPORTS"
     if [[ "${*:2}" == *"UnitTests"* ]]; then
-      LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test --enable-code-coverage "${@:2}"
+      LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test --enable-code-coverage "${@:2}" 2>&1 | tee "$REPORTS/unit-tests.log"
       # SwiftPM names the test bundle differently across toolchains
       # (UnitTests.xctest vs. <Package>PackageTests.xctest), so locate it from codecov dir.
       CODECOV_DIR="$(dirname "$(LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test --show-codecov-path)")"
       BIN_PATH="$(dirname "$CODECOV_DIR")"
       PROFDATA="$CODECOV_DIR/default.profdata"
-      BUNDLE="$(find "$BIN_PATH" -maxdepth 1 -name '*.xctest' | head -n 1)"
+      BUNDLE="$(find "$BIN_PATH" -maxdepth 1 -name '*.xctest' -print -quit)"
       if [ -z "$BUNDLE" ]; then
         echo "error: no .xctest bundle found in $BIN_PATH" >&2
         exit 1
       fi
       BINARY="$BUNDLE/Contents/MacOS/$(basename "$BUNDLE" .xctest)"
       COV_ARGS=("$BINARY" -instr-profile="$PROFDATA" --ignore-filename-regex='.build|Tests|Sources/ObscuraKit/Proto' Sources/ObscuraKit)
-      xcrun llvm-cov report "${COV_ARGS[@]}"
+      xcrun llvm-cov report "${COV_ARGS[@]}" | tee "$REPORTS/coverage.txt"
       SUMMARY="$(xcrun llvm-cov export -summary-only "${COV_ARGS[@]}")"
+      printf '%s\n' "$SUMMARY" > "$REPORTS/coverage.json"
       LINES="$(plutil -extract data.0.totals.lines.percent raw -o - - <<< "$SUMMARY")"
       REGIONS="$(plutil -extract data.0.totals.regions.percent raw -o - - <<< "$SUMMARY")"
       if ! awk -v lines="$LINES" -v regions="$REGIONS" 'BEGIN { exit !(lines >= 95 && regions >= 90) }'; then
         printf 'error: coverage below threshold (lines %.2f%% < 95%%, regions %.2f%% < 90%%)\n' "$LINES" "$REGIONS" >&2
         exit 1
       fi
+    elif [[ "${*:2}" == *"ScenarioTests"* ]]; then
+      LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test "${@:2}" 2>&1 | tee "$REPORTS/integration-tests.log"
     else
       LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test "${@:2}"
     fi

@@ -19,6 +19,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     name: Build
@@ -34,7 +38,6 @@ jobs:
       DISTRIBUTION_REF: ${{ inputs.sha }}
       BUILD_NUMBER: ${{ inputs.build_number }}
       RELEASE_VERSION: ${{ inputs.version }}
-      LIBSIGNAL_REF: 7ef4efdb85d8b2ebd77f3cf1e2b542a2115033c5
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       APPLE_BUNDLE_ID: ${{ inputs.env == 'prod' && 'dev.barrelmaker.obscura' || 'dev.barrelmaker.obscura.dev' }}
     steps:
@@ -45,37 +48,25 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      - name: Install just
-        uses: extractions/setup-just@v4.0.0
-
-      - name: Install Node
-        uses: actions/setup-node@v7.1.0
+      - name: Setup
+        uses: ./.github/actions/setup
         with:
-          node-version-file: '.nvmrc'
-          cache: npm
+          node: true
+
+      - name: Select Xcode
+        uses: ./.github/actions/xcode
 
       - name: Install Rust
         run: scripts/ci-install-rust.sh aarch64-apple-ios
-
-      - name: Select Xcode
-        run: |
-          sudo xcode-select -s "$(
-            find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' -print |
-              sort -V |
-              tail -n 1
-          )"
 
       - name: Cache libsignal
         uses: actions/cache@v6.1.0
         with:
           path: swift/vendored/libsignal
-          key: libsignal-${{ env.LIBSIGNAL_REF }}-ios-device-macos26
+          key: libsignal-${{ hashFiles('swift/LIBSIGNAL_REF') }}-ios-device-macos26
 
       - name: Install protobuf
         run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
-
-      - name: Install dependencies
-        run: just install
 
       - name: Install secrets
         env:
@@ -206,13 +197,14 @@ jobs:
       APP_STORE_CONNECT_KEY_ID: ${{ vars.APP_STORE_CONNECT_KEY_ID }}
       APP_STORE_CONNECT_ISSUER_ID: ${{ vars.APP_STORE_CONNECT_ISSUER_ID }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+
       - name: Select Xcode
-        run: |
-          sudo xcode-select -s "$(
-            find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' -print |
-              sort -V |
-              tail -n 1
-          )"
+        uses: ./.github/actions/xcode
 
       - name: Download artifact
         uses: actions/download-artifact@v8.0.2

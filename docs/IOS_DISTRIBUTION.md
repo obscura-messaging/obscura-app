@@ -14,7 +14,7 @@ failed jobs or start a new run.
 | Environment | App Name | Bundle ID | App Group | Server | GitHub Environment |
 | --- | --- | --- | --- | --- | --- |
 | `dev` | **Obscura Dev** | `dev.barrelmaker.obscura.dev` | `group.dev.barrelmaker.obscura.dev` | `https://devscura.barrelmaker.dev` | `ios-dev` |
-| `prod` | **Obscura** | `dev.barrelmaker.obscura` | `group.dev.barrelmaker.obscura` | `https://obscura.barrelmaker.dev` | `ios-prod` (requires review) |
+| `prod` | **Obscura** | `dev.barrelmaker.obscura` | `group.dev.barrelmaker.obscura` | `https://obscura.barrelmaker.dev` | `ios-prod` |
 
 ## TestFlight
 
@@ -54,8 +54,8 @@ device archive. It prepares the libsignal **device** FFI, whereas
 
 ## GitHub `ios-dev` and `ios-prod` environments
 
-Deployments are allowed only from `main`, and `ios-prod` requires reviewer
-approval.
+Deployments are allowed only from `main` and require approval from the
+`obscura-maintainers` team.
 
 | Variable | Value |
 | --- | --- |
