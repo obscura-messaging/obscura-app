@@ -1,3 +1,8 @@
+# AGP 9 only accepts proguard-android-optimize.txt. Until release builds are
+# verified on devices with R8 optimization on, keep the shrink-only behavior
+# the old proguard-android.txt gave.
+-dontoptimize
+
 # ---------------------------------------------------------------------------
 # Obscura Android R8 / ProGuard rules.
 #

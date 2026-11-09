@@ -1,10 +1,10 @@
 [versions]
 # Kotlin is pinned to match React Native's Kotlin in obscura-app
-# (RN 0.86 -> Kotlin 2.1.20). A Kotlin 2.1 compiler cannot read
-# libraries built with a newer Kotlin, so bumping this past the app's RN makes
-# the kit unconsumable. Bump ONLY in lockstep with an app RN upgrade.
+# (RN 0.88 -> Kotlin 2.2.0). A compiler cannot read libraries built with a
+# newer Kotlin, so bumping this past the app's RN makes the kit unconsumable.
+# Bump ONLY in lockstep with an app RN upgrade.
 # Dependabot is configured to leave org.jetbrains.kotlin:* alone.
-kotlin = "2.1.20"
+kotlin = "2.2.0"
 protobuf-plugin = "0.10.0"
 protobuf = "4.36.2"
 sqldelight = "2.0.2"

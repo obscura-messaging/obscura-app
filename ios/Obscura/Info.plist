@@ -47,6 +47,23 @@
 	<string>Obscura can attach photos from your library.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
 	<!-- UIAppFonts intentionally omitted until the .ttf files exist in the bundle.
 	     Add the 5 entries back (or run `npx react-native-asset`) once assets/fonts
 	     is populated — see assets/fonts/README.md. Listing missing files here makes

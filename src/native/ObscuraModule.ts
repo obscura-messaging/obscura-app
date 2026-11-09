@@ -277,7 +277,7 @@ export type ObscuraEvent =
   | { type: 'typingChanged'; peerUserId: string; typing: boolean }
   | { type: 'pushTokenReceived'; token: string };
 
-const emitter = new NativeEventEmitter(rawBridge);
+const emitter = new NativeEventEmitter<{ ObscuraEvent: [ObscuraEvent] }>(rawBridge);
 
 /** Subscribe to Obscura events. Returns an unsubscribe function. */
 export function onObscuraEvent(handler: (event: ObscuraEvent) => void): () => void {

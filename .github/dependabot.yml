@@ -44,10 +44,6 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "react"
         update-types: ["version-update:semver-major"]
-      # v9 requires Android API 37 / AGP 9, while RN 0.86 owns the API 36 /
-      # AGP 8.12 toolchain. Move this with the next RN toolchain migration.
-      - dependency-name: "react-native-pager-view"
-        update-types: ["version-update:semver-major"]
       # vision-camera v5 is a nitro-modules rewrite — adds 2 native deps,
       # completely different API. Deliberately held at v4.x.
       - dependency-name: "react-native-vision-camera"

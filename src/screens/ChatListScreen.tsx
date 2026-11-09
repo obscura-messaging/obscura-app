@@ -183,7 +183,7 @@ export function ChatListScreen() {
                 <Text style={cl.emptyBtnText}>Add a friend</Text>
               </TouchableOpacity>
             </View>
-          ) : null
+          ) : undefined
         }
         contentContainerStyle={{ paddingBottom: insets.bottom + 72 }}
       />
