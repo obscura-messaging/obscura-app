@@ -13,6 +13,49 @@ permissions:
   contents: read
 
 jobs:
+  # Pull requests run a native job only when its inputs change. Pushes to main
+  # run everything, because a release requires a fully green main commit.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      kotlin: ${{ github.event_name != 'pull_request' || steps.filter.outputs.kotlin == 'true' }}
+      android: ${{ github.event_name != 'pull_request' || steps.filter.outputs.android == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            shared: &shared
+              - '.github/workflows/ci.yml'
+              - '.gitmodules'
+              - 'justfile'
+              - 'proto/**'
+              - 'protocol/**'
+            kotlin:
+              - *shared
+              - 'kotlin/**'
+              - 'scripts/run-with-java-21.sh'
+              - 'scripts/local-server.sh'
+            android:
+              - *shared
+              - 'android/**'
+              - 'kotlin/**'
+              - 'scripts/run-with-android-env.sh'
+              - 'scripts/run-with-java-21.sh'
+              - '.java-version'
+              - '.nvmrc'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'app.json'
+              - 'index.js'
+              - 'babel.config.js'
+              - 'metro.config.js'
+
   javascript:
     name: JavaScript
     runs-on: ubuntu-latest
@@ -32,6 +75,8 @@ jobs:
 
   kotlin-unit:
     name: Kotlin Kit (unit tests + coverage)
+    needs: changes
+    if: needs.changes.outputs.kotlin == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -77,6 +122,8 @@ jobs:
 
   kotlin-integration:
     name: Kotlin Kit (integration, native server)
+    needs: changes
+    if: needs.changes.outputs.kotlin == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -94,19 +141,13 @@ jobs:
 
       - name: Resolve latest obscura-server commit
         id: server-ref
-        run: |
-          for i in 1 2 3; do
-            sha=$(git ls-remote https://github.com/obscura-messaging/obscura-server.git HEAD | cut -f1) && break
-            sleep 15
-          done
-          [ -n "$sha" ] || { echo "could not resolve server HEAD" >&2; exit 1; }
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        run: echo "sha=$(scripts/local-server.sh ref)" >> "$GITHUB_OUTPUT"
 
       - name: Cache obscura-server binary
         id: server-bin
         uses: actions/cache@v6
         with:
-          path: ~/obscura-server-bin
+          path: ~/.cache/obscura-server/bin
           key: obscura-server-${{ steps.server-ref.outputs.sha }}-ubuntu
 
       - uses: dtolnay/rust-toolchain@stable
@@ -116,64 +157,19 @@ jobs:
         if: steps.server-bin.outputs.cache-hit != 'true'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      - name: Clone obscura-server
-        run: |
-          for i in 1 2 3; do
-            git clone --depth 1 --recurse-submodules \
-              https://github.com/obscura-messaging/obscura-server /tmp/obscura-server && break
-            rm -rf /tmp/obscura-server; sleep 15
-          done
-
-      - name: Build obscura-server (only when upstream changed)
-        if: steps.server-bin.outputs.cache-hit != 'true'
-        run: |
-          cd /tmp/obscura-server
-          cargo build --release
-          mkdir -p ~/obscura-server-bin
-          cp target/release/obscura-server ~/obscura-server-bin/
-
-      - name: Start backing services
-        run: |
-          cd /tmp/obscura-server
-          docker compose up -d --wait db minio valkey
-          docker compose exec -T db sh -c 'until pg_isready -h 127.0.0.1 -U user -d signal_server; do sleep 1; done'
-          AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin \
-            aws --endpoint-url http://localhost:9000 --region us-east-1 \
-            s3api create-bucket --bucket test-bucket
-
+      # Builds only on a cache miss; backing services come from the server's
+      # docker-compose.yml.
       - name: Start obscura-server
         env:
-          OBSCURA_DATABASE_URL: "postgres://user:password@localhost:5432/signal_server"
-          OBSCURA_PUBSUB_URL: redis://localhost:6379
-          OBSCURA_AUTH_JWT_SECRET: test_secret
-          OBSCURA_STORAGE_BUCKET: test-bucket
-          OBSCURA_STORAGE_ENDPOINT: http://localhost:9000
-          OBSCURA_STORAGE_ACCESS_KEY: minioadmin
-          OBSCURA_STORAGE_SECRET_KEY: minioadmin
-          OBSCURA_STORAGE_FORCE_PATH_STYLE: "true"
-          OBSCURA_RATE_LIMIT_PER_SECOND: 1000
-          OBSCURA_RATE_LIMIT_BURST: 2000
-          OBSCURA_RATE_LIMIT_AUTH_PER_SECOND: 1000
-          OBSCURA_RATE_LIMIT_AUTH_BURST: 2000
-          RUST_LOG: info
-        run: |
-          ~/obscura-server-bin/obscura-server > /tmp/obscura-server.log 2>&1 &
-          for i in $(seq 1 30); do
-            if curl -s -o /dev/null http://localhost:3000/; then echo "server up"; exit 0; fi
-            sleep 2
-          done
-          echo "server did not become ready" >&2
-          tail -100 /tmp/obscura-server.log
-          exit 1
+          SERVER_SHA: ${{ steps.server-ref.outputs.sha }}
+        run: just server-up "$SERVER_SHA"
 
       - name: Integration tests
-        env:
-          OBSCURA_TEST_API: http://localhost:3000
         run: just kotlin-integration http://localhost:3000
 
       - name: Server log on failure
         if: failure()
-        run: tail -200 /tmp/obscura-server.log 2>/dev/null || true
+        run: just server-logs 200 || true
 
       - name: Upload integration-test report
         if: always()
@@ -185,14 +181,14 @@ jobs:
 
   android:
     name: Android Release Build
-    if: github.event_name == 'pull_request'
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout app
         uses: actions/checkout@v7
         with:
-          # Native is pinned by the app's gitlink and contains the transport proto
-          # submodule required by Kotlin protobuf codegen.
+          # The proto submodule is required by Kotlin protobuf codegen.
           submodules: recursive
 
       - uses: extractions/setup-just@v4
@@ -214,3 +210,20 @@ jobs:
       # Main builds a signed bundle once in the separate release workflow.
       - name: Compile arm64 release APK
         run: just android-apk arm64-v8a false
+
+  # The one check branch protection needs: skipped jobs pass, while a failed
+  # or cancelled job (including change detection) fails the gate.
+  gate:
+    name: CI Gate
+    if: always()
+    needs: [changes, javascript, kotlin-unit, kotlin-integration, android]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job to succeed or be skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for result in $RESULTS; do
+            [[ "$result" == success || "$result" == skipped ]] || exit 1
+          done

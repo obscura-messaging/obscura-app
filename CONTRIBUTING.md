@@ -1,7 +1,7 @@
 # Contributing
 
-Never commit to `main`. A PR merges once `JavaScript`, `Android Release Build`
-and `iOS Debug Build` pass on a branch that is up to date with `main`.
+Never commit to `main`. A PR merges once `CI Gate` and `iOS CI Gate` pass on a
+branch that is up to date with `main`.
 
 ## Prerequisites
 
@@ -77,9 +77,38 @@ xcrun devicectl device install app --device <DEVICE_ID> \
 | CI job | Runs | On |
 | --- | --- | --- |
 | `JavaScript` | `just check` | PRs, `main` |
-| `Kotlin Kit (unit tests + coverage)` | `just protocol-lint`, `just kotlin-check` | PRs, `main` |
-| `Kotlin Kit (integration, native server)` | `just kotlin-integration` | PRs, `main` |
-| `Swift Kit (unit tests)` | `just swift-unit` | PRs, `main` |
-| `Swift Kit (integration, native server)` | `just swift-integration` | PRs, `main` |
-| `Android Release Build` | `just android-apk arm64-v8a false` | PRs |
-| `iOS Debug Build` | `just ios-build arm64` | PRs |
+| `Kotlin Kit (unit tests + coverage)` | `just protocol-lint`, `just kotlin-check` | Kotlin PRs, `main` |
+| `Kotlin Kit (integration, native server)` | `just server-up`, `just kotlin-integration` | Kotlin PRs, `main` |
+| `Swift Kit (unit tests)` | `just swift-unit` | Swift PRs, `main` |
+| `Swift Kit (integration, native server)` | `just server-up`, `just swift-integration` | Swift PRs, `main` |
+| `Android Release Build` | `just android-apk arm64-v8a false` | Android PRs |
+| `iOS Debug Build` | `just ios-build arm64` | iOS PRs |
+
+A PR runs a native job only when the job's inputs change: its platform
+directory, `proto/`, `protocol/`, the `justfile`, its workflow, or (for app
+builds) the JavaScript toolchain files. A change under `src/` alone runs only
+`JavaScript`, which typechecks the code the native builds would bundle. Pushes
+to `main` run every job, because a release needs a fully green `main` commit.
+Each workflow ends in a gate job that fails if any job failed or was cancelled,
+so branch protection needs only the two gates.
+
+## Integration tests
+
+The kit integration suites need a running `obscura-server`.
+`just server-up` builds the server at its latest commit (or `just server-up
+<ref>`), starts Postgres, Valkey and MinIO, and serves the API on
+`http://localhost:3000`. CI uses the same script. `just server-down` stops
+everything and deletes the data.
+
+```bash
+just server-up
+just kotlin-integration      # or: just swift-integration
+just server-down
+```
+
+Building the server needs `cargo` and `protoc`. By default the services come
+from the server's `docker-compose.yml`. Without Docker, set
+`OBSCURA_SERVER_SERVICES=native` and install `postgresql@18`, `valkey` and
+`minio`. If you already run the services, `OBSCURA_SERVER_SERVICES=external`
+starts only the server. To test against your own server checkout, set
+`OBSCURA_SERVER_SRC=../obscura-server`.

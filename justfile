@@ -75,6 +75,24 @@ kotlin-ci:
 # Run the full fast Kotlin CI gate.
 kotlin-check: protocol-vectors kotlin-ci
 
+# Build and start a local obscura-server with Postgres, Valkey and MinIO
+# (ref: server git ref, default its HEAD). See scripts/local-server.sh for
+# OBSCURA_SERVER_SRC and OBSCURA_SERVER_SERVICES.
+server-up ref="":
+    ./scripts/local-server.sh up {{quote(ref)}}
+
+# Stop the local obscura-server and delete its data.
+server-down:
+    ./scripts/local-server.sh down
+
+# Report whether the local obscura-server is running.
+server-status:
+    ./scripts/local-server.sh status
+
+# Print the end of the local obscura-server log.
+server-logs lines="200":
+    ./scripts/local-server.sh logs {{quote(lines)}}
+
 # Run Kotlin server-dependent tests against an explicit local endpoint.
 kotlin-integration api="http://localhost:3000":
     @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
