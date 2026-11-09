@@ -1,5 +1,6 @@
 // claude: numbers from react-native-experiments/docs/motion.md, shaped for Reanimated's withSpring / withTiming.
-import { Easing } from 'react-native';
+// claude: Reanimated's Easing, so these run as worklets on the UI thread.
+import { Easing, type EasingFunction, type EasingFunctionFactory } from 'react-native-reanimated';
 
 export interface Spring {
   stiffness: number;
@@ -9,7 +10,7 @@ export interface Spring {
 
 export interface Timing {
   duration: number;
-  easing: (value: number) => number;
+  easing: EasingFunction | EasingFunctionFactory;
 }
 
 export const EASING = {

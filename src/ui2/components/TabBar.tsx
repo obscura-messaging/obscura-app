@@ -1,5 +1,6 @@
-import React, { useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import React, { useState } from 'react';
+import { Pressable, StyleSheet, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import Svg, { Path, Polygon } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { MaterialTopTabBarProps } from '@react-navigation/material-top-tabs';
@@ -72,10 +73,11 @@ const glassPath = (w: number, h: number, c: number) =>
 
 function CameraShutter({ yellow, rec }: { yellow: string; rec: string }) {
   const [pressed, setPressed] = useState(false);
-  const scale = useRef(new Animated.Value(1)).current;
+  const scale = useSharedValue(1);
+  const domeStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
   const press = (down: boolean) => {
     setPressed(down);
-    Animated.timing(scale, { toValue: down ? SHUTTER_PRESS_SCALE : 1, ...TIMING.shutterPress, useNativeDriver: true }).start();
+    scale.value = withTiming(down ? SHUTTER_PRESS_SCALE : 1, TIMING.shutterPress);
     if (down) cameraShutter.pressIn();
     else cameraShutter.pressOut();
   };
@@ -87,7 +89,7 @@ function CameraShutter({ yellow, rec }: { yellow: string; rec: string }) {
       style={[styles.glassShutter, { borderColor: color }]}
       accessibilityLabel="Take photo"
     >
-      <Animated.View style={[styles.dome, { backgroundColor: color, transform: [{ scale }] }]} />
+      <Animated.View style={[styles.dome, { backgroundColor: color }, domeStyle]} />
     </Pressable>
   );
 }
