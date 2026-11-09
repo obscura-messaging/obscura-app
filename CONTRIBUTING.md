@@ -9,7 +9,7 @@ date with `main`.
 | --- | --- |
 | All work | [`just`](https://github.com/casey/just), Git, Node 22.11+ ([`.nvmrc`](.nvmrc)) |
 | Android | JDK 21, Android SDK 37, NDK `27.1.12297006` |
-| iOS | macOS, Xcode, `rustup`, `protoc`, CocoaPods 1.17.0 |
+| iOS | macOS, Xcode ([`.xcode-version`](.xcode-version)), `rustup`, `protoc`, CocoaPods 1.17.0 |
 
 On macOS: `brew install just protobuf`, then
 `sudo gem install cocoapods -v 1.17.0 -N`.
@@ -36,7 +36,7 @@ or `just ios-build arm64`.
   push, download the Firebase config (containing `dev.barrelmaker.obscura.dev`
   and `dev.barrelmaker.obscura`) into that path. It is gitignored. Never commit
   it, or any Firebase Admin credential.
-- **iOS.** The first build fetches the pinned libsignal commit.
+- **iOS.** The first build fetches the libsignal commit pinned in `swift/LIBSIGNAL_REF`.
   It then builds the simulator FFI, the Swift package and the pods, and
   caches them (gitignored). Simulator builds do not exercise APNs, background
   delivery or release signing.
@@ -81,11 +81,9 @@ xcrun devicectl device install app --device <DEVICE_ID> \
 
 | CI job | Runs | On |
 | --- | --- | --- |
-| `JavaScript` | `just check` | PRs, `main` |
-| `Kotlin` | `just protocol-lint`, `just kotlin-check` | Kotlin PRs, `main` |
-| `Kotlin Integration` | `just server-up`, `just kotlin-integration` | Kotlin PRs, `main` |
-| `Swift` | `just swift-unit` | Swift PRs, `main` |
-| `Swift Integration` | `just server-up`, `just swift-integration` | Swift PRs, `main` |
+| `JavaScript` | `just check`, `just bundle` | PRs, `main` |
+| `Kotlin` | `just protocol-lint`, `just kotlin-check`, `just server-up`, `just kotlin-integration` | Kotlin PRs, `main` |
+| `Swift` | `just swift-unit`, `just server-up`, `just swift-integration` | Swift PRs, `main` |
 | `Android` | `just android-build arm64-v8a false` | Android PRs |
 | `iOS` | `just ios-build arm64` | iOS PRs |
 

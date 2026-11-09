@@ -1,0 +1,37 @@
+name: Setup
+description: Install just and, on request, Node with the npm dependencies, or Java 21 with Gradle.
+inputs:
+  node:
+    description: Install Node from .nvmrc and run `just install`.
+    default: 'false'
+  java:
+    description: Install Temurin 21 and set up Gradle.
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Install just
+      uses: extractions/setup-just@v4.0.0
+
+    - name: Install Node
+      if: inputs.node == 'true'
+      uses: actions/setup-node@v7.1.0
+      with:
+        node-version-file: '.nvmrc'
+        cache: npm
+
+    - name: Install dependencies
+      if: inputs.node == 'true'
+      shell: bash
+      run: just install
+
+    - name: Install Java
+      if: inputs.java == 'true'
+      uses: actions/setup-java@v6.2.0
+      with:
+        distribution: temurin
+        java-version: '21'
+
+    - name: Install Gradle
+      if: inputs.java == 'true'
+      uses: gradle/actions/setup-gradle@v6.4.1
