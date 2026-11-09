@@ -8,7 +8,7 @@ import type { NativeStackNavigationOptions, NativeStackNavigationProp } from '@r
 
 import { useSession, useStore, subscribeToLaunchScreen } from '../state/store';
 import { useAppActive } from '../hooks/useAppActive';
-import { colors } from '../styles';
+import { colors, type Colors } from '../styles';
 import { CameraActiveContext } from './CameraActiveContext';
 
 import { AuthScreen } from '../screens/AuthScreen';
@@ -24,6 +24,13 @@ import { ScanFriendScreen } from '../screens/ScanFriendScreen';
 import { DevicesScreen } from '../screens/DevicesScreen';
 import { ScanLinkScreen } from '../screens/ScanLinkScreen';
 import { CameraIcon, ChatIcon } from '../components/icons';
+import { NEW_UI } from '../ui2/flag';
+import { useLegacyColors } from '../ui2/legacyColors';
+import { TabBar as TabBar2 } from '../ui2/components/TabBar';
+import { CameraScreen as CameraScreen2 } from '../ui2/screens/CameraScreen';
+import { ChatListScreen as ChatListScreen2 } from '../ui2/screens/ChatListScreen';
+import { ChatScreen as ChatScreen2 } from '../ui2/screens/ChatScreen';
+import { ProfileScreen as ProfileScreen2 } from '../ui2/screens/ProfileScreen';
 
 import type { RootStackParamList, MainTabParamList } from './types';
 
@@ -68,12 +75,13 @@ function MainTabs() {
       <MainTab.Navigator
         initialRouteName="Camera"
         tabBarPosition="bottom"
-        tabBar={BottomTabBar}
+        tabBar={NEW_UI ? TabBar2 : BottomTabBar}
         // Both stay mounted so the camera preview is live as it slides in.
         screenOptions={{ lazy: false, swipeEnabled: true }}
       >
-        <MainTab.Screen name="Chats" component={ChatListScreen} />
-        <MainTab.Screen name="Camera" component={CameraScreen} />
+        <MainTab.Screen name="Chats" component={NEW_UI ? ChatListScreen2 : ChatListScreen} />
+        <MainTab.Screen name="Camera" component={NEW_UI ? CameraScreen2 : CameraScreen} />
+        {NEW_UI && <MainTab.Screen name="ProfileTab" component={ProfileScreen2} />}
       </MainTab.Navigator>
     </CameraActiveContext.Provider>
   );
@@ -83,12 +91,12 @@ function SplashScreen() {
   return <View style={styles.splash} />;
 }
 
-function headerOptions(title: string): NativeStackNavigationOptions {
+function headerOptions(title: string, c: Colors = colors): NativeStackNavigationOptions {
   return {
     headerShown: true,
-    headerStyle: { backgroundColor: colors.bg },
-    headerTintColor: colors.accent,
-    headerTitleStyle: { color: colors.text, fontWeight: '700' },
+    headerStyle: { backgroundColor: c.bg },
+    headerTintColor: c.accent,
+    headerTitleStyle: { color: c.text, fontWeight: '700' },
     gestureEnabled: true,
     fullScreenGestureEnabled: true,
     title,
@@ -99,6 +107,8 @@ export function RootNavigator() {
   const { authed } = useSession();
   const bootstrapped = useStore((s) => s.bootstrapped);
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  // claude: themes the headers of the old screens that stay in the stack.
+  const c = useLegacyColors(colors);
 
   // Notification taps: pulled once on cold start, and as an event while running.
   useEffect(() => {
@@ -120,8 +130,8 @@ export function RootNavigator() {
           <RootStack.Screen name="MainTabs" component={MainTabs} />
           <RootStack.Screen
             name="Chat"
-            component={ChatScreen}
-            options={({ route }) => headerOptions(route.params.username)}
+            component={NEW_UI ? ChatScreen2 : ChatScreen}
+            options={NEW_UI ? undefined : ({ route }) => headerOptions(route.params.username)}
           />
           <RootStack.Screen
             name="PhotoPreview"
@@ -147,7 +157,7 @@ export function RootNavigator() {
           <RootStack.Screen
             name="AddFriend"
             component={AddFriendScreen}
-            options={headerOptions('Add friend')}
+            options={headerOptions('Add friend', c)}
           />
           <RootStack.Screen
             name="ScanFriend"
@@ -157,7 +167,7 @@ export function RootNavigator() {
           <RootStack.Screen
             name="Devices"
             component={DevicesScreen}
-            options={headerOptions('Devices')}
+            options={headerOptions('Devices', c)}
           />
           <RootStack.Screen
             name="ScanLink"

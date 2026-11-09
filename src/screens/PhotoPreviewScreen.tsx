@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, Image,
   StyleSheet, KeyboardAvoidingView, Keyboard, Platform, Animated, PanResponder,
@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackScreenProps, RootStackParamList } from '../navigation/types';
 import { colors } from '../styles';
+import { useLegacyColors } from '../ui2/legacyColors';
 import { CloseIcon } from '../components/icons';
 import { clamp, touchDist } from '../utils/gesture';
 import {
@@ -38,6 +39,12 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { width: W, height: H } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  // claude: only the accent controls follow the theme; the rest sits on the photo.
+  const theme = useLegacyColors(colors);
+  const accent = useMemo(() => StyleSheet.create({
+    fill: { backgroundColor: theme.accent },
+    ink: { color: theme.onAccent },
+  }), [theme]);
 
   const [caption, setCaption] = useState('');
   const [duration, setDuration] = useState(DEFAULT_DISPLAY_SECONDS);
@@ -305,10 +312,10 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
               {(['bar', 'bold'] as CaptionStyle[]).map(s => (
                 <TouchableOpacity
                   key={s}
-                  style={[ps.segBtn, style === s && ps.segBtnActive]}
+                  style={[ps.segBtn, style === s && accent.fill]}
                   onPress={() => setStyle(s)}
                 >
-                  <Text style={[ps.segText, style === s && ps.segTextActive]}>{s.toUpperCase()}</Text>
+                  <Text style={[ps.segText, style === s && accent.ink]}>{s.toUpperCase()}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -350,17 +357,17 @@ export function PhotoPreviewScreen({ route }: RootStackScreenProps<'PhotoPreview
             {TIMER_OPTIONS.map(opt => (
               <TouchableOpacity
                 key={opt.value}
-                style={[ps.timerBtn, duration === opt.value && ps.timerBtnActive]}
+                style={[ps.timerBtn, duration === opt.value && accent.fill]}
                 onPress={() => setDuration(opt.value)}
               >
-                <Text style={[ps.timerText, duration === opt.value && ps.timerTextActive]}>
+                <Text style={[ps.timerText, duration === opt.value && accent.ink]}>
                   {opt.label}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
-          <TouchableOpacity style={ps.sendBtn} onPress={onChoose}>
-            <Text style={ps.sendBtnText}>choose recipients</Text>
+          <TouchableOpacity style={[ps.sendBtn, accent.fill]} onPress={onChoose}>
+            <Text style={[ps.sendBtnText, accent.ink]}>choose recipients</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -385,9 +392,7 @@ const ps = StyleSheet.create({
   toolBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   segment: { flexDirection: 'row', borderRadius: 20, overflow: 'hidden', backgroundColor: 'rgba(0,0,0,0.5)' },
   segBtn: { paddingHorizontal: 14, height: 40, justifyContent: 'center', alignItems: 'center' },
-  segBtnActive: { backgroundColor: colors.accent },
   segText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  segTextActive: { color: colors.onAccent },
   deleteZone: { position: 'absolute', top: 44, left: 0, right: 0, alignItems: 'center', zIndex: 3 },
   deletePill: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -411,9 +416,7 @@ const ps = StyleSheet.create({
   bottom: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 16, paddingBottom: 40 },
   timerRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 16 },
   timerBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.15)' },
-  timerBtnActive: { backgroundColor: colors.accent },
   timerText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  timerTextActive: { color: colors.onAccent },
-  sendBtn: { backgroundColor: colors.accent, borderRadius: 12, padding: 14, alignItems: 'center' },
-  sendBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 16 },
+  sendBtn: { borderRadius: 12, padding: 14, alignItems: 'center' },
+  sendBtnText: { fontWeight: '700', fontSize: 16 },
 });

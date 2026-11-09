@@ -6,6 +6,8 @@ import type { Capture } from '../state/sendMedia';
 export type MainTabParamList = {
   Camera: undefined;
   Chats: undefined;
+  /** Only mounted under `NEW_UI`. */
+  ProfileTab: undefined;
 };
 
 /** Normalized navigation target for `StoryViewer`: either live stories starting at a user, or specific view-once pix IDs. */

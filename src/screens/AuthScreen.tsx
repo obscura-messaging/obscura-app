@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MIN_PASSWORD_LENGTH, credentialsProblem, logIn, register } from '../state/login';
 import { KeyboardScreen } from '../components/KeyboardScreen';
 import { LinkThisDevice } from '../components/LinkThisDevice';
 import { errorMessage } from '../utils/log';
-import { s, colors } from '../styles';
+import { sharedStyles, colors, type Colors } from '../styles';
+import { useLegacyColors } from '../ui2/legacyColors';
 
 type Phase =
   | { kind: 'idle' }
@@ -17,6 +18,9 @@ export function AuthScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
+  const c = useLegacyColors(colors);
+  const s = useMemo(() => sharedStyles(c), [c]);
+  const a = useMemo(() => makeStyles(c), [c]);
 
   const busy = phase.kind === 'submitting';
 
@@ -53,10 +57,10 @@ export function AuthScreen() {
           <Text style={a.subtitle}>Encrypted everything</Text>
           {phase.kind === 'error' && <Text style={a.error}>{phase.message}</Text>}
           {phase.kind === 'submitting' && <Text style={a.progress}>{phase.label}</Text>}
-          <TextInput style={s.input} placeholder="Username" placeholderTextColor={colors.textDim}
+          <TextInput style={s.input} placeholder="Username" placeholderTextColor={c.textDim}
             value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} editable={!busy} />
           <TextInput style={s.input} placeholder={`Password (${MIN_PASSWORD_LENGTH}+ chars)`}
-            placeholderTextColor={colors.textDim} value={password} onChangeText={setPassword} secureTextEntry editable={!busy} />
+            placeholderTextColor={c.textDim} value={password} onChangeText={setPassword} secureTextEntry editable={!busy} />
           <View style={a.buttons}>
             <TouchableOpacity style={[s.primaryBtn, busy && s.btnDisabled]} onPress={onLogIn} disabled={busy}>
               <Text style={s.primaryBtnText}>Log in</Text>
@@ -71,11 +75,11 @@ export function AuthScreen() {
   );
 }
 
-const a = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   box: { flex: 1, justifyContent: 'center', padding: 32 },
   logo: { width: 260, height: 60, alignSelf: 'center', marginBottom: 8 },
-  subtitle: { fontSize: 14, color: colors.textDim, textAlign: 'center', marginBottom: 32 },
-  error: { color: colors.error, textAlign: 'center', marginBottom: 12, fontSize: 13 },
-  progress: { color: colors.textSecondary, textAlign: 'center', marginBottom: 12, fontSize: 13 },
+  subtitle: { fontSize: 14, color: c.textDim, textAlign: 'center', marginBottom: 32 },
+  error: { color: c.error, textAlign: 'center', marginBottom: 12, fontSize: 13 },
+  progress: { color: c.textSecondary, textAlign: 'center', marginBottom: 12, fontSize: 13 },
   buttons: { flexDirection: 'column', gap: 12, marginTop: 8 },
 });

@@ -1,11 +1,12 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { copyToClipboard } from '../state/store';
 import { toast } from './Toast';
 import { encodeQR, type QRKind } from '../domain/qr';
 import { errorMessage } from '../utils/log';
-import { colors } from '../styles';
+import { colors, type Colors } from '../styles';
+import { useLegacyColors } from '../ui2/legacyColors';
 
 interface CodeCardProps {
   kind: QRKind;
@@ -17,6 +18,8 @@ interface CodeCardProps {
 
 /** A code as a QR, with the text in a pill that copies it. */
 export function CodeCard({ kind, code, caption, copiedMessage }: CodeCardProps) {
+  const c = useLegacyColors(colors);
+  const cc = useMemo(() => makeStyles(c), [c]);
   const copy = async () => {
     if (code === null) return;
     try { await copyToClipboard(code); toast.success(copiedMessage); }
@@ -27,7 +30,7 @@ export function CodeCard({ kind, code, caption, copiedMessage }: CodeCardProps) 
     <>
       <View style={cc.qrCard}>
         {code !== null
-          ? <QRCode value={encodeQR(kind, code)} size={216} backgroundColor="transparent" color={colors.text} />
+          ? <QRCode value={encodeQR(kind, code)} size={216} backgroundColor="transparent" color={c.text} />
           : <Text style={cc.dim}>Loading…</Text>}
       </View>
       <Text style={cc.caption}>{caption}</Text>
@@ -41,19 +44,19 @@ export function CodeCard({ kind, code, caption, copiedMessage }: CodeCardProps) 
   );
 }
 
-const cc = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   qrCard: {
-    width: 256, height: 256, borderRadius: 20, backgroundColor: colors.surface,
+    width: 256, height: 256, borderRadius: 20, backgroundColor: c.surface,
     justifyContent: 'center', alignItems: 'center', marginTop: 12,
-    borderWidth: 1, borderColor: colors.border,
+    borderWidth: 1, borderColor: c.border,
   },
-  dim: { color: colors.textDim, fontSize: 14 },
-  caption: { color: colors.textDim, fontSize: 13, marginTop: 12, textAlign: 'center' },
+  dim: { color: c.textDim, fontSize: 14 },
+  caption: { color: c.textDim, fontSize: 13, marginTop: 12, textAlign: 'center' },
   codePill: {
     flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16,
-    backgroundColor: colors.surface, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12,
-    borderWidth: 1, borderColor: colors.border, maxWidth: '100%',
+    backgroundColor: c.surface, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12,
+    borderWidth: 1, borderColor: c.border, maxWidth: '100%',
   },
-  codeText: { color: colors.text, fontSize: 15, fontWeight: '600', flexShrink: 1 },
-  copyHint: { color: colors.accent, fontSize: 13, fontWeight: '700' },
+  codeText: { color: c.text, fontSize: 15, fontWeight: '600', flexShrink: 1 },
+  copyHint: { color: c.accent, fontSize: 13, fontWeight: '700' },
 });
