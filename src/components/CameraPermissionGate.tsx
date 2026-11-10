@@ -1,10 +1,11 @@
-import React, { type ReactNode, useCallback, useEffect, useState } from 'react';
+import React, { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { AppState, Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import {
   Camera, type CameraPermissionStatus, useCameraPermission,
 } from 'react-native-vision-camera';
 import { canPromptFor } from '../state/permissions';
 import { colors } from '../styles';
+import { useLegacyColors } from '../ui2/legacyColors';
 
 interface CameraPermissionGateProps {
   children: ReactNode;
@@ -14,6 +15,13 @@ interface CameraPermissionGateProps {
 export function CameraPermissionGate({ children, message }: CameraPermissionGateProps) {
   const { hasPermission, requestPermission } = useCameraPermission();
   const [status, setStatus] = useState<CameraPermissionStatus | null>(null);
+  const c = useLegacyColors(colors);
+  const t = useMemo(() => StyleSheet.create({
+    container: { backgroundColor: c.bg },
+    message: { color: c.text },
+    button: { backgroundColor: c.accent },
+    buttonText: { color: c.onAccent },
+  }), [c]);
 
   const refresh = useCallback(async () => {
     setStatus(await Camera.getCameraPermissionStatus());
@@ -36,14 +44,14 @@ export function CameraPermissionGate({ children, message }: CameraPermissionGate
 
   const canRequest = status !== null && canPromptFor(status);
   return (
-    <View style={s.container}>
-      <Text style={s.message}>{message}</Text>
+    <View style={[s.container, t.container]}>
+      <Text style={[s.message, t.message]}>{message}</Text>
       <TouchableOpacity
-        style={s.button}
+        style={[s.button, t.button]}
         onPress={canRequest ? request : () => Linking.openSettings()}
         disabled={status === null}
       >
-        <Text style={s.buttonText}>
+        <Text style={[s.buttonText, t.buttonText]}>
           {status === null ? 'Checking access…' : canRequest ? 'Grant access' : 'Open settings'}
         </Text>
       </TouchableOpacity>
@@ -57,24 +65,21 @@ export function CameraPermissionGate({ children, message }: CameraPermissionGate
 const s = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 32,
   },
   message: {
-    color: '#fff',
     fontSize: 18,
     fontWeight: '600',
     marginBottom: 16,
     textAlign: 'center',
   },
   button: {
-    backgroundColor: colors.accent,
     borderRadius: 12,
     paddingHorizontal: 24,
     paddingVertical: 12,
   },
-  buttonText: { color: colors.onAccent, fontWeight: '700', fontSize: 16 },
+  buttonText: { fontWeight: '700', fontSize: 16 },
   hint: { color: '#aaa', fontSize: 14, marginTop: 12, textAlign: 'center' },
 });

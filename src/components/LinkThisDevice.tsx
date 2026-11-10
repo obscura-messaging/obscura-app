@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { CodeCard } from './CodeCard';
 import { confirm } from './confirm';
 import { linkProblem, type LinkProblem } from '../domain/devices';
 import { cancelLink, cancelPendingLinkOnUnmount, linkThisDevice, resetAccount } from '../state/login';
 import { errorMessage, logError } from '../utils/log';
-import { s, colors } from '../styles';
+import { sharedStyles, colors, type Colors } from '../styles';
+import { useLegacyColors } from '../ui2/legacyColors';
 
 type Phase = { kind: 'starting' } | { kind: 'waiting'; code: string } | { kind: 'resetting' } | LinkProblem;
 
@@ -18,6 +19,9 @@ interface LinkThisDeviceProps {
 /** Shown when the account already has devices: the primary scans this device's code to link it. */
 export function LinkThisDevice({ username, password, onBack }: LinkThisDeviceProps) {
   const [phase, setPhase] = useState<Phase>({ kind: 'starting' });
+  const c = useLegacyColors(colors);
+  const s = useMemo(() => sharedStyles(c), [c]);
+  const styles = useMemo(() => makeStyles(c), [c]);
 
   const start = useCallback(() => {
     setPhase({ kind: 'starting' });
@@ -85,14 +89,14 @@ export function LinkThisDevice({ username, password, onBack }: LinkThisDevicePro
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   box: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  title: { color: colors.text, fontSize: 22, fontWeight: '700', marginBottom: 8 },
-  body: { color: colors.textSecondary, fontSize: 14, textAlign: 'center', marginBottom: 8 },
-  status: { color: colors.textDim, fontSize: 14, marginVertical: 24 },
-  error: { color: colors.error, fontSize: 14, textAlign: 'center', marginVertical: 24 },
+  title: { color: c.text, fontSize: 22, fontWeight: '700', marginBottom: 8 },
+  body: { color: c.textSecondary, fontSize: 14, textAlign: 'center', marginBottom: 8 },
+  status: { color: c.textDim, fontSize: 14, marginVertical: 24 },
+  error: { color: c.error, fontSize: 14, textAlign: 'center', marginVertical: 24 },
   stretch: { alignSelf: 'stretch' },
   backBtn: { marginTop: 24 },
   resetBtn: { marginTop: 20, padding: 8 },
-  resetText: { color: colors.error, fontSize: 13, fontWeight: '600' },
+  resetText: { color: c.error, fontSize: 13, fontWeight: '600' },
 });

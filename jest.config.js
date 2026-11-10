@@ -25,6 +25,7 @@ module.exports = {
     '<rootDir>/src/native',
     '<rootDir>/src/state',
     '<rootDir>/src/utils',
+    '<rootDir>/src/ui2',
   ],
   testMatch: ['**/__tests__/**/*.test.ts'],
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],

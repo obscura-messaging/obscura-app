@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, FlatList, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -11,7 +11,8 @@ import { Avatar } from '../components/Avatar';
 import { useAcceptedFriends } from '../state/store';
 import { sendCapture } from '../state/sendMedia';
 import type { RootStackScreenProps, RootStackParamList } from '../navigation/types';
-import { s, colors } from '../styles';
+import { sharedStyles, colors, type Colors } from '../styles';
+import { useLegacyColors } from '../ui2/legacyColors';
 
 export function RecipientPickerScreen({ route }: RootStackScreenProps<'RecipientPicker'>) {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -19,6 +20,9 @@ export function RecipientPickerScreen({ route }: RootStackScreenProps<'Recipient
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [includeStory, setIncludeStory] = useState(false);
   const [sending, setSending] = useState(false);
+  const c = useLegacyColors(colors);
+  const s = useMemo(() => sharedStyles(c), [c]);
+  const styles = useMemo(() => makeStyles(c), [c]);
 
   const toggle = (userId: string) => {
     setSelected((prev) => {
@@ -59,7 +63,7 @@ export function RecipientPickerScreen({ route }: RootStackScreenProps<'Recipient
 
       <TouchableOpacity style={styles.row} onPress={() => setIncludeStory((v) => !v)} disabled={sending}>
         <View style={[styles.check, includeStory && styles.checkActive]}>
-          {includeStory && <CheckIcon size={15} color={colors.onAccent} />}
+          {includeStory && <CheckIcon size={15} color={c.onAccent} />}
         </View>
         <Text style={styles.rowText}>My story</Text>
         <Text style={styles.rowHint}>Visible to all friends</Text>
@@ -75,9 +79,9 @@ export function RecipientPickerScreen({ route }: RootStackScreenProps<'Recipient
           return (
             <TouchableOpacity style={styles.row} onPress={() => toggle(item.userId)} disabled={sending}>
               <View style={[styles.check, isSelected && styles.checkActive]}>
-                {isSelected && <CheckIcon size={15} color={colors.onAccent} />}
+                {isSelected && <CheckIcon size={15} color={c.onAccent} />}
               </View>
-              <Avatar name={item.username} size={36} background={colors.surfaceMuted} color={colors.text} />
+              <Avatar name={item.username} size={36} background={c.surfaceMuted} color={c.text} />
               <Text style={styles.rowText}>{item.username}</Text>
             </TouchableOpacity>
           );
@@ -96,18 +100,18 @@ export function RecipientPickerScreen({ route }: RootStackScreenProps<'Recipient
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16 },
   headerSpacer: { width: 50 },
-  cancelText: { color: colors.accent, fontSize: 16 },
-  title: { color: colors.text, fontSize: 18, fontWeight: '700' },
+  cancelText: { color: c.accent, fontSize: 16 },
+  title: { color: c.text, fontSize: 18, fontWeight: '700' },
   sectionTitle: { marginLeft: 16 },
   row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 12 },
-  check: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: colors.textMuted, justifyContent: 'center', alignItems: 'center' },
-  checkActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  rowText: { color: colors.text, fontSize: 16, flex: 1 },
-  rowHint: { color: colors.textDim, fontSize: 13 },
-  empty: { color: colors.textMuted, textAlign: 'center', marginTop: 32, fontSize: 14 },
+  check: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: c.textMuted, justifyContent: 'center', alignItems: 'center' },
+  checkActive: { backgroundColor: c.accent, borderColor: c.accent },
+  rowText: { color: c.text, fontSize: 16, flex: 1 },
+  rowHint: { color: c.textDim, fontSize: 13 },
+  empty: { color: c.textMuted, textAlign: 'center', marginTop: 32, fontSize: 14 },
   sendBtn: { margin: 16 },
-  sendBtnDisabled: { backgroundColor: colors.surfaceMuted },
+  sendBtnDisabled: { backgroundColor: c.surfaceMuted },
 });

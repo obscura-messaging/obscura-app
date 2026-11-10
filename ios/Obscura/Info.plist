@@ -64,10 +64,6 @@
 			</array>
 		</dict>
 	</dict>
-	<!-- UIAppFonts intentionally omitted until the .ttf files exist in the bundle.
-	     Add the 5 entries back (or run `npx react-native-asset`) once assets/fonts
-	     is populated — see assets/fonts/README.md. Listing missing files here makes
-	     iOS log "GSFont: file doesn't exist" at launch. -->
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>
@@ -87,5 +83,12 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Nunito-ExtraBold.ttf</string>
+		<string>Nunito-SemiBold.ttf</string>
+		<string>Nunito-Bold.ttf</string>
+		<string>Nunito-Black.ttf</string>
+	</array>
 </dict>
 </plist>

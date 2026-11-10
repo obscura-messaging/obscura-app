@@ -6,6 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CloseIcon } from './icons';
 import { CameraPermissionGate } from './CameraPermissionGate';
 import { parseQR, type QRKind } from '../domain/qr';
+import { colors } from '../styles';
+import { useLegacyColors } from '../ui2/legacyColors';
 
 interface QRScannerProps {
   kind: QRKind;
@@ -21,6 +23,8 @@ export function QRScanner({ kind, hint, onCode }: QRScannerProps) {
   const insets = useSafeAreaInsets();
   const device = useCameraDevice('back');
   const handled = useRef(false); // onCodeScanned keeps firing
+  // claude: themes only the no-camera panel; the camera overlay stays as it is.
+  const theme = useLegacyColors(colors);
 
   const onCodeScanned = useCallback((codes: Code[]) => {
     if (handled.current) return;
@@ -35,7 +39,7 @@ export function QRScanner({ kind, hint, onCode }: QRScannerProps) {
   return (
     <CameraPermissionGate message="Camera access needed to scan">
       {!device ? (
-        <View style={ss.center}><Text style={ss.msg}>No camera available</Text></View>
+        <View style={[ss.center, { backgroundColor: theme.bg }]}><Text style={[ss.msg, { color: theme.text }]}>No camera available</Text></View>
       ) : (
         <View style={ss.container}>
           <Camera
@@ -60,8 +64,8 @@ export function QRScanner({ kind, hint, onCode }: QRScannerProps) {
 
 const ss = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  center: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', padding: 32 },
-  msg: { color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 16, textAlign: 'center' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
+  msg: { fontSize: 16, fontWeight: '600', marginBottom: 16, textAlign: 'center' },
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' },
   frame: {
     width: 240, height: 240, borderRadius: 24,

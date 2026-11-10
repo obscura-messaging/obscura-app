@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
@@ -9,7 +9,8 @@ import { deviceLabel, errorMessage } from '../domain/devices';
 import { loadDevices, unlinkDevice, type DeviceInfo } from '../state/devices';
 import { useSession } from '../state/store';
 import type { RootStackParamList } from '../navigation/types';
-import { s, colors } from '../styles';
+import { sharedStyles, colors, type Colors } from '../styles';
+import { useLegacyColors } from '../ui2/legacyColors';
 
 export function DevicesScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -19,6 +20,9 @@ export function DevicesScreen() {
   const [devices, setDevices] = useState<DeviceInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState('');
+  const c = useLegacyColors(colors);
+  const s = useMemo(() => sharedStyles(c), [c]);
+  const dv = useMemo(() => makeStyles(c), [c]);
 
   const refresh = useCallback(() => {
     loadDevices()
@@ -86,7 +90,7 @@ export function DevicesScreen() {
           <TextInput
             style={[s.input, dv.input]}
             placeholder="Or paste the code"
-            placeholderTextColor={colors.textDim}
+            placeholderTextColor={c.textDim}
             value={codeInput}
             onChangeText={setCodeInput}
             autoCapitalize="none"
@@ -110,18 +114,18 @@ export function DevicesScreen() {
   );
 }
 
-const dv = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   screen: { padding: 16 },
-  hint: { color: colors.textDim, fontSize: 14, marginBottom: 12 },
-  error: { color: colors.error, fontSize: 14, marginBottom: 12 },
-  row: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: colors.border },
+  hint: { color: c.textDim, fontSize: 14, marginBottom: 12 },
+  error: { color: c.error, fontSize: 14, marginBottom: 12 },
+  row: { flexDirection: 'row', alignItems: 'center', backgroundColor: c.surface, borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: c.border },
   info: { flex: 1 },
-  name: { color: colors.text, fontSize: 16, fontWeight: '600' },
+  name: { color: c.text, fontSize: 16, fontWeight: '600' },
   badges: { flexDirection: 'row', gap: 6, marginTop: 4 },
-  badge: { color: colors.textSecondary, fontSize: 12, fontWeight: '700' },
-  primaryBadge: { color: colors.accent },
-  unlinkBtn: { borderWidth: 1, borderColor: colors.error, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
-  unlinkText: { color: colors.error, fontWeight: '700', fontSize: 13 },
+  badge: { color: c.textSecondary, fontSize: 12, fontWeight: '700' },
+  primaryBadge: { color: c.accent },
+  unlinkBtn: { borderWidth: 1, borderColor: c.error, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+  unlinkText: { color: c.error, fontWeight: '700', fontSize: 13 },
   scanBtn: { marginBottom: 12 },
   enterRow: { flexDirection: 'row', gap: 8 },
   input: { flex: 1, marginBottom: 0 },

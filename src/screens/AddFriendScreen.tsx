@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -8,7 +8,8 @@ import { CodeCard } from '../components/CodeCard';
 import { useSession, addFriend, getFriendCode } from '../state/store';
 import { errorMessage, logError } from '../utils/log';
 import type { RootStackParamList } from '../navigation/types';
-import { s, colors } from '../styles';
+import { sharedStyles, colors, type Colors } from '../styles';
+import { useLegacyColors } from '../ui2/legacyColors';
 
 export function AddFriendScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -17,6 +18,9 @@ export function AddFriendScreen() {
   const [myCode, setMyCode] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState('');
   const [adding, setAdding] = useState(false);
+  const c = useLegacyColors(colors);
+  const s = useMemo(() => sharedStyles(c), [c]);
+  const afs = useMemo(() => makeStyles(c), [c]);
 
   useEffect(() => {
     getFriendCode().then(setMyCode).catch((e) => logError('getFriendCode', e));
@@ -51,7 +55,7 @@ export function AddFriendScreen() {
           <TextInput
             style={[s.input, afs.input]}
             placeholder="Paste friend code"
-            placeholderTextColor={colors.textDim}
+            placeholderTextColor={c.textDim}
             value={codeInput}
             onChangeText={setCodeInput}
             autoCapitalize="none"
@@ -70,10 +74,10 @@ export function AddFriendScreen() {
   );
 }
 
-const afs = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg, padding: 24, alignItems: 'center' },
-  divider: { height: 1, backgroundColor: colors.border, alignSelf: 'stretch', marginVertical: 24 },
-  note: { color: colors.textDim, fontSize: 14, textAlign: 'center' },
+const makeStyles = (c: Colors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: c.bg, padding: 24, alignItems: 'center' },
+  divider: { height: 1, backgroundColor: c.border, alignSelf: 'stretch', marginVertical: 24 },
+  note: { color: c.textDim, fontSize: 14, textAlign: 'center' },
   sectionLabel: { alignSelf: 'flex-start', marginTop: 0 },
   enterRow: { flexDirection: 'row', gap: 8, alignSelf: 'stretch' },
   input: { flex: 1, marginBottom: 0 },

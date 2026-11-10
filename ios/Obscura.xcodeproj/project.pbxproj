@@ -20,6 +20,10 @@
 		C1A7F30D5E4B8A9612340001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A7F30D5E4B8A9612340002 /* SharedContainer.swift */; };
 		DED0713712B8F3517F7CA49C /* ScreenSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A752FEB31FD6E940225BE227 /* ScreenSecurity.swift */; };
 		EA12D49AABB929C53CDEC027 /* ObscuraKit in Frameworks */ = {isa = PBXBuildFile; productRef = 341F78DAE53D40FF1D97FDFB /* ObscuraKit */; };
+		35EF7B03E57541E4B838CCB5 /* Nunito-ExtraBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 4F6A77E9DDC948149B413AC3 /* Nunito-ExtraBold.ttf */; };
+		5679A9D0CE514C3FA4C4A0D5 /* Nunito-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2C7B2A4ED8214BD0956CBE71 /* Nunito-SemiBold.ttf */; };
+		5722CEB4DCF446F6A7F23993 /* Nunito-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 1E2E15D00E094F058B914CC9 /* Nunito-Bold.ttf */; };
+		F021B092AFBC4E1CBCDA3A43 /* Nunito-Black.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2049EC7158FD4A7CBD1769F9 /* Nunito-Black.ttf */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +47,10 @@
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		0B5E1C0F2A9D4E7300C0F1A1 /* Dev.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Dev.xcconfig; path = Config/Dev.xcconfig; sourceTree = "<group>"; };
 		0B5E1C0F2A9D4E7300C0F1A2 /* Prod.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Prod.xcconfig; path = Config/Prod.xcconfig; sourceTree = "<group>"; };
+		4F6A77E9DDC948149B413AC3 /* Nunito-ExtraBold.ttf */ = {isa = PBXFileReference; name = "Nunito-ExtraBold.ttf"; path = "../assets/fonts/Nunito-ExtraBold.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		2C7B2A4ED8214BD0956CBE71 /* Nunito-SemiBold.ttf */ = {isa = PBXFileReference; name = "Nunito-SemiBold.ttf"; path = "../assets/fonts/Nunito-SemiBold.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		1E2E15D00E094F058B914CC9 /* Nunito-Bold.ttf */ = {isa = PBXFileReference; name = "Nunito-Bold.ttf"; path = "../assets/fonts/Nunito-Bold.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		2049EC7158FD4A7CBD1769F9 /* Nunito-Black.ttf */ = {isa = PBXFileReference; name = "Nunito-Black.ttf"; path = "../assets/fonts/Nunito-Black.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -112,6 +120,7 @@
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
+				96CD1E3B55914703A04AF1B0 /* Resources */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -134,6 +143,18 @@
 			);
 			path = Pods;
 			sourceTree = "<group>";
+		};
+		96CD1E3B55914703A04AF1B0 /* Resources */ = {
+			isa = "PBXGroup";
+			children = (
+				4F6A77E9DDC948149B413AC3 /* Nunito-ExtraBold.ttf */,
+				2C7B2A4ED8214BD0956CBE71 /* Nunito-SemiBold.ttf */,
+				1E2E15D00E094F058B914CC9 /* Nunito-Bold.ttf */,
+				2049EC7158FD4A7CBD1769F9 /* Nunito-Black.ttf */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+			path = "";
 		};
 /* End PBXGroup section */
 
@@ -205,6 +226,10 @@
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				66334826ACC6590D28987E84 /* PrivacyInfo.xcprivacy in Resources */,
+				35EF7B03E57541E4B838CCB5 /* Nunito-ExtraBold.ttf in Resources */,
+				5679A9D0CE514C3FA4C4A0D5 /* Nunito-SemiBold.ttf in Resources */,
+				5722CEB4DCF446F6A7F23993 /* Nunito-Bold.ttf in Resources */,
+				F021B092AFBC4E1CBCDA3A43 /* Nunito-Black.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
