@@ -16,6 +16,7 @@ import { toPath } from '../../utils/files';
 import { clamp, touchDist } from '../../utils/gesture';
 import { withAlpha } from '../theme';
 import { useUi2Theme } from '../store';
+import { FONT } from '../font';
 import { cameraShutter } from '../components/TabBar';
 
 // claude: capture logic copied from src/screens/CameraScreen.tsx; only the chrome is new.
@@ -211,8 +212,8 @@ const styles = StyleSheet.create({
   tools: { position: 'absolute', right: 14, gap: 12 },
   tool: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   gate: { alignItems: 'center', justifyContent: 'center', padding: 32 },
-  gateText: { fontSize: 18, fontWeight: '800', marginBottom: 16, textAlign: 'center' },
+  gateText: { fontSize: 18, fontFamily: FONT[800], marginBottom: 16, textAlign: 'center' },
   gateBtn: { borderRadius: 999, paddingHorizontal: 24, paddingVertical: 12 },
-  gateBtnText: { fontSize: 15, fontWeight: '900' },
+  gateBtnText: { fontSize: 15, fontFamily: FONT[900] },
   simText: { color: '#555', fontSize: 14 },
 });

@@ -9,6 +9,7 @@ import { errorMessage } from '../../utils/log';
 import type { RootStackParamList } from '../../navigation/types';
 import { DARK_OVERLAY, withAlpha } from '../theme';
 import { useUi2Theme } from '../store';
+import { FONT } from '../font';
 import { confirm } from '../confirm';
 import { Avatar } from '../components/Avatar';
 import { Hint, Page, PillButton, PillInput, SectionLabel } from '../components/Page';
@@ -126,7 +127,7 @@ export function FriendsScreen() {
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 6 },
   main: { flex: 1, minWidth: 0, gap: 2 },
-  name: { fontSize: 15, fontWeight: '900' },
-  sub: { fontSize: 13, fontWeight: '600' },
+  name: { fontSize: 15, fontFamily: FONT[900] },
+  sub: { fontSize: 13, fontFamily: FONT[600] },
   enter: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 });

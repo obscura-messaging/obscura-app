@@ -6,6 +6,7 @@ import Svg, { Path } from 'react-native-svg';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUi2Theme } from '../store';
+import { FONT } from '../font';
 
 // claude: a pushed screen in the board's language: the secondary color behind a back button and title, then the
 // white sheet. The pills and labels below are the board's .option, .editor-input and .editor-label.
@@ -101,18 +102,18 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   head: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingBottom: 12 },
   iconBtn: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  title: { flex: 1, fontSize: 17, fontWeight: '900' },
+  title: { flex: 1, fontSize: 17, fontFamily: FONT[900] },
   sheet: { flex: 1, borderTopLeftRadius: 26, borderTopRightRadius: 26 },
   content: { flexGrow: 1, padding: 16, gap: 8 },
-  label: { fontSize: 13, fontWeight: '900', marginTop: 6 },
-  hint: { fontSize: 13, fontWeight: '700', lineHeight: 17.5 },
+  label: { fontSize: 13, fontFamily: FONT[900], marginTop: 6 },
+  hint: { fontSize: 13, fontFamily: FONT[700], lineHeight: 17.5 },
   button: {
     minHeight: 40, paddingHorizontal: 16, borderRadius: 999, borderWidth: 2, alignItems: 'center', justifyContent: 'center',
   },
   disabled: { opacity: 0.5 },
-  buttonText: { fontSize: 13, fontWeight: '900' },
-  input: { flex: 1, fontSize: 13, fontWeight: '700', borderWidth: 2, borderRadius: 999, height: 40, paddingHorizontal: 14, paddingVertical: 0 },
+  buttonText: { fontSize: 13, fontFamily: FONT[900] },
+  input: { flex: 1, fontSize: 13, fontFamily: FONT[700], borderWidth: 2, borderRadius: 999, height: 40, paddingHorizontal: 14, paddingVertical: 0 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, height: 44, paddingHorizontal: 16, borderWidth: 2, borderRadius: 999 },
-  rowLabel: { flex: 1, fontSize: 14, fontWeight: '800' },
-  note: { fontSize: 12, fontWeight: '800' },
+  rowLabel: { flex: 1, fontSize: 14, fontFamily: FONT[800] },
+  note: { fontSize: 12, fontFamily: FONT[800] },
 });

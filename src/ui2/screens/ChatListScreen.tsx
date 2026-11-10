@@ -19,6 +19,7 @@ import type { RootStackParamList } from '../../navigation/types';
 import { DARK_OVERLAY, withAlpha, type ResolvedTheme } from '../theme';
 import { useUi2, useUi2Theme } from '../store';
 import { PULL, RUBBER_BAND, TIMING, TYPING_DOTS } from '../motion';
+import { FONT } from '../font';
 import { useChatsData } from '../chatsData';
 import type { SampleFace } from '../sample';
 import { Avatar } from '../components/Avatar';
@@ -395,8 +396,8 @@ const styles = StyleSheet.create({
   panelInner: { flexDirection: 'row', alignItems: 'center', gap: 10, height: PULL.max, paddingTop: 4, paddingBottom: 12, paddingHorizontal: 16 },
   newBtn: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   field: { flex: 1, height: 40, borderRadius: 999, borderWidth: 2, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12 },
-  searchInput: { flex: 1, fontSize: 13, fontWeight: '700', paddingVertical: 0 },
-  noResults: { paddingVertical: 30, paddingHorizontal: 16, textAlign: 'center', fontSize: 13, fontWeight: '800' },
+  searchInput: { flex: 1, fontSize: 13, fontFamily: FONT[700], paddingVertical: 0 },
+  noResults: { paddingVertical: 30, paddingHorizontal: 16, textAlign: 'center', fontSize: 13, fontFamily: FONT[800] },
   storiesScroll: { flexGrow: 0 },
   stories: { gap: 12, paddingTop: 8, paddingBottom: 18, paddingHorizontal: 16 },
   story: { width: 58, alignItems: 'center', gap: 6 },
@@ -404,19 +405,19 @@ const styles = StyleSheet.create({
     position: 'absolute', right: -6, bottom: -6, width: 22, height: 22, borderRadius: 11, borderWidth: 2.5,
     alignItems: 'center', justifyContent: 'center',
   },
-  storyName: { fontSize: 11, fontWeight: '800', maxWidth: '100%' },
+  storyName: { fontSize: 11, fontFamily: FONT[800], maxWidth: '100%' },
   sheet: { flex: 1, borderTopLeftRadius: SHEET_RADIUS, borderTopRightRadius: SHEET_RADIUS, overflow: 'hidden' },
   sheetContent: { paddingTop: 14 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 9, paddingHorizontal: 16 },
   rowMain: { flex: 1, minWidth: 0, gap: 2 },
-  rowName: { fontSize: 15, fontWeight: '900' },
+  rowName: { fontSize: 15, fontFamily: FONT[900] },
   previewLine: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  preview: { flexShrink: 1, fontSize: 13, fontWeight: '600' },
-  previewPix: { fontWeight: '800' },
+  preview: { flexShrink: 1, fontSize: 13, fontFamily: FONT[600] },
+  previewPix: { fontFamily: FONT[800] },
   rowSide: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  time: { fontSize: 11, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  time: { fontSize: 11, fontFamily: FONT[700], fontVariant: ['tabular-nums'] },
   badge: { minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
-  badgeText: { fontSize: 11, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  badgeText: { fontSize: 11, fontFamily: FONT[900], fontVariant: ['tabular-nums'] },
   typing: { flexDirection: 'row', alignItems: 'center', gap: 3, height: 14 },
   dot: { width: 6, height: 6, borderRadius: 3 },
 });

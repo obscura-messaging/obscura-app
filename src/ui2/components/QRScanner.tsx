@@ -10,6 +10,7 @@ import { parseQR, type QRKind } from '../../domain/qr';
 import { canPromptFor } from '../../state/permissions';
 import { withAlpha } from '../theme';
 import { useUi2Theme } from '../store';
+import { FONT } from '../font';
 
 interface QRScannerProps {
   kind: QRKind;
@@ -101,11 +102,11 @@ export function QRScanner({ kind, hint, onCode }: QRScannerProps) {
 const styles = StyleSheet.create({
   camera: { flex: 1, backgroundColor: '#000' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  message: { fontSize: 18, fontWeight: '800', marginBottom: 16, textAlign: 'center' },
+  message: { fontSize: 18, fontFamily: FONT[800], marginBottom: 16, textAlign: 'center' },
   gateBtn: { borderRadius: 999, borderWidth: 2, paddingHorizontal: 24, paddingVertical: 12 },
-  gateBtnText: { fontSize: 15, fontWeight: '900' },
+  gateBtnText: { fontSize: 15, fontFamily: FONT[900] },
   overlay: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   frame: { width: 240, height: 240, borderRadius: 26, borderWidth: 5 },
-  hint: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', marginTop: 20, textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 4 },
+  hint: { color: '#FFFFFF', fontSize: 15, fontFamily: FONT[800], marginTop: 20, textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 4 },
   close: { position: 'absolute', left: 16, width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
 });

@@ -14,6 +14,7 @@ import { copyToClipboard } from '../../state/store';
 import { toast } from '../../state/toast';
 import { errorMessage, logError } from '../../utils/log';
 import { useUi2Theme } from '../store';
+import { FONT } from '../font';
 import { confirm } from '../confirm';
 import { Hint, PillButton, PillInput } from '../components/Page';
 
@@ -162,13 +163,13 @@ function LinkThisDevice({ username, password, onBack }: { username: string; pass
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   top: { minHeight: 180, flexGrow: 1, alignItems: 'center', justifyContent: 'center' },
-  wordmark: { fontSize: 44, fontWeight: '900', letterSpacing: 3 },
+  wordmark: { fontSize: 44, fontFamily: FONT[900], letterSpacing: 3 },
   sheet: { flexGrow: 0, borderTopLeftRadius: 26, borderTopRightRadius: 26 },
   content: { padding: 16, paddingTop: 24, gap: 10 },
   field: { flexDirection: 'row' },
-  title: { fontSize: 18, fontWeight: '900' },
+  title: { fontSize: 18, fontFamily: FONT[900] },
   qrCard: { alignSelf: 'center', padding: 14, borderWidth: 2.5, borderRadius: 24, marginVertical: 8 },
   qr: { backgroundColor: '#FFFFFF', borderRadius: 6, padding: 12 },
   reset: { alignSelf: 'center', padding: 8 },
-  resetText: { fontSize: 13, fontWeight: '800' },
+  resetText: { fontSize: 13, fontFamily: FONT[800] },
 });

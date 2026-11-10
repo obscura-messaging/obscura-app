@@ -10,6 +10,7 @@ import { toast } from '../../state/toast';
 import { errorMessage } from '../../utils/log';
 import { PALETTES, type ResolvedTheme } from '../theme';
 import { TIMING } from '../motion';
+import { FONT } from '../font';
 import { setPalette, setProfileColor, setProfileEmoji, setThemeMode, useUi2, type ThemeMode } from '../store';
 import { Avatar, avatarColor } from './Avatar';
 
@@ -253,23 +254,23 @@ const styles = StyleSheet.create({
   },
   content: { padding: 16, gap: 8 },
   head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { fontSize: 18, fontWeight: '900' },
+  title: { fontSize: 18, fontFamily: FONT[900] },
   close: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  label: { fontSize: 13, fontWeight: '900', marginTop: 6 },
+  label: { fontSize: 13, fontFamily: FONT[900], marginTop: 6 },
   segments: { flexDirection: 'row', padding: 3, gap: 3, borderWidth: 2, borderRadius: 999 },
   segment: { flex: 1, height: 34, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
-  segmentText: { fontSize: 13, fontWeight: '900' },
+  segmentText: { fontSize: 13, fontFamily: FONT[900] },
   palettes: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   palette: { width: '48%', flexGrow: 1, gap: 8, padding: 10, borderWidth: 2, borderRadius: 18 },
   dots: { flexDirection: 'row' },
   dot: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, marginRight: -6 },
-  paletteName: { fontSize: 13, fontWeight: '900' },
+  paletteName: { fontSize: 13, fontFamily: FONT[900] },
   preview: { alignSelf: 'center', marginTop: 4, marginBottom: 6 },
   emojiRow: { gap: 8, paddingTop: 2, paddingHorizontal: 2, paddingBottom: 5 },
   emoji: { width: 42, height: 42, borderRadius: 14, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   emojiText: { fontSize: 24 },
   swatches: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, padding: 4 },
   swatch: { width: 32, height: 32, borderRadius: 16, borderWidth: 2 },
-  input: { fontSize: 13, fontWeight: '700', borderWidth: 2, borderRadius: 999, height: 40, paddingHorizontal: 14, paddingVertical: 0 },
+  input: { fontSize: 13, fontFamily: FONT[700], borderWidth: 2, borderRadius: 999, height: 40, paddingHorizontal: 14, paddingVertical: 0 },
   bio: { height: undefined, minHeight: 60, borderRadius: 20, paddingVertical: 10, lineHeight: 17.5, textAlignVertical: 'top' },
 });

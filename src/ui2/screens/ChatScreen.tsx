@@ -21,6 +21,7 @@ import type { RootStackParamList, RootStackScreenProps } from '../../navigation/
 import { DARK_OVERLAY, withAlpha } from '../theme';
 import { useUi2Theme } from '../store';
 import { TIMING } from '../motion';
+import { FONT } from '../font';
 import { sendSampleMessage, useChatsData } from '../chatsData';
 import { avatarColor } from '../components/Avatar';
 import { TypingDots } from './ChatListScreen';
@@ -230,10 +231,10 @@ const styles = StyleSheet.create({
     position: 'absolute', left: '71%', marginLeft: -PEEK, bottom: PEEK_SHOW - PEEK, width: PEEK * 2, height: PEEK,
     alignItems: 'center', justifyContent: 'center',
   },
-  peekFace: { fontSize: PEEK, lineHeight: PEEK * 1.15, fontWeight: '900', includeFontPadding: false },
+  peekFace: { fontSize: PEEK, lineHeight: PEEK * 1.15, fontFamily: FONT[900], includeFontPadding: false },
   iconBtn: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   who: { flex: 1, minHeight: 36, justifyContent: 'center' },
-  whoText: { fontSize: 17, fontWeight: '900' },
+  whoText: { fontSize: 17, fontFamily: FONT[900] },
   body: { flex: 1 },
   thread: { flex: 1, borderTopLeftRadius: 26, borderTopRightRadius: 26, overflow: 'hidden' },
   // claude: inverted list, so flex-end keeps a short thread at the top of the panel
@@ -243,7 +244,7 @@ const styles = StyleSheet.create({
   msg: { maxWidth: '78%', paddingVertical: 9, paddingHorizontal: 12, borderRadius: 16 },
   in: { borderBottomLeftRadius: 6 },
   out: { borderBottomRightRadius: 6 },
-  msgText: { fontSize: 13, fontWeight: '700', lineHeight: 17.5 },
+  msgText: { fontSize: 13, fontFamily: FONT[700], lineHeight: 17.5 },
   typingBubble: { paddingVertical: 12 },
   composer: {
     position: 'absolute', left: 0, right: 0, bottom: 0, paddingTop: 10, paddingHorizontal: 12,
@@ -253,6 +254,6 @@ const styles = StyleSheet.create({
     flex: 1, height: 40, borderRadius: 999, borderWidth: 2, flexDirection: 'row', alignItems: 'center',
     gap: 8, paddingHorizontal: 12,
   },
-  input: { flex: 1, fontSize: 13, fontWeight: '700', paddingVertical: 0 },
+  input: { flex: 1, fontSize: 13, fontFamily: FONT[700], paddingVertical: 0 },
   round: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
 });

@@ -5,6 +5,7 @@ import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/types';
 import { PIX_PEEK, TIMING } from '../motion';
+import { FONT } from '../font';
 
 // claude: the board's avatar colors (its chat list). Profile color is pending in the data, so one is picked from
 // the username until it lands.
@@ -117,5 +118,5 @@ export function Avatar({ name, size, radius, outline, ink, background, emoji, cr
 
 const styles = StyleSheet.create({
   box: { borderWidth: 2.5, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  letter: { fontWeight: '900', includeFontPadding: false },
+  letter: { fontFamily: FONT[900], includeFontPadding: false },
 });

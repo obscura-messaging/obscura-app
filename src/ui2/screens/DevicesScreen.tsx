@@ -8,6 +8,7 @@ import { useSession } from '../../state/store';
 import { toast } from '../../state/toast';
 import type { RootStackParamList } from '../../navigation/types';
 import { useUi2Theme } from '../store';
+import { FONT } from '../font';
 import { confirm, confirmAndApproveLink } from '../confirm';
 import { Hint, InfoRow, Note, Page, PillButton, PillInput, SectionLabel } from '../components/Page';
 
@@ -91,6 +92,6 @@ export function DevicesScreen() {
 }
 
 const styles = StyleSheet.create({
-  unlink: { fontSize: 13, fontWeight: '900' },
+  unlink: { fontSize: 13, fontFamily: FONT[900] },
   enter: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 });

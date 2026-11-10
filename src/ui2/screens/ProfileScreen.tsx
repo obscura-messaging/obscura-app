@@ -12,6 +12,7 @@ import { toast } from '../../state/toast';
 import { errorMessage, logError } from '../../utils/log';
 import type { RootStackParamList } from '../../navigation/types';
 import { useUi2, useUi2Theme } from '../store';
+import { FONT } from '../font';
 import { CONNECTION_LABEL, connectionDot } from '../connection';
 import { Avatar } from '../components/Avatar';
 import { EditProfileSheet, ThemeSheet } from '../components/ProfileSheets';
@@ -170,9 +171,9 @@ const styles = StyleSheet.create({
   editBtn: { right: 12 },
   me: { alignItems: 'center', gap: 2, paddingTop: 4, paddingHorizontal: 16, paddingBottom: 20 },
   meAvatar: { marginBottom: 8 },
-  meName: { fontSize: 22, fontWeight: '900' },
-  meHandle: { fontSize: 13, fontWeight: '800' },
-  meBio: { fontSize: 13, fontWeight: '700', maxWidth: 260, textAlign: 'center', marginTop: 4 },
+  meName: { fontSize: 22, fontFamily: FONT[900] },
+  meHandle: { fontSize: 13, fontFamily: FONT[800] },
+  meBio: { fontSize: 13, fontFamily: FONT[700], maxWidth: 260, textAlign: 'center', marginTop: 4 },
   sheet: {
     flexGrow: 1, marginTop: 26, borderTopLeftRadius: 26, borderTopRightRadius: 26,
     paddingTop: 18, paddingHorizontal: 16, gap: 14,
@@ -184,13 +185,13 @@ const styles = StyleSheet.create({
     position: 'absolute', right: -14, top: -14, width: 40, height: 40, borderRadius: 20, borderWidth: 2.5,
     alignItems: 'center', justifyContent: 'center',
   },
-  hint: { alignSelf: 'center', minHeight: 18, fontSize: 13, fontWeight: '800', textAlign: 'center' },
+  hint: { alignSelf: 'center', minHeight: 18, fontSize: 13, fontFamily: FONT[800], textAlign: 'center' },
   options: { gap: 8 },
   option: {
     flexDirection: 'row', alignItems: 'center', gap: 10, height: 44, paddingHorizontal: 16, borderWidth: 2, borderRadius: 999,
   },
-  optionLabel: { flex: 1, fontSize: 14, fontWeight: '800' },
-  note: { fontSize: 12, fontWeight: '800' },
+  optionLabel: { flex: 1, fontSize: 14, fontFamily: FONT[800] },
+  note: { fontSize: 12, fontFamily: FONT[800] },
   noteRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   dot: { width: 8, height: 8, borderRadius: 4 },
 });
