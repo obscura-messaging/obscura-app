@@ -47,8 +47,6 @@ doctor-android: doctor ensure-node-modules
 doctor-ios: doctor
     @test "$(uname -s)" = "Darwin" || { echo "error: iOS builds require macOS" >&2; exit 1; }
     @command -v xcodebuild >/dev/null || { echo "error: Xcode command-line tools are required" >&2; exit 1; }
-    @command -v rustup >/dev/null || { echo "error: rustup is required" >&2; exit 1; }
-    @command -v protoc >/dev/null || { echo "error: protoc is required" >&2; exit 1; }
     @command -v pod >/dev/null || { echo "error: CocoaPods 1.17.0 is required" >&2; exit 1; }
     @echo "iOS prerequisites are ready."
 

@@ -9,10 +9,9 @@ date with `main`.
 | --- | --- |
 | All work | [`just`](https://github.com/casey/just), Git, Node 22.13+ ([`.nvmrc`](.nvmrc)) |
 | Android | JDK 21, Android SDK 37, NDK `27.1.12297006` |
-| iOS | macOS, Xcode ([`.xcode-version`](.xcode-version)), `rustup`, `protoc`, CocoaPods 1.17.0 |
+| iOS | macOS, Xcode ([`.xcode-version`](.xcode-version)), CocoaPods 1.17.0 |
 
-On macOS: `brew install just protobuf`, then
-`sudo gem install cocoapods -v 1.17.0 -N`.
+On macOS: `brew install just`, then `sudo gem install cocoapods -v 1.17.0 -N`.
 
 Gradle starts on any JDK 17 or newer, then runs the build on JDK 21, which it
 finds among your installed JDKs (`gradle/gradle-daemon-jvm.properties` in
