@@ -9,9 +9,10 @@ date with `main`.
 | --- | --- |
 | All work | [`just`](https://github.com/casey/just), Git, Node 22.13+ ([`.nvmrc`](.nvmrc)) |
 | Android | JDK 21, Android SDK 37, NDK `27.1.12297006` |
-| iOS | macOS, Xcode ([`.xcode-version`](.xcode-version)), CocoaPods 1.17.0 |
+| iOS | macOS, Xcode ([`.xcode-version`](.xcode-version)), `protoc`, CocoaPods 1.17.0 |
 
-On macOS: `brew install just`, then `sudo gem install cocoapods -v 1.17.0 -N`.
+On macOS: `brew install just protobuf`, then
+`sudo gem install cocoapods -v 1.17.0 -N`.
 
 Gradle starts on any JDK 17 or newer, then runs the build on JDK 21, which it
 finds among your installed JDKs (`gradle/gradle-daemon-jvm.properties` in
@@ -42,6 +43,11 @@ or `just ios-build arm64`.
   The XCFramework has iOS slices only, so the kit's tests run on an iOS
   simulator. Simulator builds do not exercise APNs, background delivery or
   release signing.
+- **Swift protobuf bindings** are generated, not committed: `just swift-proto`
+  builds `protoc-gen-swift` at the SwiftProtobuf version both `Package.resolved`
+  files pin and writes `swift/Sources/ObscuraKit/Proto`. Every `swift-*` and
+  `ios-*` recipe runs it first, so a fresh clone opened straight in Xcode
+  does not compile until one of them has run.
 - **Environments (`dev` vs `prod`).** Builds default to `dev`
   (`dev.barrelmaker.obscura.dev`, **Obscura Dev**, pointing at
   `https://devscura.barrelmaker.dev`); passing `env=prod` selects production

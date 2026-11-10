@@ -1,40 +1,48 @@
 #!/usr/bin/env bash
 #
-# Regenerate the checked-in Swift protobuf bindings from the CANONICAL protos in
-# the repository-local client protocol and the root transport submodule. There
-# is deliberately no platform-local proto copy.
+# Generates the Swift protobuf bindings into Sources/ObscuraKit/Proto (not committed) from the
+# canonical protos: the client protocol in protocol/ and the transport in the proto/ submodule.
 #
-# Requirements (macOS):
-#   brew install protobuf         # provides protoc
-#   brew install swift-protobuf   # provides protoc-gen-swift
-#
-# Usage:
-#   scripts/gen-proto.sh
-#   git diff --exit-code Sources/ObscuraKit/Proto   # verify nothing drifted
+# The generator is protoc-gen-swift built from the SwiftProtobuf version swift/Package.resolved pins,
+# so the generated code always matches the runtime the kit links; the iOS app's pin must agree.
+# protoc only parses the protos, so any recent one does: brew install protobuf.
 #
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if [ ! -f ../protocol/obscura/client/v1/client.proto ]; then
-  echo "error: local client protocol is missing" >&2
-  exit 1
-fi
-if [ ! -f ../proto/obscura/v1/obscura.proto ]; then
-  echo "error: transport submodule not checked out — run: git submodule update --init" >&2
-  exit 1
-fi
 command -v protoc >/dev/null || { echo "error: protoc not found (brew install protobuf)" >&2; exit 1; }
-command -v protoc-gen-swift >/dev/null || { echo "error: protoc-gen-swift not found (brew install swift-protobuf)" >&2; exit 1; }
+[[ -f ../protocol/obscura/client/v1/client.proto ]] || { echo "error: the client protocol is missing" >&2; exit 1; }
+[[ -f ../proto/obscura/v1/obscura.proto ]] || {
+  echo "error: the transport submodule is not checked out; run: git submodule update --init" >&2
+  exit 1
+}
 
-# Client content (kit <-> kit) -> Sources/ObscuraKit/Proto/Client/
-protoc --proto_path=../protocol/obscura/client/v1 \
-  --swift_out=Sources/ObscuraKit/Proto/Client \
-  ../protocol/obscura/client/v1/client.proto
+pin() {
+  python3 -c 'import json, sys
+pins = {p["identity"]: p["state"]["version"] for p in json.load(open(sys.argv[1]))["pins"]}
+print(pins["swift-protobuf"])' "$1"
+}
+version="$(pin Package.resolved)"
+app_version="$(pin ../ios/Obscura.xcworkspace/xcshareddata/swiftpm/Package.resolved)"
+if [[ "$version" != "$app_version" ]]; then
+  echo "error: SwiftProtobuf is $version for the kit but $app_version for the iOS app; pin both to one version" >&2
+  exit 1
+fi
 
-# Transport (server <-> kits) -> Sources/ObscuraKit/Proto/Server/
-protoc --proto_path=../proto/obscura/v1 \
-  --swift_out=Sources/ObscuraKit/Proto/Server \
-  ../proto/obscura/v1/obscura.proto
+tools=".build/tools/swift-protobuf-$version"
+plugin="$tools/.build/release/protoc-gen-swift"
+if [[ ! -x "$plugin" ]]; then
+  rm -rf "$tools"
+  git clone --quiet --depth 1 --branch "$version" https://github.com/apple/swift-protobuf.git "$tools"
+  xcrun swift build --configuration release --package-path "$tools" --product protoc-gen-swift
+fi
 
-echo "Regenerated Swift protobuf bindings from the root proto/ submodule."
+out="Sources/ObscuraKit/Proto"
+rm -rf "$out"
+mkdir -p "$out/Client" "$out/Server"
+protoc --plugin=protoc-gen-swift="$plugin" --proto_path=../protocol/obscura/client/v1 \
+  --swift_out="$out/Client" ../protocol/obscura/client/v1/client.proto
+protoc --plugin=protoc-gen-swift="$plugin" --proto_path=../proto/obscura/v1 \
+  --swift_out="$out/Server" ../proto/obscura/v1/obscura.proto
+echo "Generated Swift protobuf bindings with protoc-gen-swift $version."

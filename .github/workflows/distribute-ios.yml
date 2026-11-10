@@ -56,6 +56,10 @@ jobs:
       - name: Select Xcode
         uses: ./.github/actions/xcode
 
+      # The kit's protobuf bindings are generated before the archive.
+      - name: Install protobuf
+        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
+
       - name: Install secrets
         env:
           IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
