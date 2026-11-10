@@ -31,6 +31,7 @@ import { CameraScreen as CameraScreen2 } from '../ui2/screens/CameraScreen';
 import { ChatListScreen as ChatListScreen2 } from '../ui2/screens/ChatListScreen';
 import { ChatScreen as ChatScreen2 } from '../ui2/screens/ChatScreen';
 import { ProfileScreen as ProfileScreen2 } from '../ui2/screens/ProfileScreen';
+import { AuthScreen as AuthScreen2 } from '../ui2/screens/AuthScreen';
 import { DevicesScreen as DevicesScreen2 } from '../ui2/screens/DevicesScreen';
 import { FriendsScreen as FriendsScreen2 } from '../ui2/screens/FriendsScreen';
 import { ScanFriendScreen as ScanFriendScreen2, ScanLinkScreen as ScanLinkScreen2 } from '../ui2/screens/ScanScreens';
@@ -129,7 +130,7 @@ export function RootNavigator() {
         // Avoids flashing the auth screen at a signed-in user.
         <RootStack.Screen name="Splash" component={SplashScreen} />
       ) : !authed ? (
-        <RootStack.Screen name="Auth" component={AuthScreen} />
+        <RootStack.Screen name="Auth" component={NEW_UI ? AuthScreen2 : AuthScreen} />
       ) : (
         <>
           <RootStack.Screen name="MainTabs" component={MainTabs} />
