@@ -4,10 +4,11 @@ The next Obscura design system, built beside the current UI. Its source of truth
 `react-native-experiments/design/obscura-ui/index.html` and the curves in `react-native-experiments/docs/motion.md`.
 
 - `theme.ts`: palettes, `resolveTheme(palette, mode)` and the dark-mode overlays. Pure TypeScript, no React.
-- `motion.ts`: springs and timing curves for Reanimated's `withSpring` and `withTiming`.
+- `motion.ts`: timing curves for Reanimated's `withTiming`.
 - `store.ts`: the theme choice (mode, palette) and profile emoji and color, in memory; `useUi2Theme()` resolves the tokens.
 - `flag.ts`: `NEW_UI`. While it is `false`, the app runs the current UI and nothing here is rendered.
-- `screens/`: chat list, chat, camera and profile. `components/`: the tab bar and the avatar.
+- `screens/`: chat list, chat, camera, profile, friends, devices, status and the QR scanners. `components/`: the tab
+  bar, the avatar, the profile sheets and `Page`, the shell for pushed screens.
 
 ## Import rule
 

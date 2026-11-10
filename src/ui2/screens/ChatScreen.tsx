@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View,
-  type ViewToken,
+  type ListViewToken,
 } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -19,8 +20,9 @@ import { openPixViewer } from '../../navigation/openPixViewer';
 import type { RootStackParamList, RootStackScreenProps } from '../../navigation/types';
 import { DARK_OVERLAY, withAlpha } from '../theme';
 import { useUi2Theme } from '../store';
+import { TIMING } from '../motion';
 import { sendSampleMessage, useChatsData } from '../chatsData';
-import { Avatar, avatarColor } from '../components/Avatar';
+import { avatarColor } from '../components/Avatar';
 import { TypingDots } from './ChatListScreen';
 
 const VIEWABILITY = { itemVisiblePercentThreshold: 50 };
@@ -49,6 +51,13 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const peerTyping = usePeerTyping(friend.userId) || friend.userId === typingUserId;
   const [text, setText] = useState('');
 
+  // claude: starts hidden behind the chat panel (the header clips it) and rises once the screen has finished opening
+  const peekY = useSharedValue(PEEK_SHOW + 8);
+  const peekStyle = useAnimatedStyle(() => ({ transform: [{ translateY: peekY.value }] }));
+  useEffect(() => nav.addListener('transitionEnd', e => {
+    if (!e.data.closing) peekY.value = withTiming(0, TIMING.faceSlide);
+  }), [nav, peekY]);
+
   const peerItems = useMemo(() => conversationItems(allItems, friend.userId), [allItems, friend.userId]);
   const messages = useMemo(() => peerItems.filter(i => i.kind === 'message'), [peerItems]);
   const unopenedPix = useMemo(
@@ -64,7 +73,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const isFocused = useIsFocused();
   const appActive = useAppActive();
   const [visibleIds, setVisibleIds] = useState<ReadonlySet<string>>(new Set());
-  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ListViewToken[] }) => {
     setVisibleIds(new Set(viewableItems.map(v => (v.item as ChatTimelineItem).id)));
   }).current;
   const marked = useRef(new Set<string>());
@@ -137,11 +146,9 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   return (
     <View style={[styles.screen, { backgroundColor: friendColor }]}>
       <View style={[styles.head, { paddingTop: insets.top }]}>
-        <View pointerEvents="none" style={styles.peek}>
-          <Avatar
-            name={friend.username} size={PEEK} radius={28} outline={on.outline} ink={on.ink} emoji={face?.emoji} background={face?.color}
-          />
-        </View>
+        <Animated.View pointerEvents="none" style={[styles.peek, peekStyle]}>
+          <Text style={[styles.peekFace, { color: on.ink }]}>{face?.emoji ?? friend.username[0]?.toUpperCase() ?? '?'}</Text>
+        </Animated.View>
         <TouchableOpacity style={styles.iconBtn} onPress={() => nav.goBack()} accessibilityLabel="Back">
           <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
             <Path d="M15 5l-7 7 7 7" stroke={on.ink} strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" />
@@ -173,7 +180,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
               <View style={styles.fromThem}>
                 <View style={[styles.msg, styles.in, inBubble, styles.typingBubble]}><TypingDots color={theme.link} /></View>
               </View>
-            ) : null}
+            ) : undefined}
           />
         </View>
 
@@ -218,7 +225,12 @@ const styles = StyleSheet.create({
   head: {
     flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingBottom: 34, overflow: 'hidden',
   },
-  peek: { position: 'absolute', left: '71%', marginLeft: -PEEK / 2, bottom: PEEK_SHOW - PEEK },
+  // claude: twice as wide as the face, so a wide emoji is never wrapped; still centered on 71%
+  peek: {
+    position: 'absolute', left: '71%', marginLeft: -PEEK, bottom: PEEK_SHOW - PEEK, width: PEEK * 2, height: PEEK,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  peekFace: { fontSize: PEEK, lineHeight: PEEK * 1.15, fontWeight: '900', includeFontPadding: false },
   iconBtn: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   who: { flex: 1, minHeight: 36, justifyContent: 'center' },
   whoText: { fontSize: 17, fontWeight: '900' },

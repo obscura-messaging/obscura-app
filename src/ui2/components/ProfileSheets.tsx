@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { GestureDetector, GestureHandlerRootView, useNativeGesture, usePanGesture } from 'react-native-gesture-handler';
+import Animated, { useAnimatedScrollHandler, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Svg, { Path } from 'react-native-svg';
+import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { saveOwnProfile } from '../../state/store';
 import { toast } from '../../state/toast';
 import { errorMessage } from '../../utils/log';
 import { PALETTES, type ResolvedTheme } from '../theme';
+import { TIMING } from '../motion';
 import { setPalette, setProfileColor, setProfileEmoji, setThemeMode, useUi2, type ThemeMode } from '../store';
 import { Avatar, avatarColor } from './Avatar';
 
@@ -25,26 +30,78 @@ interface SheetProps {
   children: React.ReactNode;
 }
 
-// claude: the board's .editor card: slides up over the profile, Done closes it.
+// claude: how far (px) or how fast (px/s) a downward drag has to be to close the card
+const CLOSE_DRAG = 100;
+const CLOSE_VELOCITY = 800;
+
+// claude: the board's .editor card: slides up over the profile. The X, a tap above it, or dragging it down closes it.
 function Sheet({ visible, title, theme, onDone, children }: SheetProps) {
   const insets = useSafeAreaInsets();
+  const y = useSharedValue(0);
+  const scrollY = useSharedValue(0);
+  // claude: the finger's travel while the content was still scrolling back to the top, so the card follows from there
+  const anchor = useSharedValue(0);
+  useEffect(() => {
+    if (visible) {
+      y.value = 0;
+      scrollY.value = 0;
+    }
+  }, [visible, y, scrollY]);
+  const onScroll = useAnimatedScrollHandler(e => { scrollY.value = e.contentOffset.y; });
+  const scroll = useNativeGesture({});
+  const drag = usePanGesture({
+    activeOffsetY: 8,
+    failOffsetX: [-12, 12],
+    simultaneousWith: scroll,
+    onBegin: () => {
+      'worklet';
+      anchor.value = 0;
+    },
+    onUpdate: e => {
+      'worklet';
+      if (scrollY.value > 0) {
+        anchor.value = e.translationY;
+        return;
+      }
+      y.value = Math.max(0, e.translationY - anchor.value);
+    },
+    onDeactivate: e => {
+      'worklet';
+      if (y.value > CLOSE_DRAG || (y.value > 0 && e.velocityY > CLOSE_VELOCITY)) scheduleOnRN(onDone);
+      else y.value = withTiming(0, TIMING.pullSettle);
+    },
+  });
+  // claude: clamped so the settle's overshoot never lifts the card off the bottom edge
+  const cardStyle = useAnimatedStyle(() => ({ transform: [{ translateY: Math.max(0, y.value) }] }));
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onDone}>
-      <View style={[styles.card, { top: insets.top + 46, backgroundColor: theme.paper }]}>
-        <ScrollView
-          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 30 }]}
-          keyboardShouldPersistTaps="handled"
-          automaticallyAdjustKeyboardInsets
-        >
-          <View style={styles.head}>
-            <Text style={[styles.title, { color: theme.ink }]}>{title}</Text>
-            <TouchableOpacity style={[styles.done, { backgroundColor: theme.ink }]} onPress={onDone}>
-              <Text style={[styles.doneText, { color: theme.paper }]}>Done</Text>
-            </TouchableOpacity>
-          </View>
-          {children}
-        </ScrollView>
-      </View>
+      <GestureHandlerRootView style={styles.root}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onDone} accessibilityLabel="Close" />
+        <GestureDetector gesture={drag}>
+          <Animated.View style={[styles.card, { top: insets.top + 46, backgroundColor: theme.paper }, cardStyle]}>
+            <GestureDetector gesture={scroll}>
+              <Animated.ScrollView
+                contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 30 }]}
+                keyboardShouldPersistTaps="handled"
+                automaticallyAdjustKeyboardInsets
+                bounces={false}
+                onScroll={onScroll}
+                scrollEventThrottle={16}
+              >
+                <View style={styles.head}>
+                  <Text style={[styles.title, { color: theme.ink }]}>{title}</Text>
+                  <TouchableOpacity style={styles.close} onPress={onDone} accessibilityLabel="Close">
+                    <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
+                      <Path d="M6 6l12 12M18 6L6 18" stroke={theme.ink} strokeWidth={2.6} strokeLinecap="round" />
+                    </Svg>
+                  </TouchableOpacity>
+                </View>
+                {children}
+              </Animated.ScrollView>
+            </GestureDetector>
+          </Animated.View>
+        </GestureDetector>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
@@ -189,6 +246,7 @@ export function EditProfileSheet({ visible, theme, username, displayName, bio, o
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1 },
   card: {
     position: 'absolute', left: 0, right: 0, bottom: 0, borderTopLeftRadius: 26, borderTopRightRadius: 26,
     boxShadow: '0 -10px 30px -10px rgba(0, 0, 0, 0.35)',
@@ -196,8 +254,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, gap: 8 },
   head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { fontSize: 18, fontWeight: '900' },
-  done: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999 },
-  doneText: { fontSize: 13, fontWeight: '900' },
+  close: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   label: { fontSize: 13, fontWeight: '900', marginTop: 6 },
   segments: { flexDirection: 'row', padding: 3, gap: 3, borderWidth: 2, borderRadius: 999 },
   segment: { flex: 1, height: 34, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },

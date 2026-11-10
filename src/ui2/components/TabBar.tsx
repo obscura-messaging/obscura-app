@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, TouchableOpacity, View, useWindowDimensions } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, {
+  Extrapolation, interpolate, useAnimatedStyle, useSharedValue, withTiming,
+} from 'react-native-reanimated';
 import Svg, { Path, Polygon } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { MaterialTopTabBarProps } from '@react-navigation/material-top-tabs';
@@ -22,6 +24,9 @@ const noop = () => undefined;
 
 // claude: on the camera page the shutter lives in this bar; the camera screen plugs its capture in here.
 export const cameraShutter = { pressIn: noop, pressOut: noop };
+
+// claude: the tab navigator's drag events, which the bar's props don't expose; RootNavigator forwards them here.
+export const barPager = { swipeStart: noop, swipeEnd: noop };
 
 // claude: the board's drawShutter at its defaults (open 3.6, angle -1): a hexagon plus six blade lines to the r 10 rim.
 const SHUTTER_ICON = (() => {
@@ -81,77 +86,30 @@ const glassPath = (w: number, h: number, c: number) =>
 export type ShutterLook = 'yellow' | 'whiteLens' | 'yellowLens';
 export const SHUTTER_LOOK: ShutterLook = 'yellow';
 
-// claude: the camera button grows from the solid bar's ring size to its own on arrival, and the solid bar's button
-// shrinks back on leaving, so the size says "camera is active".
-let cameraWasShowing = false;
+// claude: off camera the button is the solid bar's ring size; on camera it grows to its own, so the size says
+// "camera is active".
 const GROW = RING / SHUTTER;
+// claude: button center above the bar's bottom edge: solid 72 - (16 - 44 + 40) = 60, glass 112 - (56 - 48 + 40) = 64.
+const LIFT = 4;
 
-function CameraShutter({ yellow, rec }: { yellow: string; rec: string }) {
-  const [pressed, setPressed] = useState(false);
-  const scale = useSharedValue(1);
-  const domeStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
-  const grow = useSharedValue(GROW);
-  const growStyle = useAnimatedStyle(() => ({ transform: [{ scale: grow.value }] }));
-  useEffect(() => {
-    cameraWasShowing = true;
-    grow.value = withTiming(1, TIMING.shutterGrow);
-  }, [grow]);
-  const press = (down: boolean) => {
-    setPressed(down);
-    scale.value = withTiming(down ? SHUTTER_PRESS_SCALE : 1, TIMING.shutterPress);
-    if (down) cameraShutter.pressIn();
-    else cameraShutter.pressOut();
-  };
-  const color = pressed ? rec : yellow;
-  return (
-    <Animated.View style={[styles.glassShutterWrap, growStyle]}>
-      <Pressable
-        onPressIn={() => press(true)}
-        onPressOut={() => press(false)}
-        style={[styles.glassShutter, { borderColor: color }]}
-        accessibilityLabel="Take photo"
-      >
-        <Animated.View style={[styles.dome, { backgroundColor: color }, domeStyle]} />
-      </Pressable>
-    </Animated.View>
-  );
-}
-
-// claude: the solid bar's button, in the chosen look, inside the bar-colored rim.
-function MainShutter({ look, yellow, bar, onPress }: { look: ShutterLook; yellow: string; bar: string; onPress: () => void }) {
-  const shrink = useSharedValue(cameraWasShowing ? 1 / GROW : 1);
-  const shrinkStyle = useAnimatedStyle(() => ({ transform: [{ scale: shrink.value }] }));
-  useEffect(() => {
-    cameraWasShowing = false;
-    shrink.value = withTiming(1, TIMING.shutterGrow);
-  }, [shrink]);
+// claude: the lens looks' face, drawn over the button off camera.
+function LensFace({ look, yellow, bar }: { look: ShutterLook; yellow: string; bar: string }) {
   const blades = (
     <Svg width={look === 'yellowLens' ? RING : DISC} height={look === 'yellowLens' ? RING : DISC} viewBox="2 2 20 20">
       <Polygon points={SHUTTER_ICON.hexagon} fill={bar} />
       <Path d={SHUTTER_ICON.blades} fill="none" stroke={bar} strokeWidth={0.9} strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
-  const face = look === 'yellowLens'
+  return look === 'yellowLens'
     ? <View style={[styles.lensFull, { backgroundColor: yellow }]}>{blades}</View>
     : (
-      <View style={[styles.ring, { borderColor: look === 'yellow' ? yellow : WHITE }]}>
-        <View style={[styles.disc, { backgroundColor: look === 'yellow' ? yellow : WHITE }]}>
-          {look === 'whiteLens' && blades}
-        </View>
+      <View style={[styles.ring, { borderColor: WHITE }]}>
+        <View style={[styles.disc, { backgroundColor: WHITE }]}>{blades}</View>
       </View>
     );
-  return (
-    <TouchableOpacity
-      style={[styles.shutter, { backgroundColor: bar, borderColor: bar }]}
-      onPress={onPress}
-      accessibilityLabel="Open camera"
-    >
-      <Animated.View style={shrinkStyle}>{face}</Animated.View>
-    </TouchableOpacity>
-  );
 }
 
-export function TabBar({ state, navigation }: MaterialTopTabBarProps) {
+export function TabBar({ state, navigation, position }: MaterialTopTabBarProps) {
   const theme = useUi2Theme();
   const mode = theme.mode;
   const insets = useSafeAreaInsets();
@@ -163,70 +121,147 @@ export function TabBar({ state, navigation }: MaterialTopTabBarProps) {
   const go = (name: string) => {
     const route = state.routes.find(r => r.name === name);
     if (!route) return;
+    if (name !== current) {
+      if (onCamera) routeOnCamera.current = false;
+      if (name === 'Camera') moving.current = 'tap';
+      syncGlass();
+    }
     const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
     if (current !== name && !event.defaultPrevented) navigation.navigate(name);
   };
   const tint = (name: string) => (current === name ? theme.yellow : theme.barIcon);
 
-  const tabs = (center: React.ReactNode) => (
-    <View pointerEvents="box-none" style={[styles.row, onCamera ? styles.rowGlass : styles.rowSolid]}>
-      <TouchableOpacity style={styles.tab} onPress={() => go('Chats')} accessibilityLabel="Chats">
-        <ChatIcon color={tint('Chats')} />
-      </TouchableOpacity>
-      <View pointerEvents="box-none" style={styles.tab}>{center}</View>
-      <TouchableOpacity style={styles.tab} onPress={() => go('ProfileTab')} accessibilityLabel="Profile">
-        <ProfileIcon color={tint('ProfileTab')} />
-      </TouchableOpacity>
-    </View>
-  );
+  // claude: 0 off camera, 1 on camera, following the route. It drives the button's playful grow and shrink.
+  const cam = useSharedValue(onCamera ? 1 : 0);
+  // claude: the bar's see-through amount, separate from the button: it fades in playfully once on the camera, but
+  // goes solid almost instantly the moment you tap away or start sliding off it.
+  const glass = useSharedValue(onCamera ? 1 : 0);
+  // claude: the glass shows only while the route is the camera and the pager is at rest, so it can never stick on
+  // another tab. Position events go silent during a drag, so drags are read from the navigator's swipe events.
+  const glassOn = useRef(onCamera);
+  const routeOnCamera = useRef(onCamera);
+  const moving = useRef<'drag' | 'tap' | null>(null);
+  const syncGlass = useCallback(() => {
+    const want = routeOnCamera.current && moving.current === null;
+    if (want === glassOn.current) return;
+    glassOn.current = want;
+    glass.value = withTiming(want ? 1 : 0, want ? TIMING.cameraSwap : TIMING.barSolid);
+  }, [glass]);
+  useEffect(() => {
+    cam.value = withTiming(onCamera ? 1 : 0, TIMING.cameraSwap);
+    routeOnCamera.current = onCamera;
+    syncGlass();
+  }, [cam, onCamera, syncGlass]);
+  useEffect(() => {
+    barPager.swipeStart = () => {
+      moving.current = 'drag';
+      syncGlass();
+    };
+    barPager.swipeEnd = () => {
+      moving.current = null;
+      syncGlass();
+    };
+    return () => {
+      barPager.swipeStart = noop;
+      barPager.swipeEnd = noop;
+    };
+  }, [syncGlass]);
+  const cameraIndex = state.routes.findIndex(r => r.name === 'Camera');
+  useEffect(() => {
+    // claude: a tap into the camera has no drag events; the pager reporting it has landed ends the wait
+    const id = position.addListener(({ value }) => {
+      if (moving.current === 'tap' && Math.abs(value - cameraIndex) < 0.002) {
+        moving.current = null;
+        syncGlass();
+      }
+    });
+    return () => position.removeListener(id);
+  }, [position, cameraIndex, syncGlass]);
+  const solidStyle = useAnimatedStyle(() => ({ opacity: interpolate(glass.value, [0, 1], [1, 0], Extrapolation.CLAMP) }));
+  const glassStyle = useAnimatedStyle(() => ({ opacity: interpolate(glass.value, [0, 1], [0, 1], Extrapolation.CLAMP) }));
+  const moveStyle = useAnimatedStyle(() => ({ transform: [{ translateY: interpolate(cam.value, [0, 1], [LIFT, 0]) }] }));
+  const growStyle = useAnimatedStyle(() => ({ transform: [{ scale: interpolate(cam.value, [0, 1], [GROW, 1]) }] }));
 
-  if (onCamera) {
-    const h = GLASS_H + insets.bottom;
-    return (
-      <View pointerEvents="box-none" style={[styles.host, { height: h }]}>
-        <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width={width} height={h}>
+  const [pressed, setPressed] = useState(false);
+  const press = useSharedValue(1);
+  const domeStyle = useAnimatedStyle(() => ({ transform: [{ scale: press.value }] }));
+  const shoot = (down: boolean) => {
+    setPressed(down);
+    press.value = withTiming(down ? SHUTTER_PRESS_SCALE : 1, TIMING.shutterPress);
+    if (down) cameraShutter.pressIn();
+    else cameraShutter.pressOut();
+  };
+  const color = onCamera && pressed ? theme.rec : theme.yellow;
+
+  const h = GLASS_H + insets.bottom;
+  const hair = DARK_OVERLAY.barOutline;
+  const look: ShutterLook = SHUTTER_LOOK;
+  return (
+    <View pointerEvents="box-none" style={[styles.host, { height: h }]}>
+      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, solidStyle]}>
+        <View style={[styles.solid, { height: BAR_H + insets.bottom, backgroundColor: theme.bar }]} />
+        <Svg style={styles.outline} width={width} height={60} viewBox={`0 0 ${width} 60`}>
+          {filletPaths(c).map(d => <Path key={d} d={d} fill={theme.bar} />)}
+          {mode === 'dark' && (
+            <Path d={hairPath(width, c)} fill="none" stroke={withAlpha(hair.color, hair.alpha)} strokeWidth={hair.width} />
+          )}
+        </Svg>
+        <View style={[styles.notch, { left: c - SHUTTER / 2, backgroundColor: theme.bar }]} />
+      </Animated.View>
+      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, glassStyle]}>
+        <Svg width={width} height={h}>
           <Path d={glassPath(width, h, c)} fill={withAlpha(theme.bar, 56)} />
         </Svg>
-        {tabs(<CameraShutter yellow={theme.yellow} rec={theme.rec} />)}
+      </Animated.View>
+      <View pointerEvents="box-none" style={styles.row}>
+        <TouchableOpacity style={styles.tab} onPress={() => go('Chats')} accessibilityLabel="Chats">
+          <ChatIcon color={tint('Chats')} />
+        </TouchableOpacity>
+        <View pointerEvents="box-none" style={styles.tab}>
+          <Animated.View style={[styles.slot, moveStyle]}>
+            <Animated.View style={growStyle}>
+              <Pressable
+                onPress={onCamera ? undefined : () => go('Camera')}
+                onPressIn={onCamera ? () => shoot(true) : undefined}
+                onPressOut={onCamera ? () => shoot(false) : undefined}
+                style={[styles.button, { borderColor: color }]}
+                accessibilityLabel={onCamera ? 'Take photo' : 'Open camera'}
+              >
+                <Animated.View style={[styles.dome, { backgroundColor: color }, domeStyle]} />
+              </Pressable>
+            </Animated.View>
+            {look !== 'yellow' && (
+              <Animated.View pointerEvents="none" style={[styles.face, solidStyle]}>
+                <LensFace look={look} yellow={theme.yellow} bar={theme.bar} />
+              </Animated.View>
+            )}
+          </Animated.View>
+        </View>
+        <TouchableOpacity style={styles.tab} onPress={() => go('ProfileTab')} accessibilityLabel="Profile">
+          <ProfileIcon color={tint('ProfileTab')} />
+        </TouchableOpacity>
       </View>
-    );
-  }
-
-  const hair = DARK_OVERLAY.barOutline;
-  return (
-    <View pointerEvents="box-none" style={[styles.host, { height: BAR_H + insets.bottom }]}>
-      <View pointerEvents="none" style={[styles.solid, { backgroundColor: theme.bar }]} />
-      <Svg pointerEvents="none" style={styles.outline} width={width} height={60} viewBox={`0 0 ${width} 60`}>
-        {filletPaths(c).map(d => <Path key={d} d={d} fill={theme.bar} />)}
-        {mode === 'dark' && (
-          <Path d={hairPath(width, c)} fill="none" stroke={withAlpha(hair.color, hair.alpha)} strokeWidth={hair.width} />
-        )}
-      </Svg>
-      {tabs(
-        <MainShutter look={SHUTTER_LOOK} yellow={theme.yellow} bar={theme.bar} onPress={() => go('Camera')} />,
-      )}
     </View>
   );
 }
 
+// claude: the host is the glass bar's height; the solid bar's top edge sits GLASS_H - BAR_H (40) below the host top,
+// level with the glass shape's top edge.
+const SOLID_TOP = GLASS_H - BAR_H;
+
 const styles = StyleSheet.create({
   host: { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 10 },
-  solid: { ...StyleSheet.absoluteFill, borderTopLeftRadius: 26, borderTopRightRadius: 26 },
-  outline: { position: 'absolute', left: 0, top: -30 },
-  row: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 8 },
-  rowSolid: { paddingTop: 16 },
-  rowGlass: { paddingTop: 56 },
+  solid: { position: 'absolute', left: 0, right: 0, bottom: 0, borderTopLeftRadius: 26, borderTopRightRadius: 26 },
+  outline: { position: 'absolute', left: 0, top: SOLID_TOP - 30 },
+  // claude: the notch the button sits in: r 40, centered 12 below the solid bar's top edge.
+  notch: { position: 'absolute', top: SOLID_TOP + 12 - SHUTTER / 2, width: SHUTTER, height: SHUTTER, borderRadius: SHUTTER / 2 },
+  row: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 8, paddingTop: 56 },
   tab: { flex: 1, alignItems: 'center' },
-  shutter: {
-    width: SHUTTER, height: SHUTTER, borderRadius: SHUTTER / 2, borderWidth: RIM, marginTop: -44,
-    alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-  },
+  slot: { width: SHUTTER, height: SHUTTER, marginTop: -48 },
+  face: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   ring: { width: RING, height: RING, borderRadius: RING / 2, borderWidth: RING_LINE, padding: RING_LINE },
   disc: { flex: 1, borderRadius: DISC / 2, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   lensFull: { width: RING, height: RING, borderRadius: RING / 2, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  glassShutterWrap: { marginTop: -48 },
-  glassShutter: {
-    width: SHUTTER, height: SHUTTER, borderRadius: SHUTTER / 2, borderWidth: RIM, padding: 5,
-  },
+  button: { width: SHUTTER, height: SHUTTER, borderRadius: SHUTTER / 2, borderWidth: RIM, padding: 5 },
   dome: { flex: 1, borderRadius: SHUTTER / 2 },
 });

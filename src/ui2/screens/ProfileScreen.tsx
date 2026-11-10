@@ -12,15 +12,9 @@ import { toast } from '../../state/toast';
 import { errorMessage, logError } from '../../utils/log';
 import type { RootStackParamList } from '../../navigation/types';
 import { useUi2, useUi2Theme } from '../store';
+import { CONNECTION_LABEL, connectionDot } from '../connection';
 import { Avatar } from '../components/Avatar';
 import { EditProfileSheet, ThemeSheet } from '../components/ProfileSheets';
-
-const CONNECTION_LABEL = {
-  connected: 'Connected',
-  connecting: 'Connecting…',
-  reconnecting: 'Reconnecting…',
-  disconnected: 'Disconnected',
-} as const;
 
 export function ProfileScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -85,8 +79,7 @@ export function ProfileScreen() {
     </TouchableOpacity>
   );
   const noteStyle = [styles.note, { color: theme.muted }];
-  // claude: the board's green dot; other states are not designed yet
-  const statusDot = connState === 'connected' ? '#22C55E' : theme.muted;
+  const statusDot = connectionDot(connState, theme.muted);
 
   return (
     <ScrollView
@@ -152,7 +145,7 @@ export function ProfileScreen() {
         <View style={styles.options}>
           {option('Friends', () => nav.navigate('AddFriend'))}
           {option('Devices', () => nav.navigate('Devices'), deviceCount !== null && <Text style={noteStyle}>{deviceCount} linked</Text>)}
-          {option('Status', undefined, (
+          {option('Status', () => nav.navigate('Status'), (
             <View style={styles.noteRow}>
               <View style={[styles.dot, { backgroundColor: statusDot }]} />
               <Text style={noteStyle}>{CONNECTION_LABEL[connState]}</Text>

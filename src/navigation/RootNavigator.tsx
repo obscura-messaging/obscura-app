@@ -26,11 +26,15 @@ import { ScanLinkScreen } from '../screens/ScanLinkScreen';
 import { CameraIcon, ChatIcon } from '../components/icons';
 import { NEW_UI } from '../ui2/flag';
 import { useLegacyColors } from '../ui2/legacyColors';
-import { TabBar as TabBar2 } from '../ui2/components/TabBar';
+import { TabBar as TabBar2, barPager } from '../ui2/components/TabBar';
 import { CameraScreen as CameraScreen2 } from '../ui2/screens/CameraScreen';
 import { ChatListScreen as ChatListScreen2 } from '../ui2/screens/ChatListScreen';
 import { ChatScreen as ChatScreen2 } from '../ui2/screens/ChatScreen';
 import { ProfileScreen as ProfileScreen2 } from '../ui2/screens/ProfileScreen';
+import { DevicesScreen as DevicesScreen2 } from '../ui2/screens/DevicesScreen';
+import { FriendsScreen as FriendsScreen2 } from '../ui2/screens/FriendsScreen';
+import { ScanFriendScreen as ScanFriendScreen2, ScanLinkScreen as ScanLinkScreen2 } from '../ui2/screens/ScanScreens';
+import { StatusScreen as StatusScreen2 } from '../ui2/screens/StatusScreen';
 
 import type { RootStackParamList, MainTabParamList } from './types';
 
@@ -78,6 +82,7 @@ function MainTabs() {
         tabBar={NEW_UI ? TabBar2 : BottomTabBar}
         // Both stay mounted so the camera preview is live as it slides in.
         screenOptions={{ lazy: false, swipeEnabled: true }}
+        screenListeners={NEW_UI ? { swipeStart: () => barPager.swipeStart(), swipeEnd: () => barPager.swipeEnd() } : undefined}
       >
         <MainTab.Screen name="Chats" component={NEW_UI ? ChatListScreen2 : ChatListScreen} />
         <MainTab.Screen name="Camera" component={NEW_UI ? CameraScreen2 : CameraScreen} />
@@ -156,24 +161,25 @@ export function RootNavigator() {
           />
           <RootStack.Screen
             name="AddFriend"
-            component={AddFriendScreen}
-            options={headerOptions('Add friend', c)}
+            component={NEW_UI ? FriendsScreen2 : AddFriendScreen}
+            options={NEW_UI ? undefined : headerOptions('Add friend', c)}
           />
           <RootStack.Screen
             name="ScanFriend"
-            component={ScanFriendScreen}
+            component={NEW_UI ? ScanFriendScreen2 : ScanFriendScreen}
             options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
           />
           <RootStack.Screen
             name="Devices"
-            component={DevicesScreen}
-            options={headerOptions('Devices', c)}
+            component={NEW_UI ? DevicesScreen2 : DevicesScreen}
+            options={NEW_UI ? undefined : headerOptions('Devices', c)}
           />
           <RootStack.Screen
             name="ScanLink"
-            component={ScanLinkScreen}
+            component={NEW_UI ? ScanLinkScreen2 : ScanLinkScreen}
             options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
           />
+          {NEW_UI && <RootStack.Screen name="Status" component={StatusScreen2} />}
         </>
       )}
     </RootStack.Navigator>
