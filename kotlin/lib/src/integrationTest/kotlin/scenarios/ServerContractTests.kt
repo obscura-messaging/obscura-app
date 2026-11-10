@@ -248,8 +248,17 @@ class ServerContractTests {
         verifyReceiveRecovery("Device")
     }
 
+    /**
+     * A database in a temporary file. These tests roll a receive back on purpose, and an in-memory
+     * JDBC database shares one connection and one transaction across threads, so another coroutine's
+     * transaction could commit the rolled-back writes. Android's driver and file databases keep each
+     * thread's transaction to itself.
+     */
+    private fun fileDriver(): JdbcSqliteDriver =
+        JdbcSqliteDriver("jdbc:sqlite:${java.io.File.createTempFile("obscura-test", ".db").apply { deleteOnExit() }.path}")
+
     private suspend fun verifyReceiveRecovery(table: String) {
-        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val driver = fileDriver()
         ObscuraDatabase.Schema.create(driver)
         val bob = ObscuraClient(ObscuraConfig(API, "durability"), driver, MemoryStorage())
         val alice = registerAndConnect("durable_sender")
@@ -308,7 +317,7 @@ class ServerContractTests {
 
     @Test
     fun `failed local friend request persistence recovers on real server redelivery`(): Unit = runBlocking {
-        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val driver = fileDriver()
         ObscuraDatabase.Schema.create(driver)
         val bob = ObscuraClient(ObscuraConfig(API, "friend durability"), driver, MemoryStorage())
         val alice = registerAndConnect("durable_friend_sender")
