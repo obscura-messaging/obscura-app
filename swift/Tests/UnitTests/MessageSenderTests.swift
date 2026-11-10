@@ -339,8 +339,10 @@ final class MessageSenderTests: XCTestCase {
         let mallory = try await server.register(UUID().uuidString.lowercased(), corruptKyber: true)
         let results = await alice.sender.send(to: mallory.userId, Data([1]))
         XCTAssertEqual(results.map(\.status), [.rejected])
-        XCTAssertFalse(try await alice.messenger.hasSession(mallory.deviceId))
-        XCTAssertTrue(try await mallory.receive().isEmpty)
+        let session = try await alice.messenger.hasSession(mallory.deviceId)
+        XCTAssertFalse(session)
+        let delivered = try await mallory.receive()
+        XCTAssertTrue(delivered.isEmpty)
     }
 
     func testMessengerAndSenderRejectInvalidUUIDsAndUnspecifiedEncryptedMessage() async throws {
