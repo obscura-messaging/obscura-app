@@ -22,7 +22,7 @@ extension ObscuraClient {
         guard session != nil else { throw ObscuraError.notAuthenticated }
         startPreKeySync()
         do {
-            if try PreKeys.isSyncDue(signalStore, nowMs: clock()) { requestPreKeySync() }
+            if try PreKeys.isSyncDue(signalStore, nowMs: Int64(Self.nowMs())) { requestPreKeySync() }
         } catch {
             logger.databaseError(store: "signal", operation: "preKeyState", reason: "\(error)")
         }
@@ -407,10 +407,6 @@ extension ObscuraClient {
         preKeySyncSpacingMs = spacingMs
     }
 
-    func setClock(_ clock: @escaping @Sendable () -> Int64) {
-        self.clock = clock
-    }
-
     func requestPreKeySync() {
         startPreKeySync()
         preKeySyncRequests?.yield()
@@ -451,12 +447,12 @@ extension ObscuraClient {
             guard generation == sessionGeneration, !Task.isCancelled else { return }
             let counts = try await api.fetchPreKeyCounts()
             let store = signalStore
-            let now = clock()
+            let now = Int64(Self.nowMs())
             // Off the actor: a Kyber batch takes a while to generate.
             let refill = try await Task.detached { try PreKeys.prepareRefill(store, counts: counts, nowMs: now) }.value
             if !refill.isEmpty { try await api.uploadPreKeys(refill.upload()) }
             guard generation == sessionGeneration else { return }
-            try PreKeys.confirmRefill(signalStore, refill, nowMs: clock())
+            try PreKeys.confirmRefill(signalStore, refill, nowMs: Int64(Self.nowMs()))
             if !refill.isEmpty { logger.log("prekeys uploaded (counts were \(counts.oneTime) EC, \(counts.kyber) Kyber)") }
         } catch is CancellationError {
             return

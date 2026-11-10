@@ -108,23 +108,18 @@ enum ObscuraDatabase {
                     base_key BLOB NOT NULL,
                     PRIMARY KEY (kyber_id, signed_id, base_key)
                 );
-                -- What this device has published, the next id of each kind, and when it last rotated and
-                -- synced, like Signal-Android's PreKeyMetadataStore. The pending columns name keys stored
-                -- for an upload the server has not yet accepted.
+                -- Which signed and last-resort keys this device has published, the next id of each kind,
+                -- and when it last rotated (both keys together) and synced, like Signal-Android's
+                -- PreKeyMetadataStore.
                 CREATE TABLE signal_prekey_state (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     next_signed_id INTEGER NOT NULL,
                     next_one_time_id INTEGER NOT NULL,
                     next_kyber_id INTEGER NOT NULL,
-                    active_signed_id INTEGER,
-                    active_last_resort_id INTEGER,
-                    signed_rotated_at INTEGER NOT NULL,
-                    last_resort_rotated_at INTEGER NOT NULL,
-                    synced_at INTEGER NOT NULL,
-                    pending_signed_id INTEGER,
-                    pending_last_resort_id INTEGER,
-                    pending_one_time_start INTEGER,
-                    pending_kyber_start INTEGER
+                    active_signed_id INTEGER NOT NULL,
+                    active_last_resort_id INTEGER NOT NULL,
+                    rotated_at INTEGER NOT NULL,
+                    synced_at INTEGER NOT NULL
                 );
                 CREATE TABLE signal_sessions (
                     address TEXT PRIMARY KEY,

@@ -13,7 +13,7 @@ final class APIClientTests: XCTestCase {
         URLProtocol.unregisterClass(RetryProtocol.self)
     }
 
-    func testRetryAfterIsClampedToOneToTenSeconds() {
+    func testRetryAfterWaitsAtLeastASecondAndGivesUpPastTen() {
         XCTAssertEqual(APIClient.retryDelay(retryAfter: nil), 1)
         XCTAssertEqual(APIClient.retryDelay(retryAfter: "0"), 1)
         XCTAssertEqual(APIClient.retryDelay(retryAfter: "soon"), 1)

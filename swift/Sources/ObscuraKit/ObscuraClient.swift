@@ -100,8 +100,6 @@ public actor ObscuraClient {
     var preKeyCheckIntervalMs = PreKeys.checkIntervalMs
     /// The least time between syncs, so a backlog of pre-key messages costs one or two checks rather than one each.
     var preKeySyncSpacingMs = PreKeys.syncSpacingMs
-    /// Milliseconds since 1970; tests move it to make keys due for rotation.
-    var clock: @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
 
     var socket: GatewaySocket?
     var receiveTask: Task<Void, Never>?
@@ -198,7 +196,7 @@ public actor ObscuraClient {
     public func register(_ username: String, _ password: String) async throws {
         try Self.validateCredentials(username, password)
         try await requireUnprovisionedDevice()
-        let keys = try PreKeys.generateProvisioningKeys(nowMs: clock())
+        let keys = try PreKeys.generateProvisioningKeys(nowMs: Int64(Self.nowMs()))
         let response = try await api.registerUser(keys.accountRequest(username: username, password: password, name: deviceName))
         try await installPrimary(try session(response, username: username), keys: keys)
     }
@@ -234,7 +232,7 @@ public actor ObscuraClient {
     /// data, and provisions this device as the new primary with a new identity.
     public func resetAccount(_ username: String, _ password: String) async throws {
         try Self.validateCredentials(username, password)
-        let keys = try PreKeys.generateProvisioningKeys(nowMs: clock())
+        let keys = try PreKeys.generateProvisioningKeys(nowMs: Int64(Self.nowMs()))
         let response = try await api.resetAccount(keys.accountRequest(username: username, password: password, name: deviceName))
         let newSession = try session(response, username: username)
         try await signOut(revoking: false)

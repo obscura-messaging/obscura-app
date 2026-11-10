@@ -123,7 +123,7 @@ final class PreKeysTests: XCTestCase {
 
         XCTAssertEqual(try state().activeSignedId, signed.id)
         XCTAssertEqual(try state().activeLastResortId, lastResort.id)
-        XCTAssertEqual(try state().signedRotatedAt, PreKeys.refreshIntervalMs)
+        XCTAssertEqual(try state().rotatedAt, PreKeys.refreshIntervalMs)
         XCTAssertNotNil(try store.findSignedPreKey(keys.signedPreKey.id), "the previous key stays for messages in flight")
     }
 
@@ -145,45 +145,25 @@ final class PreKeysTests: XCTestCase {
         XCTAssertFalse(try PreKeys.isSyncDue(store, nowMs: PreKeys.refreshIntervalMs + 1))
     }
 
-    func testAfterAFailedUploadTheNextSyncUploadsTheSameKeysInsteadOfStoringMore() throws {
+    func testASyncAfterAFailedUploadGeneratesFreshKeysAndTheUnsentBatchGoesStale() throws {
         try provisioned(nowMs: 0)
         let now = PreKeys.refreshIntervalMs
         let low = OneTimePreKeyCounts(oneTime: 0, kyber: 0)
-        let first = try PreKeys.prepareRefill(store, counts: low, nowMs: now)
-        let stored = {
-            [try self.store.signedPreKeyIds().count, try self.store.oneTimePreKeyCount(),
-             try self.store.kyberPreKeyCount(lastResort: false), try self.store.kyberPreKeyCount(lastResort: true)]
-        }
-        let afterFirst = try stored()
+        let failed = try PreKeys.prepareRefill(store, counts: low, nowMs: now)
 
-        // The upload failed, so nothing was confirmed; each retry must not add keys.
-        for retry in 0..<3 {
-            let again = try PreKeys.prepareRefill(store, counts: low, nowMs: now + Int64(retry))
-            XCTAssertEqual(again.signedPreKey?.id, first.signedPreKey?.id)
-            XCTAssertEqual(again.lastResortKyberPreKey?.id, first.lastResortKyberPreKey?.id)
-            XCTAssertEqual(again.oneTimePreKeys.map(\.id), first.oneTimePreKeys.map(\.id))
-            XCTAssertEqual(again.kyberPreKeys.map(\.id), first.kyberPreKeys.map(\.id))
-        }
-        XCTAssertEqual(try stored(), afterFirst)
+        let retry = try PreKeys.prepareRefill(store, counts: low, nowMs: now + 1)
 
-        try PreKeys.confirmRefill(store, first, nowMs: now)
-        let confirmed = try state()
-        XCTAssertNil(confirmed.pendingSignedId)
-        XCTAssertNil(confirmed.pendingLastResortId)
-        XCTAssertNil(confirmed.pendingOneTimeStart)
-        XCTAssertNil(confirmed.pendingKyberStart)
-        XCTAssertTrue(try PreKeys.prepareRefill(store, counts: plenty, nowMs: now).isEmpty)
-    }
-
-    func testAPendingBatchTheServerNoLongerNeedsIsDroppedAndALaterRefillGeneratesNewKeys() throws {
-        try provisioned()
-        let lowOneTime = OneTimePreKeyCounts(oneTime: 0, kyber: 100)
-        let pending = try PreKeys.prepareRefill(store, counts: lowOneTime, nowMs: day)
-        XCTAssertTrue(try PreKeys.prepareRefill(store, counts: plenty, nowMs: day).isEmpty, "counts recovered: the batch reached the server")
-        XCTAssertNil(try state().pendingOneTimeStart)
-
-        let next = try PreKeys.prepareRefill(store, counts: lowOneTime, nowMs: 2 * day)
-        XCTAssertEqual(next.oneTimePreKeys.first?.id, PreKeys.next(pending.oneTimePreKeys.last!.id))
+        XCTAssertNotEqual(retry.signedPreKey?.id, failed.signedPreKey?.id)
+        XCTAssertEqual(retry.oneTimePreKeys.first?.id, PreKeys.next(failed.oneTimePreKeys.last!.id))
+        try PreKeys.confirmRefill(store, retry, nowMs: now + 1)
+        XCTAssertEqual(try state().activeSignedId, retry.signedPreKey?.id)
+        XCTAssertEqual(try state().activeLastResortId, retry.lastResortKyberPreKey?.id)
+        // The unsent batch is stale, so the usual cleanup removes it: 90 days on, only the 200 newest of each kind stay.
+        try store.cleanPreKeys(nowMs: now + 91 * day)
+        XCTAssertEqual(try store.oneTimePreKeyCount(), PersistentSignalStore.minOneTimeKept)
+        XCTAssertEqual(try store.kyberPreKeyCount(lastResort: false), PersistentSignalStore.minOneTimeKept)
+        XCTAssertEqual(try store.kyberPreKeyCount(lastResort: true), 2, "the active key and the youngest replaced one")
+        XCTAssertEqual(try store.signedPreKeyCount(), 2)
     }
 
     func testRefillingNeedsProvisionedKeys() throws {

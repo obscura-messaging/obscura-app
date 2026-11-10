@@ -2,23 +2,16 @@ import Foundation
 import GRDB
 import LibSignalClient
 
-/// Which keys this device has published, the next id of each kind, and when it last rotated and
-/// synced them, like Signal-Android's `PreKeyMetadataStore`. The pending ids name keys stored for an
-/// upload the server has not yet accepted: the signed and last-resort keys, and the first id of each
-/// one-time batch.
+/// Which signed and last-resort keys this device has published, the next id of each kind, and when it
+/// last rotated and synced, like Signal-Android's `PreKeyMetadataStore`. The two keys rotate together.
 struct PreKeyState: Equatable, Sendable {
     var nextSignedId: UInt32
     var nextOneTimeId: UInt32
     var nextKyberId: UInt32
-    var activeSignedId: UInt32?
-    var activeLastResortId: UInt32?
-    var signedRotatedAt: Int64
-    var lastResortRotatedAt: Int64
+    var activeSignedId: UInt32
+    var activeLastResortId: UInt32
+    var rotatedAt: Int64
     var syncedAt: Int64
-    var pendingSignedId: UInt32? = nil
-    var pendingLastResortId: UInt32? = nil
-    var pendingOneTimeStart: UInt32? = nil
-    var pendingKyberStart: UInt32? = nil
 }
 
 extension PreKeyState {
@@ -26,10 +19,7 @@ extension PreKeyState {
         self.init(
             nextSignedId: row["next_signed_id"], nextOneTimeId: row["next_one_time_id"], nextKyberId: row["next_kyber_id"],
             activeSignedId: row["active_signed_id"], activeLastResortId: row["active_last_resort_id"],
-            signedRotatedAt: row["signed_rotated_at"], lastResortRotatedAt: row["last_resort_rotated_at"],
-            syncedAt: row["synced_at"], pendingSignedId: row["pending_signed_id"],
-            pendingLastResortId: row["pending_last_resort_id"], pendingOneTimeStart: row["pending_one_time_start"],
-            pendingKyberStart: row["pending_kyber_start"])
+            rotatedAt: row["rotated_at"], syncedAt: row["synced_at"])
     }
 }
 
@@ -116,93 +106,66 @@ enum PreKeys {
             kyberPreKeys: try kyberIds.map { try kyberPreKey(identity, id: $0, nowMs: nowMs) },
             state: PreKeyState(
                 nextSignedId: next(signedId), nextOneTimeId: next(oneTimeIds.last!), nextKyberId: next(kyberIds.last!),
-                activeSignedId: signedId, activeLastResortId: lastResortId,
-                signedRotatedAt: nowMs, lastResortRotatedAt: nowMs, syncedAt: nowMs))
+                activeSignedId: signedId, activeLastResortId: lastResortId, rotatedAt: nowMs, syncedAt: nowMs))
     }
 
-    /// Whether a sync is due without a reason from the server: nothing published yet, or the last one is old.
+    /// Whether a sync is due without a reason from the server: the last one is old.
     static func isSyncDue(_ store: PersistentSignalStore, nowMs: Int64) throws -> Bool {
         guard let state = try store.preKeyState() else { return false }
-        return state.activeSignedId == nil || state.activeLastResortId == nil || isDue(since: state.syncedAt, nowMs: nowMs)
+        return isDue(since: state.syncedAt, nowMs: nowMs)
     }
 
     /// Generates and stores what the server needs given its `counts`: new one-time keys of a kind it is
-    /// short of, and a new signed or last-resort key once the current one is due for rotation. Earlier
-    /// one-time keys of a refilled kind are marked stale, since the upload replaces them.
-    ///
-    /// Keys stored for an earlier upload that never succeeded are uploaded again instead of new ones, so a
-    /// server that keeps failing doesn't pile up keys. Generation runs before the write: a batch of
-    /// Kyber-1024 keys takes a while, and holding the database would stall receive.
+    /// short of, and new signed and last-resort keys once the current ones are due for rotation. Earlier
+    /// one-time keys of a refilled kind are marked stale, since the upload replaces them. Keys from an
+    /// upload that failed are stale or superseded like any others, as on Signal-Android. Generation runs
+    /// before the write: a batch of Kyber-1024 keys takes a while, and holding the database would stall
+    /// receive.
     static func prepareRefill(_ store: PersistentSignalStore, counts: OneTimePreKeyCounts, nowMs: Int64) throws -> PreKeyRefill {
         guard let state = try store.preKeyState() else { throw ObscuraError.storageFailed("pre-keys not provisioned") }
         let identity = try store.identityKeyPair(context: NullContext())
-        let signedDue = state.activeSignedId == nil || isDue(since: state.signedRotatedAt, nowMs: nowMs)
-        let lastResortDue = state.activeLastResortId == nil || isDue(since: state.lastResortRotatedAt, nowMs: nowMs)
-        let oneTimeLow = counts.oneTime < oneTimeMinimum
-        let kyberLow = counts.kyber < oneTimeMinimum
-
-        let pendingSigned = try signedDue ? state.pendingSignedId.flatMap(store.findSignedPreKey) : nil
-        let pendingLastResort = try lastResortDue ? state.pendingLastResortId.flatMap(store.findKyberPreKey) : nil
-        // A batch the server took and peers drew on still has the keys not yet used; counts back above
-        // the minimum mean it, or an older batch, is serving and nothing is pending.
-        let pendingOneTime = try oneTimeLow
-            ? state.pendingOneTimeStart.map { try ids(from: $0, count: batchSize).compactMap(store.findPreKey) } ?? [] : []
-        let pendingKyber = try kyberLow
-            ? state.pendingKyberStart.map { try ids(from: $0, count: batchSize).compactMap(store.findKyberPreKey) } ?? [] : []
-
         var updated = state
-        if !oneTimeLow { updated.pendingOneTimeStart = nil }
-        if !kyberLow { updated.pendingKyberStart = nil }
-        var newSigned: SignedPreKeyRecord?
-        if signedDue && pendingSigned == nil {
-            let key = try signedPreKey(identity, id: updated.nextSignedId, nowMs: nowMs)
-            updated.nextSignedId = next(key.id)
-            updated.pendingSignedId = key.id
-            newSigned = key
+
+        var signed: SignedPreKeyRecord?
+        var lastResort: KyberPreKeyRecord?
+        if isDue(since: state.rotatedAt, nowMs: nowMs) {
+            let signedKey = try signedPreKey(identity, id: updated.nextSignedId, nowMs: nowMs)
+            let lastResortKey = try kyberPreKey(identity, id: updated.nextKyberId, nowMs: nowMs)
+            updated.nextSignedId = next(signedKey.id)
+            updated.nextKyberId = next(lastResortKey.id)
+            signed = signedKey
+            lastResort = lastResortKey
         }
-        var newLastResort: KyberPreKeyRecord?
-        if lastResortDue && pendingLastResort == nil {
-            let key = try kyberPreKey(identity, id: updated.nextKyberId, nowMs: nowMs)
-            updated.nextKyberId = next(key.id)
-            updated.pendingLastResortId = key.id
-            newLastResort = key
-        }
-        var newOneTime: [PreKeyRecord] = []
-        if oneTimeLow && pendingOneTime.isEmpty {
+        var oneTime: [PreKeyRecord] = []
+        if counts.oneTime < oneTimeMinimum {
             let batch = ids(from: updated.nextOneTimeId, count: batchSize)
-            newOneTime = try batch.map { try PreKeyRecord(id: $0, privateKey: PrivateKey.generate()) }
+            oneTime = try batch.map { try PreKeyRecord(id: $0, privateKey: PrivateKey.generate()) }
             updated.nextOneTimeId = next(batch.last!)
-            updated.pendingOneTimeStart = batch.first
         }
-        var newKyber: [KyberPreKeyRecord] = []
-        if kyberLow && pendingKyber.isEmpty {
+        var kyber: [KyberPreKeyRecord] = []
+        if counts.kyber < oneTimeMinimum {
             let batch = ids(from: updated.nextKyberId, count: batchSize)
-            newKyber = try batch.map { try kyberPreKey(identity, id: $0, nowMs: nowMs) }
+            kyber = try batch.map { try kyberPreKey(identity, id: $0, nowMs: nowMs) }
             updated.nextKyberId = next(batch.last!)
-            updated.pendingKyberStart = batch.first
         }
 
         try store.transaction { db, _ in
             guard try PersistentSignalStore.preKeyState(in: db) == state else {
                 throw ObscuraError.storageFailed("pre-key state changed during a sync")
             }
-            if let newSigned { try PersistentSignalStore.storeSignedPreKey(newSigned, in: db) }
-            if let newLastResort { try PersistentSignalStore.storeKyberPreKey(newLastResort, lastResort: true, in: db) }
-            if !newOneTime.isEmpty {
+            if let signed { try PersistentSignalStore.storeSignedPreKey(signed, in: db) }
+            if let lastResort { try PersistentSignalStore.storeKyberPreKey(lastResort, lastResort: true, in: db) }
+            if !oneTime.isEmpty {
                 try PersistentSignalStore.markOneTimePreKeysStale(kyber: false, nowMs: nowMs, in: db)
-                for key in newOneTime { try PersistentSignalStore.storePreKey(key, in: db) }
+                for key in oneTime { try PersistentSignalStore.storePreKey(key, in: db) }
             }
-            if !newKyber.isEmpty {
+            if !kyber.isEmpty {
                 try PersistentSignalStore.markOneTimePreKeysStale(kyber: true, nowMs: nowMs, in: db)
-                for key in newKyber { try PersistentSignalStore.storeKyberPreKey(key, lastResort: false, in: db) }
+                for key in kyber { try PersistentSignalStore.storeKyberPreKey(key, lastResort: false, in: db) }
             }
             try PersistentSignalStore.savePreKeyState(updated, in: db)
         }
-        return PreKeyRefill(
-            signedPreKey: newSigned ?? pendingSigned,
-            lastResortKyberPreKey: newLastResort ?? pendingLastResort,
-            oneTimePreKeys: newOneTime.isEmpty ? pendingOneTime : newOneTime,
-            kyberPreKeys: newKyber.isEmpty ? pendingKyber : newKyber)
+        return PreKeyRefill(signedPreKey: signed, lastResortKyberPreKey: lastResort, oneTimePreKeys: oneTime, kyberPreKeys: kyber)
     }
 
     /// After the server accepted `refill` (or nothing needed uploading): the new keys are the active ones.
@@ -211,18 +174,11 @@ enum PreKeys {
             guard var state = try PersistentSignalStore.preKeyState(in: db) else {
                 throw ObscuraError.storageFailed("pre-keys not provisioned")
             }
-            if let signed = refill.signedPreKey {
+            if let signed = refill.signedPreKey, let lastResort = refill.lastResortKyberPreKey {
                 state.activeSignedId = signed.id
-                state.signedRotatedAt = nowMs
-                state.pendingSignedId = nil
-            }
-            if let lastResort = refill.lastResortKyberPreKey {
                 state.activeLastResortId = lastResort.id
-                state.lastResortRotatedAt = nowMs
-                state.pendingLastResortId = nil
+                state.rotatedAt = nowMs
             }
-            if !refill.oneTimePreKeys.isEmpty { state.pendingOneTimeStart = nil }
-            if !refill.kyberPreKeys.isEmpty { state.pendingKyberStart = nil }
             state.syncedAt = nowMs
             try PersistentSignalStore.savePreKeyState(state, in: db)
             try PersistentSignalStore.cleanPreKeys(nowMs: nowMs, in: db)

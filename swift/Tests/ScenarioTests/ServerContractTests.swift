@@ -107,15 +107,14 @@ final class ServerContractTests: XCTestCase {
         var state = try XCTUnwrap(store.preKeyState())
         let longAgo = Int64(Date().timeIntervalSince1970 * 1000) - PreKeys.refreshIntervalMs - 1
         state.syncedAt = longAgo
-        state.signedRotatedAt = longAgo
-        state.lastResortRotatedAt = longAgo
+        state.rotatedAt = longAgo
         try store.savePreKeyState(state)
         // The refill below follows this sync within seconds.
         await bob.client.setPreKeySyncTiming(checkIntervalMs: PreKeys.checkIntervalMs, spacingMs: 0)
         try await bob.client.connect()
         let originalSignedId = UInt32(original.signedPreKey.keyId)
         let activeSigned = try await eventually("rotated signed pre-key is active") {
-            try store.preKeyState()?.activeSignedId.flatMap { $0 != originalSignedId ? $0 : nil }
+            try store.preKeyState().flatMap { $0.activeSignedId != originalSignedId ? $0.activeSignedId : nil }
         }
         let rotated = try await bundle(for: bob, fetchedBy: alice)
         XCTAssertEqual(rotated.identityKey, original.identityKey)

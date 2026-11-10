@@ -17,7 +17,7 @@ final class PersistentSignalStore: IdentityKeyStore, PreKeyStore, SignedPreKeySt
     /// At least this many one-time keys of each kind are kept however old they are.
     static let minOneTimeKept = 200
 
-    private let db: DatabaseQueue
+    let db: DatabaseQueue
     private let logger: ObscuraLogger
 
     init(db: DatabaseQueue, logger: ObscuraLogger) {
@@ -70,21 +70,14 @@ final class PersistentSignalStore: IdentityKeyStore, PreKeyStore, SignedPreKeySt
         try Row.fetchOne(db, sql: "SELECT * FROM signal_prekey_state WHERE id = 1").map(PreKeyState.init(row:))
     }
 
-    func savePreKeyState(_ state: PreKeyState) throws {
-        try db.write { db in try Self.savePreKeyState(state, in: db) }
-    }
-
     static func savePreKeyState(_ state: PreKeyState, in db: Database) throws {
         try db.execute(sql: """
             INSERT OR REPLACE INTO signal_prekey_state (
-                id, next_signed_id, next_one_time_id, next_kyber_id, active_signed_id, active_last_resort_id,
-                signed_rotated_at, last_resort_rotated_at, synced_at,
-                pending_signed_id, pending_last_resort_id, pending_one_time_start, pending_kyber_start
-            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, next_signed_id, next_one_time_id, next_kyber_id, active_signed_id, active_last_resort_id, rotated_at, synced_at
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
             """, arguments: [
                 state.nextSignedId, state.nextOneTimeId, state.nextKyberId, state.activeSignedId, state.activeLastResortId,
-                state.signedRotatedAt, state.lastResortRotatedAt, state.syncedAt,
-                state.pendingSignedId, state.pendingLastResortId, state.pendingOneTimeStart, state.pendingKyberStart,
+                state.rotatedAt, state.syncedAt,
             ])
     }
 
@@ -103,40 +96,6 @@ final class PersistentSignalStore: IdentityKeyStore, PreKeyStore, SignedPreKeySt
                        arguments: [record.id, Data(record.serialize()), lastResort])
     }
 
-    func findPreKey(_ id: UInt32) throws -> PreKeyRecord? {
-        try blob("SELECT record FROM signal_prekeys WHERE key_id = ?", id, NullContext()).map { try PreKeyRecord(bytes: $0) }
-    }
-
-    func findSignedPreKey(_ id: UInt32) throws -> SignedPreKeyRecord? {
-        try blob("SELECT record FROM signal_signed_prekeys WHERE key_id = ?", id, NullContext())
-            .map { try SignedPreKeyRecord(bytes: $0) }
-    }
-
-    func findKyberPreKey(_ id: UInt32) throws -> KyberPreKeyRecord? {
-        try blob("SELECT record FROM signal_kyber_prekeys WHERE key_id = ?", id, NullContext())
-            .map { try KyberPreKeyRecord(bytes: $0) }
-    }
-
-    func oneTimePreKeyCount() throws -> Int {
-        try db.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM signal_prekeys") ?? 0 }
-    }
-
-    func kyberPreKeyCount(lastResort: Bool) throws -> Int {
-        try db.read { db in
-            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM signal_kyber_prekeys WHERE last_resort = ?", arguments: [lastResort]) ?? 0
-        }
-    }
-
-    func signedPreKeyIds() throws -> [UInt32] {
-        try db.read { db in try UInt32.fetchAll(db, sql: "SELECT key_id FROM signal_signed_prekeys ORDER BY key_id") }
-    }
-
-    func lastResortKyberPreKeyIds() throws -> [UInt32] {
-        try db.read { db in
-            try UInt32.fetchAll(db, sql: "SELECT key_id FROM signal_kyber_prekeys WHERE last_resort = 1 ORDER BY key_id")
-        }
-    }
-
     /// The one-time keys of a kind stored so far, about to be replaced on the server by a new batch.
     static func markOneTimePreKeysStale(kyber: Bool, nowMs: Int64, in db: Database) throws {
         try db.execute(sql: kyber
@@ -148,25 +107,17 @@ final class PersistentSignalStore: IdentityKeyStore, PreKeyStore, SignedPreKeySt
     /// older than `archiveAgeMs`, except the youngest of those, which a message in flight may still
     /// name. One-time keys stale for longer than `staleOneTimeAgeMs` are deleted, keeping at least
     /// `minOneTimeKept` of each kind.
-    func cleanPreKeys(nowMs: Int64) throws {
-        try db.write { db in try Self.cleanPreKeys(nowMs: nowMs, in: db) }
-    }
-
     static func cleanPreKeys(nowMs: Int64, in db: Database) throws {
-        let state = try preKeyState(in: db)
-        if let active = state?.activeSignedId {
-            let records = try Data.fetchAll(db, sql: "SELECT record FROM signal_signed_prekeys").map { try SignedPreKeyRecord(bytes: $0) }
-            for id in archived(records.map { ($0.id, $0.timestamp) }, active: active, nowMs: nowMs) {
-                try db.execute(sql: "DELETE FROM signal_signed_prekeys WHERE key_id = ?", arguments: [id])
-            }
+        guard let state = try preKeyState(in: db) else { return }
+        let signed = try Data.fetchAll(db, sql: "SELECT record FROM signal_signed_prekeys").map { try SignedPreKeyRecord(bytes: $0) }
+        for id in archived(signed.map { ($0.id, $0.timestamp) }, active: state.activeSignedId, nowMs: nowMs) {
+            try db.execute(sql: "DELETE FROM signal_signed_prekeys WHERE key_id = ?", arguments: [id])
         }
-        if let active = state?.activeLastResortId {
-            let records = try Data.fetchAll(db, sql: "SELECT record FROM signal_kyber_prekeys WHERE last_resort = 1")
-                .map { try KyberPreKeyRecord(bytes: $0) }
-            for id in archived(records.map { ($0.id, $0.timestamp) }, active: active, nowMs: nowMs) {
-                try db.execute(sql: "DELETE FROM signal_kyber_prekeys WHERE key_id = ?", arguments: [id])
-                try db.execute(sql: "DELETE FROM signal_last_resort_key_uses WHERE kyber_id = ?", arguments: [id])
-            }
+        let lastResort = try Data.fetchAll(db, sql: "SELECT record FROM signal_kyber_prekeys WHERE last_resort = 1")
+            .map { try KyberPreKeyRecord(bytes: $0) }
+        for id in archived(lastResort.map { ($0.id, $0.timestamp) }, active: state.activeLastResortId, nowMs: nowMs) {
+            try db.execute(sql: "DELETE FROM signal_kyber_prekeys WHERE key_id = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM signal_last_resort_key_uses WHERE kyber_id = ?", arguments: [id])
         }
         let cutoff = nowMs - staleOneTimeAgeMs
         // Stale before the cutoff, except the most recent `minOneTimeKept` (fresh first, then latest stale).

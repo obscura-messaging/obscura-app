@@ -15,16 +15,15 @@ schemes = json.load(sys.stdin)["workspace"]["schemes"]
 print("ObscuraKit-Package" if "ObscuraKit-Package" in schemes else "ObscuraKit")'
 }
 
-# The newest available iPhone simulator.
+# An iPhone simulator on the newest available iOS runtime, compared by version number.
 simulator() {
   local id
   id="$(xcrun simctl list --json devices available iPhone |
-    python3 -c 'import json, sys
-runtimes = json.load(sys.stdin)["devices"]
-for runtime in sorted(runtimes, reverse=True):
-    if runtimes[runtime]:
-        print(runtimes[runtime][0]["udid"])
-        break')"
+    python3 -c 'import json, re, sys
+runtimes = {k: v for k, v in json.load(sys.stdin)["devices"].items() if v}
+version = lambda key: [int(n) for n in re.findall(r"\d+", key.rsplit(".", 1)[-1])]
+if runtimes:
+    print(runtimes[max(runtimes, key=version)][0]["udid"])')"
   if [ -z "$id" ]; then
     echo "error: no iPhone simulator available" >&2
     exit 1
@@ -66,8 +65,8 @@ case "${1:-test}" in
     xcodebuild_kit -destination 'generic/platform=iOS Simulator' build "${@:2}"
     ;;
   test)
-    # Usage: ./dev.sh test UnitTests|ScenarioTests [xcodebuild args...]
-    target="${2:?usage: ./dev.sh test UnitTests|ScenarioTests}"
+    # Usage: ./dev.sh test UnitTests|ScenarioTests[/Class[/test]] [xcodebuild args...]
+    target="${2:?usage: ./dev.sh test UnitTests|ScenarioTests[/Class[/test]]}"
     mkdir -p "$REPORTS"
     # xcodebuild hands TEST_RUNNER_-prefixed variables to the tests without the prefix.
     if [ -n "${OBSCURA_TEST_API:-}" ]; then export TEST_RUNNER_OBSCURA_TEST_API="$OBSCURA_TEST_API"; fi
@@ -78,8 +77,13 @@ case "${1:-test}" in
           tee "$REPORTS/unit-tests.log"
         coverage
         ;;
-      ScenarioTests)
-        xcodebuild_kit -destination "$destination" -only-testing:ScenarioTests test "${@:3}" 2>&1 |
+      # Part of a target: no coverage gate, which only means something for the whole suite.
+      UnitTests/*)
+        xcodebuild_kit -destination "$destination" -only-testing:"$target" test "${@:3}" 2>&1 |
+          tee "$REPORTS/unit-tests.log"
+        ;;
+      ScenarioTests|ScenarioTests/*)
+        xcodebuild_kit -destination "$destination" -only-testing:"$target" test "${@:3}" 2>&1 |
           tee "$REPORTS/integration-tests.log"
         ;;
       *)
@@ -90,6 +94,6 @@ case "${1:-test}" in
     ;;
   *)
     echo "Usage: ./dev.sh [build|test UnitTests|test ScenarioTests]"
-    echo "Extra args go to xcodebuild, e.g.: ./dev.sh test UnitTests -only-testing:UnitTests/ClientTests"
+    echo "Run part of a target, e.g.: ./dev.sh test UnitTests/ClientTests; extra args go to xcodebuild"
     ;;
 esac
