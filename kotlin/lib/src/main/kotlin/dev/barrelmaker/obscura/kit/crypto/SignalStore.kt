@@ -179,17 +179,8 @@ internal class SignalStore(private val db: ObscuraDatabase) : SignalProtocolStor
 
     fun savePreKeyState(state: SignalPreKeyState) = queries.insertPreKeyState(
         state.next_signed_id, state.next_one_time_id, state.next_kyber_id, state.active_signed_id,
-        state.active_last_resort_id, state.signed_rotated_at, state.last_resort_rotated_at, state.synced_at,
-        state.pending_signed_id, state.pending_last_resort_id, state.pending_one_time_start, state.pending_kyber_start,
+        state.active_last_resort_id, state.rotated_at, state.synced_at,
     )
-
-    fun findPreKey(id: Int): PreKeyRecord? = queries.selectPreKey(id.toLong()).executeAsOneOrNull()?.let(::PreKeyRecord)
-
-    fun findSignedPreKey(id: Int): SignedPreKeyRecord? =
-        queries.selectSignedPreKey(id.toLong()).executeAsOneOrNull()?.let(::SignedPreKeyRecord)
-
-    fun findKyberPreKey(id: Int): KyberPreKeyRecord? =
-        queries.selectKyberPreKey(id.toLong()).executeAsOneOrNull()?.let(::KyberPreKeyRecord)
 
     /** The one-time EC keys stored so far, about to be replaced on the server by a new batch. */
     fun markOneTimeEcPreKeysStale(nowMs: Long) = queries.markPreKeysStale(nowMs)
@@ -204,13 +195,10 @@ internal class SignalStore(private val db: ObscuraDatabase) : SignalProtocolStor
      * keeping at least [MIN_ONE_TIME_KEPT] of each kind.
      */
     fun cleanPreKeys(nowMs: Long) = db.transaction {
-        val state = preKeyState()
-        state?.active_signed_id?.let { active ->
-            archived(loadSignedPreKeys(), active, nowMs, { it.id }, { it.timestamp }).forEach { removeSignedPreKey(it.id) }
-        }
-        state?.active_last_resort_id?.let { active ->
-            archived(loadLastResortKyberPreKeys(), active, nowMs, { it.id }, { it.timestamp }).forEach { removeKyberPreKey(it.id) }
-        }
+        val state = preKeyState() ?: return@transaction
+        archived(loadSignedPreKeys(), state.active_signed_id, nowMs, { it.id }, { it.timestamp }).forEach { removeSignedPreKey(it.id) }
+        archived(loadLastResortKyberPreKeys(), state.active_last_resort_id, nowMs, { it.id }, { it.timestamp })
+            .forEach { removeKyberPreKey(it.id) }
         val cutoff = nowMs - STALE_ONE_TIME_AGE_MS
         queries.deleteStalePreKeys(cutoff, MIN_ONE_TIME_KEPT)
         queries.deleteStaleKyberPreKeys(cutoff, MIN_ONE_TIME_KEPT)

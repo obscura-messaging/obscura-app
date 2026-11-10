@@ -101,13 +101,8 @@ internal object PreKeys {
                 next_kyber_id = next(kyberIds.last()).toLong(),
                 active_signed_id = signedId.toLong(),
                 active_last_resort_id = lastResortId.toLong(),
-                signed_rotated_at = nowMs,
-                last_resort_rotated_at = nowMs,
+                rotated_at = nowMs,
                 synced_at = nowMs,
-                pending_signed_id = null,
-                pending_last_resort_id = null,
-                pending_one_time_start = null,
-                pending_kyber_start = null,
             ),
         )
     }
@@ -122,96 +117,64 @@ internal object PreKeys {
         store.savePreKeyState(keys.state)
     }
 
-    /** Whether a sync is due without a reason from the server: nothing published yet, or the last one is old. */
-    fun isSyncDue(store: SignalStore, nowMs: Long): Boolean {
-        val state = store.preKeyState() ?: return false
-        return state.active_signed_id == null || state.active_last_resort_id == null || isDue(state.synced_at, nowMs)
-    }
+    /** Whether a sync is due without a reason from the server: the last one is old. */
+    fun isSyncDue(store: SignalStore, nowMs: Long): Boolean = store.preKeyState()?.let { isDue(it.synced_at, nowMs) } ?: false
 
     /**
      * Generates and stores what the server needs given its [counts]: new one-time keys of a kind it
-     * is short of, and a new signed or last-resort key once the current one is due for rotation.
+     * is short of, and new signed and last-resort keys once the current ones are due for rotation.
      * Earlier one-time keys of a refilled kind are marked stale, since the upload replaces them.
-     *
-     * Keys stored for an earlier upload that never succeeded are uploaded again instead of new ones,
-     * so a server that keeps failing doesn't pile up keys. Generation runs before the transaction:
-     * a batch of Kyber-1024 keys takes a while, and holding the write lock would stall receive.
+     * Keys from an upload that failed are stale or superseded like any others, as on Signal-Android.
+     * Generation runs before the transaction: a batch of Kyber-1024 keys takes a while, and holding
+     * the write lock would stall receive.
      */
     fun prepareRefill(store: SignalStore, counts: PreKeyCounts, nowMs: Long): PreKeyRefill {
         val state = checkNotNull(store.preKeyState()) { "Pre-keys not provisioned" }
         val identity = store.identityKeyPair.privateKey
-        val signedDue = state.active_signed_id == null || isDue(state.signed_rotated_at, nowMs)
-        val lastResortDue = state.active_last_resort_id == null || isDue(state.last_resort_rotated_at, nowMs)
-        val oneTimeLow = counts.oneTime < ONE_TIME_MINIMUM
-        val kyberLow = counts.kyber < ONE_TIME_MINIMUM
+        var updated = state
 
-        val pendingSigned = state.pending_signed_id.takeIf { signedDue }?.let { store.findSignedPreKey(it.toInt()) }
-        val pendingLastResort = state.pending_last_resort_id.takeIf { lastResortDue }?.let { store.findKyberPreKey(it.toInt()) }
-        // A batch the server took and peers drew on still has the keys not yet used; counts back
-        // above the minimum mean it, or an older batch, is serving and nothing is pending.
-        val pendingOneTime = state.pending_one_time_start.takeIf { oneTimeLow }
-            ?.let { start -> ids(start.toInt(), BATCH_SIZE).mapNotNull { store.findPreKey(it) } }.orEmpty()
-        val pendingKyber = state.pending_kyber_start.takeIf { kyberLow }
-            ?.let { start -> ids(start.toInt(), BATCH_SIZE).mapNotNull { store.findKyberPreKey(it) } }.orEmpty()
-
-        var updated = state.copy(
-            pending_one_time_start = state.pending_one_time_start.takeIf { oneTimeLow },
-            pending_kyber_start = state.pending_kyber_start.takeIf { kyberLow },
-        )
-        val newSigned = if (signedDue && pendingSigned == null) {
-            signedPreKey(identity, updated.next_signed_id.toInt(), nowMs).also {
-                updated = updated.copy(next_signed_id = next(it.id).toLong(), pending_signed_id = it.id.toLong())
-            }
-        } else null
-        val newLastResort = if (lastResortDue && pendingLastResort == null) {
-            kyberPreKey(identity, updated.next_kyber_id.toInt(), nowMs).also {
-                updated = updated.copy(next_kyber_id = next(it.id).toLong(), pending_last_resort_id = it.id.toLong())
-            }
-        } else null
-        val newOneTime = if (oneTimeLow && pendingOneTime.isEmpty()) {
+        var signed: SignedPreKeyRecord? = null
+        var lastResort: KyberPreKeyRecord? = null
+        if (isDue(state.rotated_at, nowMs)) {
+            signed = signedPreKey(identity, updated.next_signed_id.toInt(), nowMs)
+            lastResort = kyberPreKey(identity, updated.next_kyber_id.toInt(), nowMs)
+            updated = updated.copy(next_signed_id = next(signed.id).toLong(), next_kyber_id = next(lastResort.id).toLong())
+        }
+        val oneTime = if (counts.oneTime < ONE_TIME_MINIMUM) {
             ids(updated.next_one_time_id.toInt(), BATCH_SIZE).map { PreKeyRecord(it, ECKeyPair.generate()) }.also {
-                updated = updated.copy(next_one_time_id = next(it.last().id).toLong(), pending_one_time_start = it.first().id.toLong())
+                updated = updated.copy(next_one_time_id = next(it.last().id).toLong())
             }
         } else emptyList()
-        val newKyber = if (kyberLow && pendingKyber.isEmpty()) {
+        val kyber = if (counts.kyber < ONE_TIME_MINIMUM) {
             ids(updated.next_kyber_id.toInt(), BATCH_SIZE).map { kyberPreKey(identity, it, nowMs) }.also {
-                updated = updated.copy(next_kyber_id = next(it.last().id).toLong(), pending_kyber_start = it.first().id.toLong())
+                updated = updated.copy(next_kyber_id = next(it.last().id).toLong())
             }
         } else emptyList()
 
         store.transaction {
             check(store.preKeyState() == state) { "Pre-key state changed during a sync" }
-            newSigned?.let { store.storeSignedPreKey(it.id, it) }
-            newLastResort?.let { store.storeLastResortKyberPreKey(it.id, it) }
-            if (newOneTime.isNotEmpty()) {
+            signed?.let { store.storeSignedPreKey(it.id, it) }
+            lastResort?.let { store.storeLastResortKyberPreKey(it.id, it) }
+            if (oneTime.isNotEmpty()) {
                 store.markOneTimeEcPreKeysStale(nowMs)
-                newOneTime.forEach { store.storePreKey(it.id, it) }
+                oneTime.forEach { store.storePreKey(it.id, it) }
             }
-            if (newKyber.isNotEmpty()) {
+            if (kyber.isNotEmpty()) {
                 store.markOneTimeKyberPreKeysStale(nowMs)
-                newKyber.forEach { store.storeKyberPreKey(it.id, it) }
+                kyber.forEach { store.storeKyberPreKey(it.id, it) }
             }
             store.savePreKeyState(updated)
         }
-        return PreKeyRefill(
-            newSigned ?: pendingSigned,
-            newLastResort ?: pendingLastResort,
-            newOneTime.ifEmpty { pendingOneTime },
-            newKyber.ifEmpty { pendingKyber },
-        )
+        return PreKeyRefill(signed, lastResort, oneTime, kyber)
     }
 
     /** After the server accepted [refill] (or nothing needed uploading): the new keys are the active ones. */
     fun confirmRefill(store: SignalStore, refill: PreKeyRefill, nowMs: Long) = store.transaction {
         var state = checkNotNull(store.preKeyState()) { "Pre-keys not provisioned" }
-        refill.signedPreKey?.let {
-            state = state.copy(active_signed_id = it.id.toLong(), signed_rotated_at = nowMs, pending_signed_id = null)
+        if (refill.signedPreKey != null && refill.lastResortKyberPreKey != null) {
+            state = state.copy(active_signed_id = refill.signedPreKey.id.toLong(),
+                active_last_resort_id = refill.lastResortKyberPreKey.id.toLong(), rotated_at = nowMs)
         }
-        refill.lastResortKyberPreKey?.let {
-            state = state.copy(active_last_resort_id = it.id.toLong(), last_resort_rotated_at = nowMs, pending_last_resort_id = null)
-        }
-        if (refill.oneTimePreKeys.isNotEmpty()) state = state.copy(pending_one_time_start = null)
-        if (refill.kyberPreKeys.isNotEmpty()) state = state.copy(pending_kyber_start = null)
         store.savePreKeyState(state.copy(synced_at = nowMs))
         store.cleanPreKeys(nowMs)
     }

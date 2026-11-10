@@ -176,7 +176,7 @@ class GatewayConnectionTest {
     }
 
     @Test
-    fun `envelope batch and prekey status frames are delivered, ack sends while connected, and disconnect drains channels`() = runBlocking {
+    fun `envelope batch frames are delivered, ack sends while connected, and disconnect drains the channel`() = runBlocking {
         val env = xyz.obscura.server.contracts.ObscuraProtocol.Envelope.newBuilder()
             .setId(com.google.protobuf.ByteString.copyFromUtf8("env-1"))
             .build()

@@ -150,45 +150,28 @@ class PreKeysTest {
 
         assertEquals(signed.id.toLong(), state().active_signed_id)
         assertEquals(lastResort.id.toLong(), state().active_last_resort_id)
-        assertEquals(PreKeys.REFRESH_INTERVAL_MS, state().signed_rotated_at)
+        assertEquals(PreKeys.REFRESH_INTERVAL_MS, state().rotated_at)
         assertTrue(store.containsSignedPreKey(keys.signedPreKey.id), "the previous key stays for messages in flight")
     }
 
     @Test
-    fun `after a failed upload the next sync uploads the same keys instead of storing more`() {
+    fun `a sync after a failed upload generates fresh keys, and the unsent batch goes stale`() {
         provisioned(nowMs = 0)
         val now = PreKeys.REFRESH_INTERVAL_MS
         val low = PreKeyCounts(oneTime = 0, kyber = 0)
-        val first = PreKeys.prepareRefill(store, low, now)
-        val stored = { Triple(store.loadSignedPreKeys().size, db.signalKeyQueries.countPreKeys().executeAsOne(), store.loadKyberPreKeys().size) }
-        val afterFirst = stored()
+        val failed = PreKeys.prepareRefill(store, low, now)
 
-        // The upload failed, so nothing was confirmed; each retry must not add keys.
-        repeat(3) {
-            val retry = PreKeys.prepareRefill(store, low, now + it)
-            assertEquals(first.signedPreKey!!.id, retry.signedPreKey!!.id)
-            assertEquals(first.lastResortKyberPreKey!!.id, retry.lastResortKyberPreKey!!.id)
-            assertEquals(first.oneTimePreKeys.map { it.id }, retry.oneTimePreKeys.map { it.id })
-            assertEquals(first.kyberPreKeys.map { it.id }, retry.kyberPreKeys.map { it.id })
-        }
-        assertEquals(afterFirst, stored())
+        val retry = PreKeys.prepareRefill(store, low, now + 1)
 
-        PreKeys.confirmRefill(store, first, now)
-        assertEquals(listOf(null, null, null, null), state().let {
-            listOf(it.pending_signed_id, it.pending_last_resort_id, it.pending_one_time_start, it.pending_kyber_start)
-        })
-        assertTrue(PreKeys.prepareRefill(store, plenty, now).isEmpty)
-    }
-
-    @Test
-    fun `a pending batch the server no longer needs is dropped, and a later refill generates new keys`() {
-        provisioned()
-        val pending = PreKeys.prepareRefill(store, PreKeyCounts(oneTime = 0, kyber = PreKeys.BATCH_SIZE), nowMs = day)
-        assertTrue(PreKeys.prepareRefill(store, plenty, nowMs = day).isEmpty, "counts recovered: the batch reached the server")
-        assertNull(state().pending_one_time_start)
-
-        val next = PreKeys.prepareRefill(store, PreKeyCounts(oneTime = 0, kyber = PreKeys.BATCH_SIZE), nowMs = 2 * day)
-        assertEquals(pending.oneTimePreKeys.last().id + 1, next.oneTimePreKeys.first().id)
+        assertNotEquals(failed.signedPreKey!!.id, retry.signedPreKey!!.id)
+        assertEquals(failed.oneTimePreKeys.last().id + 1, retry.oneTimePreKeys.first().id)
+        PreKeys.confirmRefill(store, retry, now + 1)
+        assertEquals(retry.signedPreKey!!.id.toLong(), state().active_signed_id)
+        assertEquals(retry.lastResortKyberPreKey!!.id.toLong(), state().active_last_resort_id)
+        // The unsent batch is stale, so the usual cleanup removes it: 90 days on, only the 200 newest of each kind stay.
+        store.cleanPreKeys(now + 91 * day)
+        assertEquals(200L, db.signalKeyQueries.countPreKeys().executeAsOne())
+        assertEquals(200 + 2, store.loadKyberPreKeys().size, "plus the active last-resort key and the youngest replaced one")
     }
 
     @Test

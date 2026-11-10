@@ -8,6 +8,7 @@ import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
+import obscura.client.v1.Client.EncryptedMessage
 import obscura.client.v1.Client.ClientMessage
 import org.json.JSONArray
 import org.junit.jupiter.api.Assertions.*
@@ -46,7 +47,7 @@ class FriendHandshakeTest {
                         runBlocking {
                             stateBeforeAcceptance.set(client.getFriends().singleOrNull()?.status)
                             val sent = parsed.recipientsList.single().submissionsList.single()
-                            remote.messenger.decryptAndCommit(SELF_DEVICE_ID, sent.message,
+                            remote.messenger.decryptAndCommit(SELF_DEVICE_ID, EncryptedMessage.parseFrom(sent.message),
                                 record = { remote.directory.addInTransaction(SELF_USER_ID, SELF_DEVICE_ID) }) { it }
                             val accept = ClientMessage.newBuilder().setFriendAccept(obscura.client.v1.friendAccept {}).build()
                             val reply = remote.messenger.prepareSubmission(SELF_DEVICE_ID, accept)

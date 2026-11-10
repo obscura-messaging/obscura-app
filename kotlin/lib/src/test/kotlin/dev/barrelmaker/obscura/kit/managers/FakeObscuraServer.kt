@@ -189,7 +189,7 @@ class FakeDevice internal constructor(
     suspend fun receive(): List<Received> = mailbox.toList().also { mailbox.clear() }.map { envelope ->
         val encrypted = EncryptedMessage.parseFrom(envelope.message)
         val senderDevice = UuidCodec.uuidString(envelope.senderDeviceId)!!
-        val plaintext = messenger.decryptAndCommit(senderDevice, envelope.message,
+        val plaintext = messenger.decryptAndCommit(senderDevice, encrypted,
             record = { directory.addInTransaction(UuidCodec.uuidString(envelope.senderUserId)!!, senderDevice) }) { it }
         Received(
             ClientMessage.parseFrom(plaintext),
