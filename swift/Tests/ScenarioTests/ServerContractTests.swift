@@ -85,46 +85,64 @@ final class ServerContractTests: XCTestCase {
                        "the persisted message must ACK and disappear from the server, not recur as a duplicate Signal message")
     }
 
-    func testGatewayAutomaticallyRefillsRepeatedlyAndRotatedKeysDecryptNewAndDelayedMessages() async throws {
+    func testPreKeySyncRotatesOnScheduleRefillsALowSupplyAndOldSessionsStillDecrypt() async throws {
         let storage = MemorySessionStorage()
         let bob = try await TestUser.register(makeClient(storage: storage))
         let alice = try await TestUser.register()
         addTeardownBlock { try await alice.client.logout(); try await bob.client.logout() }
         let original = try await bundle(for: bob, fetchedBy: alice)
-        XCTAssertEqual(original.signedPreKey.keyId, 1)
         try await alice.client.messenger.establishSessions(userId: bob.userId, [original])
         var delayed = Obscura_Client_V1_ClientMessage()
-        delayed.directMessage.id = "delayed-original-signed-key"
+        delayed.directMessage.id = "delayed-before-rotation"
         delayed.directMessage.peerUserID = bob.userId
         delayed.directMessage.content = "before rotation"
         let pending = try await alice.client.messenger.prepareSubmission(
             deviceId: bob.deviceId, clientMessage: delayed.serializedData())
+        let full = Int(PreKeys.batchSize)
+        let afterFetch = try await bob.client.api.fetchPreKeyCounts()
+        XCTAssertEqual(afterFetch, PreKeyCounts(oneTime: full - 1, kyber: full - 1), "the fetch used up one one-time key of each kind")
 
-        _ = try await exhaustPreKeys(of: bob, fetchedBy: alice)
+        // Two days since the last sync: connecting rotates the signed and last-resort keys.
+        let store = bob.client.signalStore
+        var state = try XCTUnwrap(store.preKeyState())
+        let longAgo = Int64(Date().timeIntervalSince1970 * 1000) - PreKeys.refreshIntervalMs - 1
+        state.syncedAt = longAgo
+        state.signedRotatedAt = longAgo
+        state.lastResortRotatedAt = longAgo
+        try store.savePreKeyState(state)
+        // The refill below follows this sync within seconds.
+        await bob.client.setPreKeySyncTiming(checkIntervalMs: PreKeys.checkIntervalMs, spacingMs: 0)
         try await bob.client.connect()
-        let first = try await eventually("gateway refill publishes signed key 2 and new OPKs; \(bob.username)") {
-            let value = try await self.bundle(for: bob, fetchedBy: alice)
-            return value.signedPreKey.keyId > original.signedPreKey.keyId && value.oneTimePreKey != nil ? value : nil
+        let originalSignedId = UInt32(original.signedPreKey.keyId)
+        let activeSigned = try await eventually("rotated signed pre-key is active") {
+            try store.preKeyState()?.activeSignedId.flatMap { $0 != originalSignedId ? $0 : nil }
         }
-        XCTAssertEqual(first.identityKey, original.identityKey)
-        XCTAssertGreaterThan(try XCTUnwrap(first.oneTimePreKey).keyId, 100)
+        let rotated = try await bundle(for: bob, fetchedBy: alice)
+        XCTAssertEqual(rotated.identityKey, original.identityKey)
+        XCTAssertEqual(UInt32(rotated.signedPreKey.keyId), activeSigned)
+        XCTAssertNotEqual(rotated.kyberPreKey.keyId, original.kyberPreKey.keyId)
+        XCTAssertNotNil(try store.findSignedPreKey(originalSignedId), "kept for messages in flight")
 
-        // Only the access token is expired; the real server-issued refresh token remains valid.
+        // Leave the server only 5 of each kind. The delayed message, built on the original keys, still
+        // decrypts after rotation, and as a pre-key message it makes bob refill both kinds, refreshing
+        // his token on the way.
+        let low = try PreKeys.prepareRefill(store, counts: PreKeyCounts(oneTime: 0, kyber: 0),
+                                            nowMs: Int64(Date().timeIntervalSince1970 * 1000)).upload()
+        try await bob.client.api.uploadPreKeys(PreKeysUpload(
+            signedPreKey: nil, lastResortKyberPreKey: nil,
+            oneTimePreKeys: Array(low.oneTimePreKeys.prefix(5)), kyberPreKeys: Array(low.kyberPreKeys.prefix(5))))
+        let lowCounts = try await bob.client.api.fetchPreKeyCounts()
+        XCTAssertEqual(lowCounts, PreKeyCounts(oneTime: 5, kyber: 5))
         let before = try XCTUnwrap(storage.session?["refreshToken"])
         try await bob.client.expireAccessToken()
-        let second = try await eventually("second automatic refill refreshes auth and publishes newer signed key; \(bob.username)") {
-            let value = try await self.bundle(for: bob, fetchedBy: alice)
-            return value.signedPreKey.keyId > first.signedPreKey.keyId
-                && (value.oneTimePreKey?.keyId ?? 0) > 150 ? value : nil
-        }
-        XCTAssertEqual(second.identityKey, original.identityKey)
-        XCTAssertGreaterThan(try XCTUnwrap(second.oneTimePreKey).keyId, 150)
-        try await assertRotatedSession(bob, storage: storage, previous: before)
-
         let delayedResult = await alice.client.messenger.submit(userId: bob.userId, submissions: [pending]).submitted
         XCTAssertEqual(delayedResult.map(\.result.status), [.accepted])
         let oldEntry = try await bob.waitForEntry(delayed.directMessage.id)
-        XCTAssertEqual(oldEntry.content, delayed.directMessage.content, "private signed key 1 must survive both rotations")
+        XCTAssertEqual(oldEntry.content, delayed.directMessage.content, "the original signed key survives rotation")
+        _ = try await eventually("server-visible refill") {
+            try await bob.client.api.fetchPreKeyCounts() == PreKeyCounts(oneTime: full, kyber: full) ? true : nil
+        }
+        try await assertRotatedSession(bob, storage: storage, previous: before)
 
         let carol = try await TestUser.register()
         addTeardownBlock { try await carol.client.logout() }
@@ -223,22 +241,24 @@ final class ServerContractTests: XCTestCase {
         await laptop.client.disconnect()
         let bob = try await TestUser.register()
         addTeardownBlock { try await alice.client.logout(); try await laptop.client.logout(); try await bob.client.logout() }
+        let full = Int(PreKeys.batchSize)
         _ = try await bundle(for: alice, fetchedBy: bob)
         for _ in 0..<3 {
             let ids = try await alice.client.devices().map(\.deviceId)
             XCTAssertEqual(Set(ids), [alice.deviceId, laptop.deviceId])
         }
-        let ownRemaining = try await exhaustPreKeys(of: alice, fetchedBy: bob)
-        XCTAssertEqual(ownRemaining, 99, "listing devices must not consume either device's OPKs")
-        let laptopEmpty = try await bundle(for: laptop, fetchedBy: bob)
-        XCTAssertNil(laptopEmpty.oneTimePreKey, "a whole-user bundle fetch consumes one OPK on every account device")
+        let aliceCounts = try await alice.client.api.fetchPreKeyCounts()
+        XCTAssertEqual(aliceCounts, PreKeyCounts(oneTime: full - 1, kyber: full - 1), "listing devices consumes no pre-keys")
+        let laptopCounts = try await laptop.client.api.fetchPreKeyCounts()
+        XCTAssertEqual(laptopCounts, PreKeyCounts(oneTime: full - 1, kyber: full - 1),
+                       "a whole-user bundle fetch consumes one of each kind on every account device")
 
         for i in 0..<3 {
             let report = try await alice.send("session-reuse-\(i)", to: [bob])
             XCTAssertEqual(report.recipients.map(\.status), [.accepted])
         }
-        let remaining = try await exhaustPreKeys(of: bob, fetchedBy: alice)
-        XCTAssertEqual(remaining, 99,
+        let bobCounts = try await bob.client.api.fetchPreKeyCounts()
+        XCTAssertEqual(bobCounts, PreKeyCounts(oneTime: full - 1, kyber: full - 1),
                        "one initial session fetch, not a destructive fetch on every send")
         try await bob.client.connect()
         for i in 0..<3 { _ = try await bob.waitForEntry("session-reuse-\(i)") }
@@ -248,16 +268,6 @@ final class ServerContractTests: XCTestCase {
     private func bundle(for target: TestUser, fetchedBy observer: TestUser) async throws -> PreKeyBundleResponse {
         let bundles = try await observer.client.api.fetchPreKeyBundles(target.userId)
         return try XCTUnwrap(bundles.first { $0.deviceId == target.deviceId })
-    }
-
-    private func exhaustPreKeys(of target: TestUser, fetchedBy observer: TestUser) async throws -> Int {
-        var consumed = 0
-        for _ in 0...100 {
-            if try await bundle(for: target, fetchedBy: observer).oneTimePreKey == nil { return consumed }
-            consumed += 1
-        }
-        XCTFail("server OPK inventory did not exhaust within its 100-key limit")
-        return consumed
     }
 
     private func assertRotatedSession(_ user: TestUser, storage: MemorySessionStorage, previous: String) async throws {

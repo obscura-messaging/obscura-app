@@ -1,79 +1,89 @@
 #!/bin/bash
-# Dev helper - runs swift commands with Xcode's Swift toolchain
+# Builds and tests the kit on an iOS simulator. libsignal's prebuilt Rust core has iOS slices only, so
+# nothing here runs on the macOS host, as libsignal's own swift/run_ios_tests.sh does.
 set -eo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-SWIFT="xcrun swift"
-LIBSIGNAL_PATH="$ROOT/vendored/libsignal/target/release"
-LIBSIGNAL_SWIFT_SOURCE="$ROOT/vendored/libsignal/swift"
-LIBSIGNAL_SWIFT_PACKAGE="$ROOT/vendored/LibSignalClient"
+DERIVED="$ROOT/.build/DerivedData"
+REPORTS="$ROOT/.build/reports"
+SCHEME="ObscuraKit-Package"
 
-prepare_libsignal_package() {
-  if [ ! -f "$LIBSIGNAL_SWIFT_SOURCE/Package.swift" ]; then
-    echo "error: libsignal v0.40.0 is not checked out at vendored/libsignal" >&2
+# The newest available iPhone simulator.
+simulator() {
+  local id
+  id="$(xcrun simctl list --json devices available iPhone |
+    python3 -c 'import json, sys
+runtimes = json.load(sys.stdin)["devices"]
+for runtime in sorted(runtimes, reverse=True):
+    if runtimes[runtime]:
+        print(runtimes[runtime][0]["udid"])
+        break')"
+  if [ -z "$id" ]; then
+    echo "error: no iPhone simulator available" >&2
     exit 1
   fi
+  echo "$id"
+}
 
-  # SwiftPM derives local package identity from the final path component. The
-  # monorepo package itself lives at swift/, so depending on libsignal/swift
-  # directly creates an identity collision. Copy once when missing or changed.
-  if [ ! -f "$LIBSIGNAL_SWIFT_PACKAGE/Package.swift" ] || ! cmp -s "$LIBSIGNAL_SWIFT_SOURCE/Package.swift" "$LIBSIGNAL_SWIFT_PACKAGE/Package.swift"; then
-    rm -rf "$LIBSIGNAL_SWIFT_PACKAGE"
-    cp -pR "$LIBSIGNAL_SWIFT_SOURCE" "$LIBSIGNAL_SWIFT_PACKAGE"
+xcodebuild_kit() {
+  xcodebuild -scheme "$SCHEME" -derivedDataPath "$DERIVED" -skipPackagePluginValidation "$@"
+}
+
+# Lines and regions of Sources/ObscuraKit outside the generated protobuf code, from the
+# simulator run's profile; fails below 95% of lines or 90% of regions.
+coverage() {
+  local profdata bundle binary
+  profdata="$(find "$DERIVED/Build/ProfileData" -name Coverage.profdata -print -quit)"
+  bundle="$(find "$DERIVED/Build/Products" -path '*iphonesimulator*' -name '*.xctest' -print -quit)"
+  if [ -z "$profdata" ] || [ -z "$bundle" ]; then
+    echo "error: no coverage profile or test bundle under $DERIVED" >&2
+    exit 1
+  fi
+  binary="$bundle/$(basename "$bundle" .xctest)"
+  local args=("$binary" -instr-profile="$profdata" --ignore-filename-regex='.build|Tests|Sources/ObscuraKit/Proto' Sources/ObscuraKit)
+  xcrun llvm-cov report "${args[@]}" | tee "$REPORTS/coverage.txt"
+  local summary lines regions
+  summary="$(xcrun llvm-cov export -summary-only "${args[@]}")"
+  printf '%s\n' "$summary" > "$REPORTS/coverage.json"
+  lines="$(plutil -extract data.0.totals.lines.percent raw -o - - <<< "$summary")"
+  regions="$(plutil -extract data.0.totals.regions.percent raw -o - - <<< "$summary")"
+  if ! awk -v lines="$lines" -v regions="$regions" 'BEGIN { exit !(lines >= 95 && regions >= 90) }'; then
+    printf 'error: coverage below threshold (lines %.2f%% < 95%%, regions %.2f%% < 90%%)\n' "$lines" "$regions" >&2
+    exit 1
   fi
 }
 
 case "${1:-test}" in
-  prepare)
-    prepare_libsignal_package
-    echo "Prepared vendored/LibSignalClient for SwiftPM."
-    ;;
   build)
-    prepare_libsignal_package
-    LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT build "${@:2}"
+    xcodebuild_kit -destination 'generic/platform=iOS Simulator' build "${@:2}"
     ;;
   test)
-    prepare_libsignal_package
-    # Test logs and coverage land here for CI to upload.
-    REPORTS="$ROOT/.build/reports"
+    # Usage: ./dev.sh test UnitTests|ScenarioTests [xcodebuild args...]
+    target="${2:?usage: ./dev.sh test UnitTests|ScenarioTests}"
     mkdir -p "$REPORTS"
-    if [[ "${*:2}" == *"UnitTests"* ]]; then
-      LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test --enable-code-coverage "${@:2}" 2>&1 | tee "$REPORTS/unit-tests.log"
-      # SwiftPM names the test bundle differently across toolchains
-      # (UnitTests.xctest vs. <Package>PackageTests.xctest), so locate it from codecov dir.
-      CODECOV_DIR="$(dirname "$(LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test --show-codecov-path)")"
-      BIN_PATH="$(dirname "$CODECOV_DIR")"
-      PROFDATA="$CODECOV_DIR/default.profdata"
-      BUNDLE="$(find "$BIN_PATH" -maxdepth 1 -name '*.xctest' -print -quit)"
-      if [ -z "$BUNDLE" ]; then
-        echo "error: no .xctest bundle found in $BIN_PATH" >&2
+    # xcodebuild hands TEST_RUNNER_-prefixed variables to the tests without the prefix.
+    if [ -n "${OBSCURA_TEST_API:-}" ]; then export TEST_RUNNER_OBSCURA_TEST_API="$OBSCURA_TEST_API"; fi
+    destination="platform=iOS Simulator,id=$(simulator)"
+    case "$target" in
+      UnitTests)
+        xcodebuild_kit -destination "$destination" -only-testing:UnitTests -enableCodeCoverage YES test "${@:3}" 2>&1 |
+          tee "$REPORTS/unit-tests.log"
+        coverage
+        ;;
+      ScenarioTests)
+        xcodebuild_kit -destination "$destination" -only-testing:ScenarioTests test "${@:3}" 2>&1 |
+          tee "$REPORTS/integration-tests.log"
+        ;;
+      *)
+        echo "error: unknown test target $target" >&2
         exit 1
-      fi
-      BINARY="$BUNDLE/Contents/MacOS/$(basename "$BUNDLE" .xctest)"
-      COV_ARGS=("$BINARY" -instr-profile="$PROFDATA" --ignore-filename-regex='.build|Tests|Sources/ObscuraKit/Proto' Sources/ObscuraKit)
-      xcrun llvm-cov report "${COV_ARGS[@]}" | tee "$REPORTS/coverage.txt"
-      SUMMARY="$(xcrun llvm-cov export -summary-only "${COV_ARGS[@]}")"
-      printf '%s\n' "$SUMMARY" > "$REPORTS/coverage.json"
-      LINES="$(plutil -extract data.0.totals.lines.percent raw -o - - <<< "$SUMMARY")"
-      REGIONS="$(plutil -extract data.0.totals.regions.percent raw -o - - <<< "$SUMMARY")"
-      if ! awk -v lines="$LINES" -v regions="$REGIONS" 'BEGIN { exit !(lines >= 95 && regions >= 90) }'; then
-        printf 'error: coverage below threshold (lines %.2f%% < 95%%, regions %.2f%% < 90%%)\n' "$LINES" "$REGIONS" >&2
-        exit 1
-      fi
-    elif [[ "${*:2}" == *"ScenarioTests"* ]]; then
-      LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test "${@:2}" 2>&1 | tee "$REPORTS/integration-tests.log"
-    else
-      LIBRARY_PATH="$LIBSIGNAL_PATH" $SWIFT test "${@:2}"
-    fi
-    ;;
-  shell)
-    prepare_libsignal_package
-    LIBRARY_PATH="$LIBSIGNAL_PATH" bash
+        ;;
+    esac
     ;;
   *)
-    echo "Usage: ./dev.sh [prepare|build|test|shell]"
-    echo "Extra args passed to swift, e.g.: ./dev.sh test --filter CoreFlowTests"
+    echo "Usage: ./dev.sh [build|test UnitTests|test ScenarioTests]"
+    echo "Extra args go to xcodebuild, e.g.: ./dev.sh test UnitTests -only-testing:UnitTests/ClientTests"
     ;;
 esac

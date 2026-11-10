@@ -37,10 +37,12 @@ or `just ios-build arm64`.
   push, download the Firebase config (containing `dev.barrelmaker.obscura.dev`
   and `dev.barrelmaker.obscura`) into that path. It is gitignored. Never commit
   it, or any Firebase Admin credential.
-- **iOS.** The first build fetches the libsignal commit pinned in `swift/LIBSIGNAL_REF`.
-  It then builds the simulator FFI, the Swift package and the pods, and
-  caches them (gitignored). Simulator builds do not exercise APNs, background
-  delivery or release signing.
+- **iOS.** The first build resolves the Swift package, including libsignal and
+  its prebuilt Rust core (an XCFramework from Signal, pinned with its checksum
+  in `swift/Package.swift`), then builds the pods. No Rust toolchain is needed.
+  The XCFramework has iOS slices only, so the kit's tests run on an iOS
+  simulator. Simulator builds do not exercise APNs, background delivery or
+  release signing.
 - **Environments (`dev` vs `prod`).** Builds default to `dev`
   (`dev.barrelmaker.obscura.dev`, **Obscura Dev**, pointing at
   `https://devscura.barrelmaker.dev`); passing `env=prod` selects production
@@ -62,7 +64,6 @@ falls back to its private container.
 
 ```bash
 just ios-build   # once, to prepare dependencies
-./swift/scripts/bootstrap-libsignal.sh ios-device
 cd ios && mkdir -p build
 printf '<plist version="1.0"><dict/></plist>' > build/Personal.entitlements
 xcodebuild -workspace Obscura.xcworkspace -scheme Obscura \

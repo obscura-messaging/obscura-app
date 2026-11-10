@@ -28,7 +28,7 @@ final class SchemaTests: XCTestCase {
     func testWipeEmptiesEveryTable() async throws {
         let db = try ObscuraDatabase.inMemory()
         let store = PersistentSignalStore(db: db, logger: SilentLogger())
-        try store.install(SignalKeys.generate())
+        try store.install(provisioningKeys())
         try await FriendStore(db: db).add("peer", username: "alice", status: .accepted)
         try await db.write { try DeviceStore.setLocalDevice("me", primaryDeviceId: "me", in: $0) }
         try await DeviceStore(db: db).add(userId: "peer", deviceIds: ["d"])

@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import LibSignalClient
 import XCTest
 @testable import ObscuraKit
 
@@ -46,9 +47,16 @@ func makeClient(apiURL: String = "https://obscura.invalid", database: DatabaseQu
                       sessionStorage: storage, logger: SilentLogger())
 }
 
+func testNowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+
+/// A new device's keys, generated now.
+func provisioningKeys(identity: IdentityKeyPair = .generate()) throws -> ProvisioningKeys {
+    try PreKeys.generateProvisioningKeys(identity: identity, nowMs: testNowMs())
+}
+
 func signalStoreWithIdentity() throws -> PersistentSignalStore {
     let store = PersistentSignalStore(db: try ObscuraDatabase.inMemory(), logger: SilentLogger())
-    try store.install(SignalKeys.generate())
+    try store.install(provisioningKeys())
     return store
 }
 

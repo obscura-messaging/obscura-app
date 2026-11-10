@@ -292,47 +292,55 @@ final class MessageSenderTests: XCTestCase {
     }
 
     func testVerifiedBundlesAcceptsOptionalOneTimePreKeyAndRejectsMalformedBundles() throws {
-        let keys = try SignalKeys.generate()
-        let validIdentity = keys.identity
-        let validSigned = keys.signedPreKey
-        let validDeviceId = UUID().uuidString.lowercased()
-        let bundleNoOneTime = PreKeyBundleResponse(
-            deviceId: validDeviceId,
-            registrationId: Int(keys.registrationId),
-            identityKey: Data(validIdentity.publicKey.serialize()).base64EncodedString(),
-            signedPreKey: .init(
-                keyId: Int(validSigned.id),
-                publicKey: Data(validSigned.publicKey.serialize()).base64EncodedString(),
-                signature: Data(validSigned.signature).base64EncodedString()
-            ),
-            oneTimePreKey: nil
-        )
-        let verified = try Messenger.verifiedBundles([bundleNoOneTime])
-        XCTAssertEqual(verified.count, 1)
+        let keys = try provisioningKeys()
+        let deviceId = UUID().uuidString.lowercased()
+        func base64(_ data: Data) -> String { data.base64EncodedString() }
+        func response(deviceId: String = deviceId, identityKey: String? = nil,
+                      signed: PreKeyBundleResponse.SignedPreKeyData? = nil,
+                      kyber: PreKeyBundleResponse.SignedPreKeyData? = nil,
+                      oneTime: PreKeyBundleResponse.PreKeyData? = nil) throws -> PreKeyBundleResponse {
+            PreKeyBundleResponse(
+                deviceId: deviceId, registrationId: Int(keys.registrationId),
+                identityKey: identityKey ?? base64(keys.identity.publicKey.serialize()),
+                signedPreKey: try signed ?? .init(keyId: Int(keys.signedPreKey.id), publicKey: base64(keys.signedPreKey.publicKey().serialize()),
+                                                  signature: base64(keys.signedPreKey.signature)),
+                kyberPreKey: try kyber ?? .init(keyId: Int(keys.kyberPreKeys[0].id), publicKey: base64(keys.kyberPreKeys[0].publicKey().serialize()),
+                                                signature: base64(keys.kyberPreKeys[0].signature)),
+                oneTimePreKey: oneTime)
+        }
+        let valid = try response()
+        XCTAssertNil(try XCTUnwrap(Messenger.verifiedBundles([valid]).first).bundle.preKeyId,
+                     "a device out of one-time keys is still reachable through its signed and Kyber keys")
+        let withOneTime = try response(oneTime: .init(keyId: Int(keys.oneTimePreKeys[0].id),
+                                                      publicKey: base64(keys.oneTimePreKeys[0].publicKey().serialize())))
+        XCTAssertEqual(try XCTUnwrap(Messenger.verifiedBundles([withOneTime]).first).bundle.preKeyId, keys.oneTimePreKeys[0].id)
 
-        XCTAssertThrowsError(try Messenger.verifiedBundles([bundleNoOneTime, bundleNoOneTime]))
-        let badIdBundle = PreKeyBundleResponse(
-            deviceId: "not-uuid", registrationId: 1, identityKey: "",
-            signedPreKey: .init(keyId: 1, publicKey: "", signature: ""), oneTimePreKey: nil
-        )
-        XCTAssertThrowsError(try Messenger.verifiedBundles([badIdBundle]))
-        let badBase64Bundle = PreKeyBundleResponse(
-            deviceId: validDeviceId, registrationId: 1, identityKey: "!!!",
-            signedPreKey: .init(keyId: 1, publicKey: "!!!", signature: "!!!"), oneTimePreKey: nil
-        )
-        XCTAssertThrowsError(try Messenger.verifiedBundles([badBase64Bundle]))
-        let badOneTimeBundle = PreKeyBundleResponse(
-            deviceId: validDeviceId,
-            registrationId: Int(keys.registrationId),
-            identityKey: Data(validIdentity.publicKey.serialize()).base64EncodedString(),
-            signedPreKey: .init(
-                keyId: Int(validSigned.id),
-                publicKey: Data(validSigned.publicKey.serialize()).base64EncodedString(),
-                signature: Data(validSigned.signature).base64EncodedString()
-            ),
-            oneTimePreKey: .init(keyId: 1, publicKey: "!!!")
-        )
-        XCTAssertThrowsError(try Messenger.verifiedBundles([badOneTimeBundle]))
+        let kyberPublic = base64(try keys.kyberPreKeys[0].publicKey().serialize())
+        for (label, malformed) in [
+            ("duplicate device", [valid, valid]),
+            ("device id", [try response(deviceId: "not-uuid")]),
+            ("identity base64", [try response(identityKey: "!!!")]),
+            ("identity key", [try response(identityKey: base64(Data([1, 2, 3])))]),
+            ("one-time base64", [try response(oneTime: .init(keyId: 1, publicKey: "!!!"))]),
+            ("one-time id", [try response(oneTime: .init(keyId: -1, publicKey: kyberPublic))]),
+            ("Kyber key", [try response(kyber: .init(keyId: 1, publicKey: base64(Data([8, 1, 2])), signature: base64(Data(count: 64))))]),
+            ("Kyber id", [try response(kyber: .init(keyId: -1, publicKey: kyberPublic, signature: base64(keys.kyberPreKeys[0].signature)))]),
+            ("Kyber signature", [try response(kyber: .init(keyId: 1, publicKey: kyberPublic, signature: base64(Data(count: 64))))]),
+            ("signed signature", [try response(signed: .init(keyId: 1, publicKey: base64(keys.signedPreKey.publicKey().serialize()),
+                                                             signature: base64(Data(count: 64))))]),
+        ] {
+            XCTAssertThrowsError(try Messenger.verifiedBundles(malformed), label) { error in
+                guard case .protocolViolation? = error as? ObscuraError else { return XCTFail("\(label): \(error)") }
+            }
+        }
+    }
+
+    func testABundleWithAForgedKyberKeyIsRefusedAndNothingIsSent() async throws {
+        let mallory = try await server.register(UUID().uuidString.lowercased(), corruptKyber: true)
+        let results = await alice.sender.send(to: mallory.userId, Data([1]))
+        XCTAssertEqual(results.map(\.status), [.rejected])
+        XCTAssertFalse(try await alice.messenger.hasSession(mallory.deviceId))
+        XCTAssertTrue(try await mallory.receive().isEmpty)
     }
 
     func testMessengerAndSenderRejectInvalidUUIDsAndUnspecifiedEncryptedMessage() async throws {

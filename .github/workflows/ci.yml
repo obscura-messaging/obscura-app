@@ -76,7 +76,6 @@ jobs:
               - *app
               - 'ios/**'
               - 'swift/**'
-              - 'scripts/ci-install-rust.sh'
 
   javascript:
     name: JavaScript
@@ -228,24 +227,32 @@ jobs:
       - name: Select Xcode
         uses: ./.github/actions/xcode
 
-      - name: Cache libsignal
-        id: libsignal
-        uses: actions/cache@v6.1.0
-        with:
-          path: swift/vendored/libsignal
-          key: libsignal-${{ hashFiles('swift/LIBSIGNAL_REF') }}-host-macos26
-
+      # The package's dependencies, including libsignal's prebuilt XCFramework.
       - name: Cache SwiftPM
         uses: actions/cache@v6.1.0
         with:
-          path: swift/.build
-          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.xcode-version', 'swift/LIBSIGNAL_REF', 'swift/Package.swift', 'swift/Package.resolved') }}-${{ github.sha }}
+          path: swift/.build/DerivedData/SourcePackages
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.xcode-version', 'swift/Package.swift', 'swift/Package.resolved') }}
           restore-keys: |
-            swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.xcode-version', 'swift/LIBSIGNAL_REF', 'swift/Package.swift', 'swift/Package.resolved') }}-
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-
+
+      # TEMPORARY: checks the hand-edited PreKeyStatus removal against the generator. Remove before merge.
+      - name: Check protobuf bindings
+        continue-on-error: true
+        run: |
+          brew list protobuf >/dev/null 2>&1 || brew install protobuf
+          brew list swift-protobuf >/dev/null 2>&1 || brew install swift-protobuf
+          protoc-gen-swift --version
+          cp swift/Sources/ObscuraKit/Proto/Server/obscura.pb.swift "$RUNNER_TEMP/obscura.pb.swift"
+          swift/scripts/gen-proto.sh
+          diff -u "$RUNNER_TEMP/obscura.pb.swift" swift/Sources/ObscuraKit/Proto/Server/obscura.pb.swift
+          git checkout -- swift/Sources/ObscuraKit/Proto
 
       - name: Resolve server
         id: server-ref
-        run: echo "sha=$(scripts/local-server.sh ref)" >> "$GITHUB_OUTPUT"
+        # TEMPORARY: the kit speaks PQXDH, which needs obscura-server#204.
+        # Back to the default before this merges, together with that PR.
+        run: echo "sha=$(scripts/local-server.sh ref feat/kyber-prekeys)" >> "$GITHUB_OUTPUT"
 
       - name: Cache server
         id: server-bin
@@ -255,15 +262,20 @@ jobs:
           key: obscura-server-${{ steps.server-ref.outputs.sha }}-macos26
 
       - name: Install Rust
-        if: steps.libsignal.outputs.cache-hit != 'true' || steps.server-bin.outputs.cache-hit != 'true'
+        if: steps.server-bin.outputs.cache-hit != 'true'
         run: scripts/ci-install-rust.sh
 
       - name: Install protobuf
-        if: steps.libsignal.outputs.cache-hit != 'true' || steps.server-bin.outputs.cache-hit != 'true'
+        if: steps.server-bin.outputs.cache-hit != 'true'
         run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
 
       - name: Unit tests
         run: just swift-unit
+
+      # TEMPORARY: prints the pins SwiftPM resolved for libsignal, to commit. Remove before merge.
+      - name: Resolved packages
+        if: always()
+        run: git diff swift/Package.resolved || true
 
       # macOS runners have no Docker, so the services run as local processes.
       - name: Install services
@@ -327,24 +339,16 @@ jobs:
       - name: Select Xcode
         uses: ./.github/actions/xcode
 
-      - name: Install Rust
-        run: scripts/ci-install-rust.sh aarch64-apple-ios-sim
-
-      - name: Cache libsignal
-        id: libsignal
-        uses: actions/cache@v6.1.0
-        with:
-          path: swift/vendored/libsignal
-          key: libsignal-${{ hashFiles('swift/LIBSIGNAL_REF') }}-ios-sim-macos26
-
-      - name: Install protobuf
-        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
-
       - name: Install CocoaPods
         run: sudo gem install cocoapods -v 1.17.0 -N
 
       - name: Build app
         run: just ios-build arm64
+
+      # TEMPORARY: prints the pins Xcode resolved for libsignal, to commit. Remove before merge.
+      - name: Resolved packages
+        if: always()
+        run: git diff ios/Obscura.xcworkspace/xcshareddata/swiftpm/Package.resolved || true
 
   # The one check branch protection needs: skipped jobs pass, while a failed
   # or cancelled job (including change detection) fails the gate.

@@ -627,21 +627,51 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(profiles.first { $0.userId == bob.userId }?.displayName, "Bob Name")
     }
 
-    func testReceiveTriggersPreKeyReplenishmentWhenLocalCountIsLow() async throws {
-        try await client.db.write { db in
-            try db.execute(sql: "DELETE FROM signal_prekeys WHERE key_id > 5")
-        }
+    func testAPreKeyMessageMakesTheClientCheckItsSupplyAndRefillTheKindThatIsLow() async throws {
+        server.setPreKeyCounts(PreKeyCounts(oneTime: 9, kyber: 10))
         _ = try await receive(clientMessage {
             $0.timestamp = 6_000
-            $0.directMessage.id = "trigger_replenish"
+            $0.directMessage.id = "prekey_message"
             $0.directMessage.peerUserID = phone.userId
-            $0.directMessage.content = "replenish"
+            $0.directMessage.content = "hi"
         }, from: bob)
-        for _ in 0..<30 {
-            if server.preKeyUploadCount() > 0 { break }
+        for _ in 0..<100 where server.preKeyUploadCount() == 0 {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
-        XCTAssertEqual(server.preKeyUploadCount(), 1)
-        XCTAssertGreaterThanOrEqual(try client.signalStore.preKeyCount(), 50)
+        let uploads = server.preKeyUploadBodies()
+        XCTAssertEqual(uploads.count, 1)
+        XCTAssertEqual(Set(uploads.first?.keys.map { $0 } ?? []), ["oneTimePreKeys"], "only the kind below 10 is refilled")
+        XCTAssertEqual((uploads.first?["oneTimePreKeys"] as? [Any])?.count, Int(PreKeys.batchSize))
+        XCTAssertEqual(server.preKeyCountChecks(), 1)
+        XCTAssertEqual(try client.signalStore.oneTimePreKeyCount(), 2 * Int(PreKeys.batchSize) - 1)
+        try await client.logout()
+    }
+
+    func testANormalMessageDoesNotCheckThePreKeySupply() async throws {
+        await client.setPreKeySyncTiming(checkIntervalMs: 60_000, spacingMs: 0)
+        _ = try await receive(clientMessage {
+            $0.directMessage.id = "first"
+            $0.directMessage.peerUserID = phone.userId
+            $0.directMessage.content = "first"
+        }, from: bob)
+        for _ in 0..<100 where server.preKeyCountChecks() == 0 {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(server.preKeyCountChecks(), 1, "bob's first message is a pre-key message")
+        // Bob's session is acknowledged once phone replies; from then on his messages are normal ones.
+        try await send(clientMessage {
+            $0.directMessage.id = "reply"
+            $0.directMessage.peerUserID = bob.userId
+            $0.directMessage.content = "reply"
+        }, from: phone, to: bob.userId)
+        _ = try await bob.receive()
+        _ = try await receive(clientMessage {
+            $0.directMessage.id = "second"
+            $0.directMessage.peerUserID = phone.userId
+            $0.directMessage.content = "second"
+        }, from: bob)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(server.preKeyCountChecks(), 1)
+        try await client.logout()
     }
 }

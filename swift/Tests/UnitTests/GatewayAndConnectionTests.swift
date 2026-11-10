@@ -139,14 +139,10 @@ final class GatewayAndConnectionTests: XCTestCase {
         let socket = try await GatewaySocket.open(url, logger: logger)
         _ = try await gw.waitForConnection()
 
-        // Send a text frame (ignored), an empty frame (ignored), a preKeyStatus frame, and an envelopeBatch frame.
+        // A text frame, an empty frame and a retired pre_key_status frame (field 12) are ignored; then an envelopeBatch.
         gw.sendText("ignore-text")
         gw.sendBinary(try Obscura_V1_WebSocketFrame().serializedData())
-
-        var statusFrame = Obscura_V1_WebSocketFrame()
-        statusFrame.preKeyStatus.oneTimePreKeyCount = 8
-        statusFrame.preKeyStatus.minThreshold = 20
-        gw.sendBinary(try statusFrame.serializedData())
+        gw.sendBinary(Data([0x62, 0x02, 0x08, 0x03]))
 
         let envId = uuidBytes(UUID().uuidString)!
         var envProto = Obscura_V1_Envelope()
@@ -160,15 +156,8 @@ final class GatewayAndConnectionTests: XCTestCase {
 
         var iterator = socket.events.makeAsyncIterator()
         let firstEvent = try await iterator.next()
-        guard case .preKeyStatus(let count, let threshold)? = firstEvent else {
-            return XCTFail("expected preKeyStatus event, got \(String(describing: firstEvent))")
-        }
-        XCTAssertEqual(count, 8)
-        XCTAssertEqual(threshold, 20)
-
-        let secondEvent = try await iterator.next()
-        guard case .envelope(let env)? = secondEvent else {
-            return XCTFail("expected envelope event, got \(String(describing: secondEvent))")
+        guard case .envelope(let env)? = firstEvent else {
+            return XCTFail("expected envelope event, got \(String(describing: firstEvent))")
         }
         XCTAssertEqual(env.id, envId)
 
@@ -266,7 +255,7 @@ final class GatewayAndConnectionTests: XCTestCase {
         try await client.logout()
     }
 
-    func testGatewayPreKeyStatusTriggersReplenishmentAndLogsFailure() async throws {
+    func testAConnectedClientChecksItsSupplyPeriodicallyAndLogsAFailedSync() async throws {
         let server = FakeObscuraServer()
         defer { server.close() }
         let gw = try FakeGatewayServer()
@@ -281,26 +270,23 @@ final class GatewayAndConnectionTests: XCTestCase {
             userId: phone.userId, deviceId: phone.deviceId, username: "alice"
         ))
 
+        // Bundle fetches used up keys without any message to say so; only the periodic check notices.
+        server.setPreKeyCounts(PreKeyCounts(oneTime: 0, kyber: 3))
+        await client.setPreKeySyncTiming(checkIntervalMs: 100, spacingMs: 0)
         try await client.connect()
         _ = try await gw.waitForConnection()
 
-        var statusFrame = Obscura_V1_WebSocketFrame()
-        statusFrame.preKeyStatus.oneTimePreKeyCount = 3
-        statusFrame.preKeyStatus.minThreshold = 20
-        gw.sendBinary(try statusFrame.serializedData())
-        for _ in 0..<40 {
-            if server.preKeyUploadCount() > 0 { break }
+        for _ in 0..<100 where server.preKeyUploadCount() == 0 {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
-        XCTAssertEqual(server.preKeyUploadCount(), 1)
+        XCTAssertEqual(Set(server.preKeyUploadBodies().first?.keys.map { $0 } ?? []), ["oneTimePreKeys", "kyberPreKeys"])
 
         server.failPreKeyUpload(status: 500)
-        gw.sendBinary(try statusFrame.serializedData())
-        for _ in 0..<40 {
-            if client.getDebugLog().contains(where: { $0.contains("prekey replenish failed") }) { break }
+        server.setPreKeyCounts(PreKeyCounts(oneTime: 0, kyber: 100))
+        for _ in 0..<100 where !client.getDebugLog().contains(where: { $0.contains("prekey sync failed") }) {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
-        XCTAssertTrue(client.getDebugLog().contains { $0.contains("prekey replenish failed") })
+        XCTAssertTrue(client.getDebugLog().contains { $0.contains("prekey sync failed") })
 
         await client.disconnect()
         try await client.logout()

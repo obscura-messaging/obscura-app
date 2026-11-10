@@ -118,23 +118,18 @@ kotlin-integration api="http://localhost:3000":
     @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
     cd kotlin && OBSCURA_TEST_API="{{ api }}" ./gradlew :lib:integrationTest
 
-# Fetch and build the pinned host libsignal FFI.
-[private]
-swift-bootstrap:
-    ./swift/scripts/bootstrap-libsignal.sh host
-
-# Build the Swift package.
-swift-build: swift-bootstrap
+# Build the Swift package for the iOS simulator.
+swift-build:
     cd swift && ./dev.sh build
 
-# Run Swift unit tests.
-swift-unit: swift-bootstrap
-    cd swift && ./dev.sh test --filter UnitTests
+# Run Swift unit tests on an iOS simulator.
+swift-unit:
+    cd swift && ./dev.sh test UnitTests
 
-# Run Swift server-dependent tests against an explicit local endpoint.
-swift-integration api="http://localhost:3000": swift-bootstrap
+# Run Swift server-dependent tests on an iOS simulator against an explicit local endpoint.
+swift-integration api="http://localhost:3000":
     @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
-    cd swift && OBSCURA_TEST_API="{{ api }}" ./dev.sh test --filter ScenarioTests
+    cd swift && OBSCURA_TEST_API="{{ api }}" ./dev.sh test ScenarioTests
 
 # Create or refresh the compile-only Firebase stub when no real config exists.
 android-config:
@@ -173,9 +168,7 @@ ios-clean:
 
 # Prepare all native iOS dependencies.
 [private]
-ios-prepare libsignal_target="ios-sim": ensure-node-modules
-    ./swift/scripts/bootstrap-libsignal.sh {{quote(libsignal_target)}}
-    ./swift/dev.sh prepare
+ios-prepare: ensure-node-modules
     cd ios && pod install
 
 # Build the iOS app for a generic simulator (env: dev or prod). Pass an
@@ -185,7 +178,7 @@ ios-build architecture="" env="dev": (check-env env) ios-prepare
 
 # Archive the iOS device build for App Store Connect / TestFlight (env: dev or
 # prod). The version defaults to package.json's.
-ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="" env="dev": (check-env env) (ios-prepare "ios-device")
+ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="" env="dev": (check-env env) ios-prepare
     #!/usr/bin/env bash
     set -euo pipefail
     version={{quote(version)}}

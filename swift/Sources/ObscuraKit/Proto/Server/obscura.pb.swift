@@ -119,15 +119,6 @@ nonisolated struct Obscura_V1_WebSocketFrame: Sendable {
     set {payload = .ack(newValue)}
   }
 
-  /// Server -> Client: Notification that one-time pre-keys are running low.
-  var preKeyStatus: Obscura_V1_PreKeyStatus {
-    get {
-      if case .preKeyStatus(let v)? = payload {return v}
-      return Obscura_V1_PreKeyStatus()
-    }
-    set {payload = .preKeyStatus(newValue)}
-  }
-
   /// Server -> Client: Batch of messages delivered in a single frame.
   var envelopeBatch: Obscura_V1_EnvelopeBatch {
     get {
@@ -142,8 +133,6 @@ nonisolated struct Obscura_V1_WebSocketFrame: Sendable {
   nonisolated enum OneOf_Payload: Equatable, Sendable {
     /// Client -> Server: Acknowledge receipt of a message and triggers server-side deletion.
     case ack(Obscura_V1_AckMessage)
-    /// Server -> Client: Notification that one-time pre-keys are running low.
-    case preKeyStatus(Obscura_V1_PreKeyStatus)
     /// Server -> Client: Batch of messages delivered in a single frame.
     case envelopeBatch(Obscura_V1_EnvelopeBatch)
 
@@ -160,21 +149,6 @@ nonisolated struct Obscura_V1_AckMessage: Sendable {
 
   /// UUIDs of the messages to acknowledge (16 bytes each).
   var messageIds: [Data] = []
-
-  var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  init() {}
-}
-
-nonisolated struct Obscura_V1_PreKeyStatus: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  var oneTimePreKeyCount: Int32 = 0
-
-  /// The server's configured threshold
-  var minThreshold: Int32 = 0
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -393,7 +367,7 @@ nonisolated extension Obscura_V1_SendMessageResponse.DeviceMismatch: SwiftProtob
 
 nonisolated extension Obscura_V1_WebSocketFrame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".WebSocketFrame"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\u{b}ack\0\u{3}pre_key_status\0\u{3}envelope_batch\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\u{b}ack\0\u{4}\u{2}envelope_batch\0\u{b}pre_key_status\0\u{c}\u{c}\u{1}")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -412,19 +386,6 @@ nonisolated extension Obscura_V1_WebSocketFrame: SwiftProtobuf.Message, SwiftPro
         if let v = v {
           if hadOneofValue {try decoder.handleConflictingOneOf()}
           self.payload = .ack(v)
-        }
-      }()
-      case 12: try {
-        var v: Obscura_V1_PreKeyStatus?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .preKeyStatus(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .preKeyStatus(v)
         }
       }()
       case 13: try {
@@ -454,10 +415,6 @@ nonisolated extension Obscura_V1_WebSocketFrame: SwiftProtobuf.Message, SwiftPro
     case .ack?: try {
       guard case .ack(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
-    }()
-    case .preKeyStatus?: try {
-      guard case .preKeyStatus(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
     }()
     case .envelopeBatch?: try {
       guard case .envelopeBatch(let v)? = self.payload else { preconditionFailure() }
@@ -500,41 +457,6 @@ nonisolated extension Obscura_V1_AckMessage: SwiftProtobuf.Message, SwiftProtobu
 
   static func ==(lhs: Obscura_V1_AckMessage, rhs: Obscura_V1_AckMessage) -> Bool {
     if lhs.messageIds != rhs.messageIds {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Obscura_V1_PreKeyStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  static let protoMessageName: String = _protobuf_package + ".PreKeyStatus"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}one_time_pre_key_count\0\u{3}min_threshold\0")
-
-  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularInt32Field(value: &self.oneTimePreKeyCount) }()
-      case 2: try { try decoder.decodeSingularInt32Field(value: &self.minThreshold) }()
-      default: break
-      }
-    }
-  }
-
-  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.oneTimePreKeyCount != 0 {
-      try visitor.visitSingularInt32Field(value: self.oneTimePreKeyCount, fieldNumber: 1)
-    }
-    if self.minThreshold != 0 {
-      try visitor.visitSingularInt32Field(value: self.minThreshold, fieldNumber: 2)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  static func ==(lhs: Obscura_V1_PreKeyStatus, rhs: Obscura_V1_PreKeyStatus) -> Bool {
-    if lhs.oneTimePreKeyCount != rhs.oneTimePreKeyCount {return false}
-    if lhs.minThreshold != rhs.minThreshold {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

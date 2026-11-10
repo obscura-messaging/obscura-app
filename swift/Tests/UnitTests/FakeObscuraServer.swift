@@ -11,7 +11,8 @@ import LibSignalClient
 /// submissions are all rejected with a `device_mismatches` entry unless they cover the user's devices
 /// other than the sender, and
 /// a submission for an unknown device is reported in `invalid_device_ids`. Refresh
-/// tokens are rejected unless ``acceptRefresh(token:refreshToken:)`` says otherwise.
+/// tokens are rejected unless ``acceptRefresh(token:refreshToken:)`` says otherwise. `GET /v1/keys`
+/// reports ``preKeyCounts``, plenty by default, and `POST /v1/keys` records each upload.
 ///
 /// Served through ``FakeServerProtocol`` for requests to ``host``; one server is active at a time.
 final class FakeObscuraServer: @unchecked Sendable {
@@ -38,8 +39,10 @@ final class FakeObscuraServer: @unchecked Sendable {
     private var refreshed: [String: Any]?
     private var offline = false
     private var totalRequests = 0
-    private var preKeyUploads = 0
+    private var preKeyUploads: [[String: Any]] = []
     private var preKeyStatus = 204
+    private var counts = PreKeyCounts(oneTime: 100, kyber: 100)
+    private var countChecks = 0
     private var pushTokens: [String] = []
     private var customDevicesResponse: [[String: Any]]?
     private var gatewayTicket: String?
@@ -55,7 +58,12 @@ final class FakeObscuraServer: @unchecked Sendable {
     func resetRequestCount() { lock.withLock { totalRequests = 0 } }
     fileprivate func recordRequest() { lock.withLock { totalRequests += 1 } }
     func setGatewayTicket(_ ticket: String?) { lock.withLock { gatewayTicket = ticket } }
-    func preKeyUploadCount() -> Int { lock.withLock { preKeyUploads } }
+    func preKeyUploadCount() -> Int { lock.withLock { preKeyUploads.count } }
+    /// The JSON body of each `POST /v1/keys`, in order.
+    func preKeyUploadBodies() -> [[String: Any]] { lock.withLock { preKeyUploads } }
+    /// What `GET /v1/keys` reports.
+    func setPreKeyCounts(_ value: PreKeyCounts) { lock.withLock { counts = value } }
+    func preKeyCountChecks() -> Int { lock.withLock { countChecks } }
     func registeredPushTokens() -> [String] { lock.withLock { pushTokens } }
     /// Answers the next `count` token-authenticated requests with 401.
     func rejectTokens(_ count: Int) { lock.withLock { tokenRejections = count } }
@@ -103,10 +111,12 @@ final class FakeObscuraServer: @unchecked Sendable {
     /// A new device of `userId`: the primary with a new identity for a new user, otherwise a linked
     /// device holding the account identity.
     /// `rogueIdentity` gives a device of an existing user an identity other than the account's.
-    func register(_ userId: String, corruptBundle: Bool = false, rogueIdentity: Bool = false) async throws -> FakeDevice {
+    /// `corruptBundle` and `corruptKyber` zero the signature on its signed or Kyber prekey.
+    func register(_ userId: String, corruptBundle: Bool = false, corruptKyber: Bool = false,
+                  rogueIdentity: Bool = false) async throws -> FakeDevice {
         let primary = lock.withLock { devices.values.first { $0.userId == userId && $0.isPrimary } }
         let device = try await FakeDevice(userId: userId, primary: primary, corruptBundle: corruptBundle,
-                                          rogueIdentity: rogueIdentity)
+                                          corruptKyber: corruptKyber, rogueIdentity: rogueIdentity)
         lock.withLock {
             devices[device.deviceId] = device
             order.append(device.deviceId)
@@ -181,8 +191,14 @@ final class FakeObscuraServer: @unchecked Sendable {
         if request.httpMethod == "POST", path == "/v1/keys" {
             return lock.withLock {
                 guard preKeyStatus == 204 else { return (preKeyStatus, Data("prekey upload failed".utf8)) }
-                preKeyUploads += 1
+                preKeyUploads.append((try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:])
                 return (204, Data())
+            }
+        }
+        if request.httpMethod == "GET", path == "/v1/keys" {
+            return lock.withLock {
+                countChecks += 1
+                return (200, Data(#"{"oneTimePreKeyCount":\#(counts.oneTime),"kyberPreKeyCount":\#(counts.kyber)}"#.utf8))
             }
         }
         if request.httpMethod == "PUT", path == "/v1/push-token" {
@@ -457,13 +473,18 @@ final class FakeDevice: @unchecked Sendable {
     let logger = RecordingLogger(SilentLogger())
     fileprivate var mailbox: [(senderUserId: String, senderDeviceId: String, message: Data)] = []
     private var unusedPreKeys: [PreKeyRecord] = []
+    private var unusedKyberPreKeys: [KyberPreKeyRecord] = []
+    private let signedPreKey: SignedPreKeyRecord
+    private let lastResortKyberPreKey: KyberPreKeyRecord
     private let corruptBundle: Bool
+    private let corruptKyber: Bool
 
     var isPrimary: Bool { deviceId == primaryDeviceId }
 
-    init(userId: String, primary: FakeDevice?, corruptBundle: Bool, rogueIdentity: Bool) async throws {
+    init(userId: String, primary: FakeDevice?, corruptBundle: Bool, corruptKyber: Bool, rogueIdentity: Bool) async throws {
         self.userId = userId
         self.corruptBundle = corruptBundle
+        self.corruptKyber = corruptKyber
         primaryDeviceId = primary?.deviceId ?? deviceId
         db = try ObscuraDatabase.inMemory()
         store = PersistentSignalStore(db: db, logger: logger)
@@ -473,8 +494,11 @@ final class FakeDevice: @unchecked Sendable {
         sender = MessageSender(messenger: messenger, devices: directory, api: api, logger: logger, selfDeviceId: deviceId)
         let identity = try primary.flatMap { rogueIdentity ? nil : try $0.store.identityKeyPair(context: NullContext()) }
             ?? IdentityKeyPair.generate()
-        let keys = try SignalKeys.generate(identity: identity)
-        unusedPreKeys = keys.preKeys
+        let keys = try PreKeys.generateProvisioningKeys(identity: identity, nowMs: testNowMs())
+        unusedPreKeys = keys.oneTimePreKeys
+        unusedKyberPreKeys = keys.kyberPreKeys
+        signedPreKey = keys.signedPreKey
+        lastResortKyberPreKey = keys.lastResortKyberPreKey
         try await db.write { [deviceId, primaryDeviceId] db in
             try PersistentSignalStore.install(keys, in: db)
             try DeviceStore.setLocalDevice(deviceId, primaryDeviceId: primaryDeviceId, in: db)
@@ -489,20 +513,29 @@ final class FakeDevice: @unchecked Sendable {
         try db.write { db in try db.execute(sql: "DELETE FROM signal_sessions") }
     }
 
+    var remainingKyberPreKeys: Int { unusedKyberPreKeys.count }
+
+    /// Serves a one-time Kyber key while any remain, then the last-resort key, as the server does.
     fileprivate func consumeBundle() -> [String: Any] {
-        let signed = try! store.loadSignedPreKey(id: 1, context: NullContext())
+        let signed = signedPreKey
         let oneTime: Any = unusedPreKeys.isEmpty ? NSNull() : {
             let key = unusedPreKeys.removeFirst()
-            return ["keyId": key.id, "publicKey": Data(key.publicKey.serialize()).base64EncodedString()]
+            return ["keyId": key.id, "publicKey": Data(try! key.publicKey().serialize()).base64EncodedString()]
         }()
+        let kyber = unusedKyberPreKeys.isEmpty ? lastResortKyberPreKey : unusedKyberPreKeys.removeFirst()
         return [
             "deviceId": deviceId,
             "registrationId": try! store.localRegistrationId(context: NullContext()),
             "identityKey": Data(try! store.identityKeyPair(context: NullContext()).publicKey.serialize()).base64EncodedString(),
             "signedPreKey": [
-                "keyId": 1,
-                "publicKey": Data(signed.publicKey.serialize()).base64EncodedString(),
-                "signature": Data(corruptBundle ? [UInt8](repeating: 0, count: 64) : signed.signature).base64EncodedString(),
+                "keyId": signed.id,
+                "publicKey": Data(try! signed.publicKey().serialize()).base64EncodedString(),
+                "signature": Data(corruptBundle ? [UInt8](repeating: 0, count: 64) : Array(signed.signature)).base64EncodedString(),
+            ],
+            "kyberPreKey": [
+                "keyId": kyber.id,
+                "publicKey": Data(try! kyber.publicKey().serialize()).base64EncodedString(),
+                "signature": Data(corruptKyber ? [UInt8](repeating: 0, count: 64) : Array(kyber.signature)).base64EncodedString(),
             ],
             "oneTimePreKey": oneTime,
         ]

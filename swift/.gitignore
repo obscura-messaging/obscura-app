@@ -9,13 +9,6 @@ DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
 
-# Vendored libsignal (cloned at build time, not checked in)
-vendored/libsignal
-vendored/LibSignalClient
-
-# Rust build artifacts (if building libsignal locally)
-target/
-
 # Environment
 .env
 *.pem
