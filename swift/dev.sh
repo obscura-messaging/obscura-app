@@ -37,7 +37,8 @@ xcodebuild_kit() {
 }
 
 # Lines and regions of Sources/ObscuraKit outside the generated protobuf code, from the
-# simulator run's profile; fails below 95% of lines or 90% of regions.
+# simulator run's profile; fails below 95% of lines or 90% of regions. DatabaseSecret is left out:
+# its Keychain calls need a host app's entitlement, which package tests on a simulator lack.
 coverage() {
   local profdata bundle binary
   profdata="$(find "$DERIVED/Build/ProfileData" -name Coverage.profdata -print -quit)"
@@ -47,7 +48,7 @@ coverage() {
     exit 1
   fi
   binary="$bundle/$(basename "$bundle" .xctest)"
-  local args=("$binary" -instr-profile="$profdata" --ignore-filename-regex='.build|Tests|Sources/ObscuraKit/Proto' Sources/ObscuraKit)
+  local args=("$binary" -instr-profile="$profdata" --ignore-filename-regex='.build|Tests|Sources/ObscuraKit/Proto|Crypto/DatabaseSecret.swift' Sources/ObscuraKit)
   xcrun llvm-cov report "${args[@]}" | tee "$REPORTS/coverage.txt"
   local summary lines regions
   summary="$(xcrun llvm-cov export -summary-only "${args[@]}")"
