@@ -135,9 +135,7 @@ jobs:
 
       - name: Resolve server
         id: server-ref
-        # TEMPORARY: the kit speaks PQXDH, which needs obscura-server#204.
-        # Back to the default before this merges, together with that PR.
-        run: echo "sha=$(scripts/local-server.sh ref feat/kyber-prekeys)" >> "$GITHUB_OUTPUT"
+        run: echo "sha=$(scripts/local-server.sh ref)" >> "$GITHUB_OUTPUT"
 
       - name: Cache server
         id: server-bin
