@@ -8,7 +8,12 @@ cd "$ROOT"
 
 DERIVED="$ROOT/.build/DerivedData"
 REPORTS="$ROOT/.build/reports"
-SCHEME="ObscuraKit-Package"
+# Xcode names a package's scheme after its single product, or adds "<name>-Package" for several.
+scheme() {
+  xcodebuild -list -json | python3 -c 'import json, sys
+schemes = json.load(sys.stdin)["workspace"]["schemes"]
+print("ObscuraKit-Package" if "ObscuraKit-Package" in schemes else "ObscuraKit")'
+}
 
 # The newest available iPhone simulator.
 simulator() {
@@ -28,7 +33,7 @@ for runtime in sorted(runtimes, reverse=True):
 }
 
 xcodebuild_kit() {
-  xcodebuild -scheme "$SCHEME" -derivedDataPath "$DERIVED" -skipPackagePluginValidation "$@"
+  xcodebuild -scheme "$(scheme)" -derivedDataPath "$DERIVED" -skipPackagePluginValidation "$@"
 }
 
 # Lines and regions of Sources/ObscuraKit outside the generated protobuf code, from the

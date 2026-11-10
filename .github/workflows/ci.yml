@@ -236,18 +236,6 @@ jobs:
           restore-keys: |
             swiftpm-${{ runner.os }}-${{ runner.arch }}-
 
-      # TEMPORARY: checks the hand-edited PreKeyStatus removal against the generator. Remove before merge.
-      - name: Check protobuf bindings
-        continue-on-error: true
-        run: |
-          brew list protobuf >/dev/null 2>&1 || brew install protobuf
-          brew list swift-protobuf >/dev/null 2>&1 || brew install swift-protobuf
-          protoc-gen-swift --version
-          cp swift/Sources/ObscuraKit/Proto/Server/obscura.pb.swift "$RUNNER_TEMP/obscura.pb.swift"
-          swift/scripts/gen-proto.sh
-          diff -u "$RUNNER_TEMP/obscura.pb.swift" swift/Sources/ObscuraKit/Proto/Server/obscura.pb.swift
-          git checkout -- swift/Sources/ObscuraKit/Proto
-
       - name: Resolve server
         id: server-ref
         # TEMPORARY: the kit speaks PQXDH, which needs obscura-server#204.
@@ -271,11 +259,6 @@ jobs:
 
       - name: Unit tests
         run: just swift-unit
-
-      # TEMPORARY: prints the pins SwiftPM resolved for libsignal, to commit. Remove before merge.
-      - name: Resolved packages
-        if: always()
-        run: git diff swift/Package.resolved || true
 
       # macOS runners have no Docker, so the services run as local processes.
       - name: Install services
@@ -344,11 +327,6 @@ jobs:
 
       - name: Build app
         run: just ios-build arm64
-
-      # TEMPORARY: prints the pins Xcode resolved for libsignal, to commit. Remove before merge.
-      - name: Resolved packages
-        if: always()
-        run: git diff ios/Obscura.xcworkspace/xcshareddata/swiftpm/Package.resolved || true
 
   # The one check branch protection needs: skipped jobs pass, while a failed
   # or cancelled job (including change detection) fails the gate.
