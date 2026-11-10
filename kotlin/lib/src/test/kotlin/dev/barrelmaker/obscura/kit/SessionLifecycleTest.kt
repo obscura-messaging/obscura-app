@@ -471,6 +471,27 @@ class SessionLifecycleTest {
         Unit
     }
 
+    @Test fun `a connected client checks its supply periodically and refills keys used up by bundle fetches`() = runBlocking {
+        val (c, _) = provisionedClient(provisionedAt = 0L, now = 0L)
+        c.preKeyCheckIntervalMs = 100
+        route(
+            "POST /v1/gateway/ticket" to { MockResponse.Builder().body("""{"ticket":"t"}""").build() },
+            "GET /v1/gateway" to { socketSending() },
+            "GET /v1/keys" to { counts(oneTime = 0, kyber = 50) },
+            "POST /v1/keys" to { MockResponse.Builder().code(200).build() },
+        )
+
+        c.connect()
+
+        val paths = (1..4).map { server.takeRequest(5, TimeUnit.SECONDS)!!.let { r -> r to "${r.method} ${r.url.encodedPath}" } }
+        assertEquals(setOf("POST /v1/gateway/ticket", "GET /v1/gateway", "GET /v1/keys", "POST /v1/keys"), paths.map { it.second }.toSet())
+        assertEquals(setOf("oneTimePreKeys"), JSONObject(paths.single { it.second == "POST /v1/keys" }.first.body!!.utf8()).keySet())
+
+        c.disconnect()
+        c.auth.end()
+        Unit
+    }
+
     @Test fun `logout cancels a pre-key sync in flight`() = runBlocking {
         val (c, _) = provisionedClient(provisionedAt = 0L, now = PreKeys.REFRESH_INTERVAL_MS)
         route(

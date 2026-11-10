@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS SignalLastResortKeyUse (
 );
 
 -- Which keys this device has published, the next id of each kind, and when it last rotated and
--- synced them, like Signal-Android's PreKeyMetadataStore. Ids wrap at Medium.MAX_VALUE.
+-- synced them, like Signal-Android's PreKeyMetadataStore. Ids wrap at Medium.MAX_VALUE. The
+-- pending columns name keys stored for an upload the server has not yet accepted: the signed and
+-- last-resort key ids, and the first id of each one-time batch.
 CREATE TABLE IF NOT EXISTS SignalPreKeyState (
     id INTEGER NOT NULL PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     next_signed_id INTEGER NOT NULL,
@@ -52,7 +54,11 @@ CREATE TABLE IF NOT EXISTS SignalPreKeyState (
     active_last_resort_id INTEGER,
     signed_rotated_at INTEGER NOT NULL DEFAULT 0,
     last_resort_rotated_at INTEGER NOT NULL DEFAULT 0,
-    synced_at INTEGER NOT NULL DEFAULT 0
+    synced_at INTEGER NOT NULL DEFAULT 0,
+    pending_signed_id INTEGER,
+    pending_last_resort_id INTEGER,
+    pending_one_time_start INTEGER,
+    pending_kyber_start INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS SignalSession (
@@ -173,8 +179,9 @@ SELECT * FROM SignalPreKeyState WHERE id = 1;
 insertPreKeyState:
 INSERT OR REPLACE INTO SignalPreKeyState(
     id, next_signed_id, next_one_time_id, next_kyber_id, active_signed_id, active_last_resort_id,
-    signed_rotated_at, last_resort_rotated_at, synced_at
-) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?);
+    signed_rotated_at, last_resort_rotated_at, synced_at,
+    pending_signed_id, pending_last_resort_id, pending_one_time_start, pending_kyber_start
+) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 deletePreKeyState:
 DELETE FROM SignalPreKeyState;

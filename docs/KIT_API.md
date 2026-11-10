@@ -215,9 +215,13 @@ acknowledged without another wake-up.
 and serves them. A sync asks the server how many one-time prekeys of each kind
 it holds for this device (`GET /v1/keys`), uploads a batch of 100 of any kind
 below 10, rotates the signed and last-resort Kyber prekeys once they are 2 days
-old, and uploads it all in one `POST /v1/keys`. It runs after every prekey
-message this device receives, and on connect when the last sync is 2 days old;
-syncs run one at a time and failures are logged. Ids start at a random point
+old, and uploads it all in one `POST /v1/keys`. It runs after a prekey
+message this device receives, on connect when the last sync is 2 days old, and
+every 6 hours while signed in, because bundle fetches use keys up without any
+message to say so. Syncs run one at a time, at least 30 seconds apart, so a
+backlog of prekey messages costs one or two checks; failures are logged. Keys
+stored for an upload that failed are uploaded again by the next sync rather
+than replaced, so an unreachable server doesn't pile up keys. Ids start at a random point
 and wrap at 2^24 - 1; one-time and last-resort Kyber prekeys share one counter.
 Replaced keys stay for messages in flight: one-time keys for 90 days (keeping at
 least 200 of each kind), signed and last-resort keys for 30 days, the server's

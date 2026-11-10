@@ -155,6 +155,43 @@ class PreKeysTest {
     }
 
     @Test
+    fun `after a failed upload the next sync uploads the same keys instead of storing more`() {
+        provisioned(nowMs = 0)
+        val now = PreKeys.REFRESH_INTERVAL_MS
+        val low = PreKeyCounts(oneTime = 0, kyber = 0)
+        val first = PreKeys.prepareRefill(store, low, now)
+        val stored = { Triple(store.loadSignedPreKeys().size, db.signalKeyQueries.countPreKeys().executeAsOne(), store.loadKyberPreKeys().size) }
+        val afterFirst = stored()
+
+        // The upload failed, so nothing was confirmed; each retry must not add keys.
+        repeat(3) {
+            val retry = PreKeys.prepareRefill(store, low, now + it)
+            assertEquals(first.signedPreKey!!.id, retry.signedPreKey!!.id)
+            assertEquals(first.lastResortKyberPreKey!!.id, retry.lastResortKyberPreKey!!.id)
+            assertEquals(first.oneTimePreKeys.map { it.id }, retry.oneTimePreKeys.map { it.id })
+            assertEquals(first.kyberPreKeys.map { it.id }, retry.kyberPreKeys.map { it.id })
+        }
+        assertEquals(afterFirst, stored())
+
+        PreKeys.confirmRefill(store, first, now)
+        assertEquals(listOf(null, null, null, null), state().let {
+            listOf(it.pending_signed_id, it.pending_last_resort_id, it.pending_one_time_start, it.pending_kyber_start)
+        })
+        assertTrue(PreKeys.prepareRefill(store, plenty, now).isEmpty)
+    }
+
+    @Test
+    fun `a pending batch the server no longer needs is dropped, and a later refill generates new keys`() {
+        provisioned()
+        val pending = PreKeys.prepareRefill(store, PreKeyCounts(oneTime = 0, kyber = PreKeys.BATCH_SIZE), nowMs = day)
+        assertTrue(PreKeys.prepareRefill(store, plenty, nowMs = day).isEmpty, "counts recovered: the batch reached the server")
+        assertNull(state().pending_one_time_start)
+
+        val next = PreKeys.prepareRefill(store, PreKeyCounts(oneTime = 0, kyber = PreKeys.BATCH_SIZE), nowMs = 2 * day)
+        assertEquals(pending.oneTimePreKeys.last().id + 1, next.oneTimePreKeys.first().id)
+    }
+
+    @Test
     fun `a clock set back rotates rather than waiting for it to catch up`() {
         provisioned(nowMs = 10 * day)
 
@@ -196,8 +233,11 @@ class PreKeysTest {
     @Test
     fun `stale one-time keys go after 90 days, keeping at least 200`() {
         val keys = provisioned(nowMs = 0)
-        repeat(3) { PreKeys.prepareRefill(store, PreKeyCounts(0, 0), nowMs = day) }
-        // 400 EC keys: the provisioned batch and two refills are stale since day 1, the last batch is fresh.
+        repeat(3) {
+            val refill = PreKeys.prepareRefill(store, PreKeyCounts(0, 0), nowMs = day)
+            PreKeys.confirmRefill(store, refill, nowMs = day)
+        }
+        // 400 EC keys: the provisioned batch and two uploaded refills are stale since day 1, the last batch is fresh.
 
         store.cleanPreKeys(day + 90 * day - 1)
         assertTrue(store.containsPreKey(keys.oneTimePreKeys.first().id), "not yet stale for 90 days")

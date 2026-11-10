@@ -126,9 +126,11 @@ class SubmissionResultsTest {
         // A device out of one-time keys is still reachable through its signed and Kyber keys.
         val noOtp = parsePeerBundle(keys.bundle(userId).put("oneTimePreKey", org.json.JSONObject.NULL))
         assertNull(noOtp.bundle.preKey)
-        assertThrows(org.json.JSONException::class.java) {
-            parsePeerBundle(keys.bundle(userId).apply { remove("kyberPreKey") })
-        }
+        // A bundle without a Kyber key, or with one that doesn't decode, is a typed protocol violation.
+        for (broken in listOf(
+            keys.bundle(userId).apply { remove("kyberPreKey") },
+            keys.bundle(userId).apply { getJSONObject("kyberPreKey").put("publicKey", "AAAA") },
+        )) assertThrows(dev.barrelmaker.obscura.kit.ObscuraError.ProtocolViolation::class.java) { parsePeerBundle(broken) }
         val validBundleJson = keys.bundle(userId)
         val parsed = parsePeerBundle(validBundleJson)
         assertEquals(userId, parsed.deviceId)

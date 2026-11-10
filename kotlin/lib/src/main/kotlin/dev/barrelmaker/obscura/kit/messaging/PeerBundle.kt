@@ -19,7 +19,16 @@ internal fun parsePeerBundles(json: JSONArray): List<PeerBundle> =
         if (bundles.map { it.deviceId }.distinct().size != bundles.size) throw ObscuraError.ProtocolViolation("Duplicate device in bundles")
     }
 
-internal fun parsePeerBundle(b: JSONObject): PeerBundle {
+/** A field missing or malformed, or a key that doesn't decode, is the server breaking the protocol. */
+internal fun parsePeerBundle(b: JSONObject): PeerBundle = try {
+    decodePeerBundle(b)
+} catch (e: org.json.JSONException) {
+    throw ObscuraError.ProtocolViolation("Malformed bundle: ${e.message}", e)
+} catch (e: org.signal.libsignal.protocol.InvalidKeyException) {
+    throw ObscuraError.ProtocolViolation("Invalid key in bundle: ${e.message}", e)
+}
+
+private fun decodePeerBundle(b: JSONObject): PeerBundle {
     val spk = b.getJSONObject("signedPreKey")
     val kyber = b.getJSONObject("kyberPreKey")
     val otp = b.optJSONObject("oneTimePreKey")

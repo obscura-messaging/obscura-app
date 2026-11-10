@@ -98,16 +98,18 @@ internal class Messenger(
      * first in the same transaction: it teaches the directory the stamped sender, which identity
      * checks during decrypt resolve through and which a failed decrypt rolls back.
      */
-    suspend fun <T> decryptAndCommit(senderDeviceId: String, message: ByteString, record: () -> Unit, persist: (ByteArray) -> T): T =
+    suspend fun <T> decryptAndCommit(senderDeviceId: String, encrypted: EncryptedMessage, record: () -> Unit, persist: (ByteArray) -> T): T =
         withContext(dispatcher) {
             signalStore.transaction {
                 record()
-                persist(decryptOnDispatcher(senderDeviceId, message))
+                persist(decryptOnDispatcher(senderDeviceId, encrypted))
             }
         }
 
-    private fun decryptOnDispatcher(senderDeviceId: String, message: ByteString): ByteArray {
-        val encrypted = EncryptedMessage.parseFrom(message)
+    suspend fun <T> decryptAndCommit(senderDeviceId: String, message: ByteString, record: () -> Unit, persist: (ByteArray) -> T): T =
+        decryptAndCommit(senderDeviceId, EncryptedMessage.parseFrom(message), record, persist)
+
+    private fun decryptOnDispatcher(senderDeviceId: String, encrypted: EncryptedMessage): ByteArray {
         val content = encrypted.content.toByteArray()
         val cipher = SessionCipher(signalStore, localAddress(), addressFor(senderDeviceId))
         return if (encrypted.type == EncryptedMessage.Type.TYPE_PREKEY_MESSAGE) cipher.decrypt(PreKeySignalMessage(content))
@@ -117,13 +119,6 @@ internal class Messenger(
     private fun localAddress() = addressFor(checkNotNull(localDeviceId()) { "No local device" })
 
     companion object {
-        /** Whether [message] starts a session, which uses up one of this device's pre-keys. */
-        fun isPreKeyMessage(message: ByteString): Boolean = try {
-            EncryptedMessage.parseFrom(message).type == EncryptedMessage.Type.TYPE_PREKEY_MESSAGE
-        } catch (e: com.google.protobuf.InvalidProtocolBufferException) {
-            false
-        }
-
         /** Send and receive must build the same address or a session splits in two. */
         fun addressFor(deviceUuid: String) = SignalProtocolAddress(deviceUuid, 1)
     }

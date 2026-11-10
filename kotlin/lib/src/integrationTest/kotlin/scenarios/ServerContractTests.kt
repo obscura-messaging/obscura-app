@@ -72,6 +72,7 @@ class ServerContractTests {
             val state = receiver.signalStore.preKeyState()!!
             val longAgo = System.currentTimeMillis() - PreKeys.REFRESH_INTERVAL_MS - 1
             receiver.signalStore.savePreKeyState(state.copy(synced_at = longAgo, signed_rotated_at = longAgo, last_resort_rotated_at = longAgo))
+            receiver.preKeySyncSpacingMs = 0 // the refill below follows this sync within seconds
             receiver.connect()
             eventually(message = "rotated signed pre-key is active") {
                 receiver.signalStore.preKeyState()!!.active_signed_id != originalSignedId.toLong()

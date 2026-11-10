@@ -59,6 +59,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import com.google.protobuf.InvalidProtocolBufferException
 import obscura.client.v1.Client.ClientMessage
+import obscura.client.v1.Client.EncryptedMessage
 import obscura.client.v1.Client.FriendListSync
 import obscura.client.v1.Client.LinkBundle
 import obscura.client.v1.Client.LinkCode
@@ -364,6 +365,7 @@ class ObscuraClient(
     suspend fun connect() {
         auth.requireCredentials()
         startReceiving()
+        startPreKeySync()
         if (PreKeys.isSyncDue(signalStore, clock())) requestPreKeySync()
         gateway.connect()
         log("CONNECTED")
@@ -381,11 +383,32 @@ class ObscuraClient(
     /** Conflated, so requests made while a sync runs collapse into one more sync after it. */
     private val preKeySyncRequests = Channel<Unit>(Channel.CONFLATED)
 
-    /** Syncs run one at a time on their own job, which the session's end cancels. */
-    private fun requestPreKeySync() = synchronized(this) {
-        if (auth.credentials == null) return
-        preKeySyncRequests.trySend(Unit)
-        if (preKeySyncJob?.isActive != true) preKeySyncJob = scope.launch { for (request in preKeySyncRequests) syncPreKeys() }
+    /** How often a signed-in client checks its supply anyway: peers fetching bundles use keys up without messaging. */
+    internal var preKeyCheckIntervalMs = PreKeys.CHECK_INTERVAL_MS
+
+    /** The least time between syncs, so a backlog of pre-key messages costs one or two checks rather than one each. */
+    internal var preKeySyncSpacingMs = PreKeys.SYNC_SPACING_MS
+
+    private fun requestPreKeySync() {
+        if (startPreKeySync()) preKeySyncRequests.trySend(Unit)
+    }
+
+    /** Syncs run one at a time on their own job, which the session's end cancels. False when signed out. */
+    private fun startPreKeySync(): Boolean = synchronized(this) {
+        if (auth.credentials == null) return false
+        if (preKeySyncJob?.isActive != true) preKeySyncJob = scope.launch {
+            launch {
+                while (true) {
+                    delay(preKeyCheckIntervalMs)
+                    preKeySyncRequests.trySend(Unit)
+                }
+            }
+            for (request in preKeySyncRequests) {
+                syncPreKeys()
+                delay(preKeySyncSpacingMs)
+            }
+        }
+        true
     }
     private val processedEnvelopes = MutableStateFlow(0L)
     @Volatile private var lastProcessedAtMs = 0L
@@ -416,9 +439,16 @@ class ObscuraClient(
             logger.databaseError("content", "containsEnvelope", e.reason())
             return
         }
+        val encrypted = try {
+            EncryptedMessage.parseFrom(envelope.message)
+        } catch (e: com.google.protobuf.InvalidProtocolBufferException) {
+            log("RECV decrypt failed from $senderUserId: ${e.message}")
+            logger.decryptFailed(senderUserId, e.reason())
+            return
+        }
         var stage = "directory"
         val stored = try {
-            messenger.decryptAndCommit(senderDeviceId, envelope.message, record = {
+            messenger.decryptAndCommit(senderDeviceId, encrypted, record = {
                 devices.addInTransaction(senderUserId, senderDeviceId)
                 stage = "decrypt"
             }) { plaintext ->
@@ -464,7 +494,7 @@ class ObscuraClient(
             }
         }
         // As Signal-Android does after a pre-key message: the sender used up one of this device's keys.
-        if (Messenger.isPreKeyMessage(envelope.message)) requestPreKeySync()
+        if (encrypted.type == EncryptedMessage.Type.TYPE_PREKEY_MESSAGE) requestPreKeySync()
         acknowledge(envelope.id, envelopeId, ack)
     }
 

@@ -180,7 +180,16 @@ internal class SignalStore(private val db: ObscuraDatabase) : SignalProtocolStor
     fun savePreKeyState(state: SignalPreKeyState) = queries.insertPreKeyState(
         state.next_signed_id, state.next_one_time_id, state.next_kyber_id, state.active_signed_id,
         state.active_last_resort_id, state.signed_rotated_at, state.last_resort_rotated_at, state.synced_at,
+        state.pending_signed_id, state.pending_last_resort_id, state.pending_one_time_start, state.pending_kyber_start,
     )
+
+    fun findPreKey(id: Int): PreKeyRecord? = queries.selectPreKey(id.toLong()).executeAsOneOrNull()?.let(::PreKeyRecord)
+
+    fun findSignedPreKey(id: Int): SignedPreKeyRecord? =
+        queries.selectSignedPreKey(id.toLong()).executeAsOneOrNull()?.let(::SignedPreKeyRecord)
+
+    fun findKyberPreKey(id: Int): KyberPreKeyRecord? =
+        queries.selectKyberPreKey(id.toLong()).executeAsOneOrNull()?.let(::KyberPreKeyRecord)
 
     /** The one-time EC keys stored so far, about to be replaced on the server by a new batch. */
     fun markOneTimeEcPreKeysStale(nowMs: Long) = queries.markPreKeysStale(nowMs)
