@@ -106,9 +106,6 @@ internal class Messenger(
             }
         }
 
-    suspend fun <T> decryptAndCommit(senderDeviceId: String, message: ByteString, record: () -> Unit, persist: (ByteArray) -> T): T =
-        decryptAndCommit(senderDeviceId, EncryptedMessage.parseFrom(message), record, persist)
-
     private fun decryptOnDispatcher(senderDeviceId: String, encrypted: EncryptedMessage): ByteArray {
         val content = encrypted.content.toByteArray()
         val cipher = SessionCipher(signalStore, localAddress(), addressFor(senderDeviceId))
