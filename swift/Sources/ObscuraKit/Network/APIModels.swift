@@ -43,7 +43,7 @@ struct PreKeysUpload: Encodable, Equatable {
 }
 
 /// `GET /v1/keys`: how many one-time pre-keys of each kind the server still holds for this device.
-struct PreKeyCounts: Decodable, Equatable, Sendable {
+struct OneTimePreKeyCounts: Decodable, Equatable, Sendable {
     let oneTime: Int
     let kyber: Int
 

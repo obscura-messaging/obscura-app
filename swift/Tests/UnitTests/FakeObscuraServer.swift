@@ -41,7 +41,7 @@ final class FakeObscuraServer: @unchecked Sendable {
     private var totalRequests = 0
     private var preKeyUploads: [[String: Any]] = []
     private var preKeyStatus = 204
-    private var counts = PreKeyCounts(oneTime: 100, kyber: 100)
+    private var counts = OneTimePreKeyCounts(oneTime: 100, kyber: 100)
     private var countChecks = 0
     private var pushTokens: [String] = []
     private var customDevicesResponse: [[String: Any]]?
@@ -62,7 +62,7 @@ final class FakeObscuraServer: @unchecked Sendable {
     /// The JSON body of each `POST /v1/keys`, in order.
     func preKeyUploadBodies() -> [[String: Any]] { lock.withLock { preKeyUploads } }
     /// What `GET /v1/keys` reports.
-    func setPreKeyCounts(_ value: PreKeyCounts) { lock.withLock { counts = value } }
+    func setPreKeyCounts(_ value: OneTimePreKeyCounts) { lock.withLock { counts = value } }
     func preKeyCountChecks() -> Int { lock.withLock { countChecks } }
     func registeredPushTokens() -> [String] { lock.withLock { pushTokens } }
     /// Answers the next `count` token-authenticated requests with 401.

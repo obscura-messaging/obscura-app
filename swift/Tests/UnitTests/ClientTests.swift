@@ -628,7 +628,7 @@ final class ClientTests: XCTestCase {
     }
 
     func testAPreKeyMessageMakesTheClientCheckItsSupplyAndRefillTheKindThatIsLow() async throws {
-        server.setPreKeyCounts(PreKeyCounts(oneTime: 9, kyber: 10))
+        server.setPreKeyCounts(OneTimePreKeyCounts(oneTime: 9, kyber: 10))
         _ = try await receive(clientMessage {
             $0.timestamp = 6_000
             $0.directMessage.id = "prekey_message"

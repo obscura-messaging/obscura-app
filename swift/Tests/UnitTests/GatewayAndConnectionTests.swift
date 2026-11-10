@@ -271,7 +271,7 @@ final class GatewayAndConnectionTests: XCTestCase {
         ))
 
         // Bundle fetches used up keys without any message to say so; only the periodic check notices.
-        server.setPreKeyCounts(PreKeyCounts(oneTime: 0, kyber: 3))
+        server.setPreKeyCounts(OneTimePreKeyCounts(oneTime: 0, kyber: 3))
         await client.setPreKeySyncTiming(checkIntervalMs: 100, spacingMs: 0)
         try await client.connect()
         _ = try await gw.waitForConnection()
@@ -282,7 +282,7 @@ final class GatewayAndConnectionTests: XCTestCase {
         XCTAssertEqual(Set(server.preKeyUploadBodies().first?.keys.map { $0 } ?? []), ["oneTimePreKeys", "kyberPreKeys"])
 
         server.failPreKeyUpload(status: 500)
-        server.setPreKeyCounts(PreKeyCounts(oneTime: 0, kyber: 100))
+        server.setPreKeyCounts(OneTimePreKeyCounts(oneTime: 0, kyber: 100))
         for _ in 0..<100 where !client.getDebugLog().contains(where: { $0.contains("prekey sync failed") }) {
             try await Task.sleep(nanoseconds: 25_000_000)
         }

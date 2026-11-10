@@ -6,7 +6,7 @@ import LibSignalClient
 /// Pre-key generation, rotation and cleanup, as Signal-Android's `PreKeyUtil` and `PreKeysSyncJob` do it.
 final class PreKeysTests: XCTestCase {
     private let day: Int64 = 24 * 60 * 60 * 1000
-    private let plenty = PreKeyCounts(oneTime: 100, kyber: 100)
+    private let plenty = OneTimePreKeyCounts(oneTime: 100, kyber: 100)
     private var db: DatabaseQueue!
     private var store: PersistentSignalStore!
 
@@ -73,7 +73,7 @@ final class PreKeysTests: XCTestCase {
         let keys = try provisioned()
         let nextOneTime = try state().nextOneTimeId
 
-        let refill = try PreKeys.prepareRefill(store, counts: PreKeyCounts(oneTime: 9, kyber: 10), nowMs: day)
+        let refill = try PreKeys.prepareRefill(store, counts: OneTimePreKeyCounts(oneTime: 9, kyber: 10), nowMs: day)
 
         XCTAssertEqual(refill.oneTimePreKeys.map(\.id), PreKeys.ids(from: nextOneTime, count: PreKeys.batchSize))
         XCTAssertTrue(refill.kyberPreKeys.isEmpty)
@@ -89,7 +89,7 @@ final class PreKeysTests: XCTestCase {
         try provisioned()
         let nextKyber = try state().nextKyberId
 
-        let refill = try PreKeys.prepareRefill(store, counts: PreKeyCounts(oneTime: 10, kyber: 0), nowMs: day)
+        let refill = try PreKeys.prepareRefill(store, counts: OneTimePreKeyCounts(oneTime: 10, kyber: 0), nowMs: day)
 
         XCTAssertEqual(refill.kyberPreKeys.map(\.id), PreKeys.ids(from: nextKyber, count: PreKeys.batchSize))
         XCTAssertEqual(try store.kyberPreKeyCount(lastResort: true), 1)
@@ -102,7 +102,7 @@ final class PreKeysTests: XCTestCase {
         wrapped.nextOneTimeId = PreKeys.maxId - 2
         try store.savePreKeyState(wrapped)
 
-        let ids = try PreKeys.prepareRefill(store, counts: PreKeyCounts(oneTime: 0, kyber: 100), nowMs: day).oneTimePreKeys.map(\.id)
+        let ids = try PreKeys.prepareRefill(store, counts: OneTimePreKeyCounts(oneTime: 0, kyber: 100), nowMs: day).oneTimePreKeys.map(\.id)
 
         XCTAssertEqual(Array(ids.prefix(4)), [PreKeys.maxId - 2, PreKeys.maxId - 1, 0, 1])
         XCTAssertEqual(try state().nextOneTimeId, PreKeys.batchSize - 2)
@@ -148,7 +148,7 @@ final class PreKeysTests: XCTestCase {
     func testAfterAFailedUploadTheNextSyncUploadsTheSameKeysInsteadOfStoringMore() throws {
         try provisioned(nowMs: 0)
         let now = PreKeys.refreshIntervalMs
-        let low = PreKeyCounts(oneTime: 0, kyber: 0)
+        let low = OneTimePreKeyCounts(oneTime: 0, kyber: 0)
         let first = try PreKeys.prepareRefill(store, counts: low, nowMs: now)
         let stored = {
             [try self.store.signedPreKeyIds().count, try self.store.oneTimePreKeyCount(),
@@ -177,7 +177,7 @@ final class PreKeysTests: XCTestCase {
 
     func testAPendingBatchTheServerNoLongerNeedsIsDroppedAndALaterRefillGeneratesNewKeys() throws {
         try provisioned()
-        let lowOneTime = PreKeyCounts(oneTime: 0, kyber: 100)
+        let lowOneTime = OneTimePreKeyCounts(oneTime: 0, kyber: 100)
         let pending = try PreKeys.prepareRefill(store, counts: lowOneTime, nowMs: day)
         XCTAssertTrue(try PreKeys.prepareRefill(store, counts: plenty, nowMs: day).isEmpty, "counts recovered: the batch reached the server")
         XCTAssertNil(try state().pendingOneTimeStart)
@@ -217,7 +217,7 @@ final class PreKeysTests: XCTestCase {
     func testStaleOneTimeKeysGoAfter90DaysKeepingAtLeast200() throws {
         let keys = try provisioned(nowMs: 0)
         for _ in 0..<3 {
-            let refill = try PreKeys.prepareRefill(store, counts: PreKeyCounts(oneTime: 0, kyber: 0), nowMs: day)
+            let refill = try PreKeys.prepareRefill(store, counts: OneTimePreKeyCounts(oneTime: 0, kyber: 0), nowMs: day)
             try PreKeys.confirmRefill(store, refill, nowMs: day)
         }
         // 400 EC keys: the provisioned batch and two uploaded refills are stale since day 1, the last batch is fresh.
@@ -265,7 +265,7 @@ final class PreKeysTests: XCTestCase {
                                        sessionStore: sender, identityStore: sender, context: NullContext())
 
         // Rotation before the message arrives must not strand it.
-        let refill = try PreKeys.prepareRefill(receiver, counts: PreKeyCounts(oneTime: 0, kyber: 0), nowMs: PreKeys.refreshIntervalMs)
+        let refill = try PreKeys.prepareRefill(receiver, counts: OneTimePreKeyCounts(oneTime: 0, kyber: 0), nowMs: PreKeys.refreshIntervalMs)
         try PreKeys.confirmRefill(receiver, refill, nowMs: PreKeys.refreshIntervalMs)
 
         let plaintext = try signalDecryptPreKey(

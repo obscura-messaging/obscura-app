@@ -133,7 +133,7 @@ enum PreKeys {
     /// Keys stored for an earlier upload that never succeeded are uploaded again instead of new ones, so a
     /// server that keeps failing doesn't pile up keys. Generation runs before the write: a batch of
     /// Kyber-1024 keys takes a while, and holding the database would stall receive.
-    static func prepareRefill(_ store: PersistentSignalStore, counts: PreKeyCounts, nowMs: Int64) throws -> PreKeyRefill {
+    static func prepareRefill(_ store: PersistentSignalStore, counts: OneTimePreKeyCounts, nowMs: Int64) throws -> PreKeyRefill {
         guard let state = try store.preKeyState() else { throw ObscuraError.storageFailed("pre-keys not provisioned") }
         let identity = try store.identityKeyPair(context: NullContext())
         let signedDue = state.activeSignedId == nil || isDue(since: state.signedRotatedAt, nowMs: nowMs)

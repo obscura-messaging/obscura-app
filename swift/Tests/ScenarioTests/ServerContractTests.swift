@@ -100,7 +100,7 @@ final class ServerContractTests: XCTestCase {
             deviceId: bob.deviceId, clientMessage: delayed.serializedData())
         let full = Int(PreKeys.batchSize)
         let afterFetch = try await bob.client.api.fetchPreKeyCounts()
-        XCTAssertEqual(afterFetch, PreKeyCounts(oneTime: full - 1, kyber: full - 1), "the fetch used up one one-time key of each kind")
+        XCTAssertEqual(afterFetch, OneTimePreKeyCounts(oneTime: full - 1, kyber: full - 1), "the fetch used up one one-time key of each kind")
 
         // Two days since the last sync: connecting rotates the signed and last-resort keys.
         let store = bob.client.signalStore
@@ -126,13 +126,13 @@ final class ServerContractTests: XCTestCase {
         // Leave the server only 5 of each kind. The delayed message, built on the original keys, still
         // decrypts after rotation, and as a pre-key message it makes bob refill both kinds, refreshing
         // his token on the way.
-        let low = try PreKeys.prepareRefill(store, counts: PreKeyCounts(oneTime: 0, kyber: 0),
+        let low = try PreKeys.prepareRefill(store, counts: OneTimePreKeyCounts(oneTime: 0, kyber: 0),
                                             nowMs: Int64(Date().timeIntervalSince1970 * 1000)).upload()
         try await bob.client.api.uploadPreKeys(PreKeysUpload(
             signedPreKey: nil, lastResortKyberPreKey: nil,
             oneTimePreKeys: Array(low.oneTimePreKeys.prefix(5)), kyberPreKeys: Array(low.kyberPreKeys.prefix(5))))
         let lowCounts = try await bob.client.api.fetchPreKeyCounts()
-        XCTAssertEqual(lowCounts, PreKeyCounts(oneTime: 5, kyber: 5))
+        XCTAssertEqual(lowCounts, OneTimePreKeyCounts(oneTime: 5, kyber: 5))
         let before = try XCTUnwrap(storage.session?["refreshToken"])
         try await bob.client.expireAccessToken()
         let delayedResult = await alice.client.messenger.submit(userId: bob.userId, submissions: [pending]).submitted
@@ -140,7 +140,7 @@ final class ServerContractTests: XCTestCase {
         let oldEntry = try await bob.waitForEntry(delayed.directMessage.id)
         XCTAssertEqual(oldEntry.content, delayed.directMessage.content, "the original signed key survives rotation")
         _ = try await eventually("server-visible refill") {
-            try await bob.client.api.fetchPreKeyCounts() == PreKeyCounts(oneTime: full, kyber: full) ? true : nil
+            try await bob.client.api.fetchPreKeyCounts() == OneTimePreKeyCounts(oneTime: full, kyber: full) ? true : nil
         }
         try await assertRotatedSession(bob, storage: storage, previous: before)
 
@@ -248,9 +248,9 @@ final class ServerContractTests: XCTestCase {
             XCTAssertEqual(Set(ids), [alice.deviceId, laptop.deviceId])
         }
         let aliceCounts = try await alice.client.api.fetchPreKeyCounts()
-        XCTAssertEqual(aliceCounts, PreKeyCounts(oneTime: full - 1, kyber: full - 1), "listing devices consumes no pre-keys")
+        XCTAssertEqual(aliceCounts, OneTimePreKeyCounts(oneTime: full - 1, kyber: full - 1), "listing devices consumes no pre-keys")
         let laptopCounts = try await laptop.client.api.fetchPreKeyCounts()
-        XCTAssertEqual(laptopCounts, PreKeyCounts(oneTime: full - 1, kyber: full - 1),
+        XCTAssertEqual(laptopCounts, OneTimePreKeyCounts(oneTime: full - 1, kyber: full - 1),
                        "a whole-user bundle fetch consumes one of each kind on every account device")
 
         for i in 0..<3 {
@@ -258,7 +258,7 @@ final class ServerContractTests: XCTestCase {
             XCTAssertEqual(report.recipients.map(\.status), [.accepted])
         }
         let bobCounts = try await bob.client.api.fetchPreKeyCounts()
-        XCTAssertEqual(bobCounts, PreKeyCounts(oneTime: full - 1, kyber: full - 1),
+        XCTAssertEqual(bobCounts, OneTimePreKeyCounts(oneTime: full - 1, kyber: full - 1),
                        "one initial session fetch, not a destructive fetch on every send")
         try await bob.client.connect()
         for i in 0..<3 { _ = try await bob.waitForEntry("session-reuse-\(i)") }

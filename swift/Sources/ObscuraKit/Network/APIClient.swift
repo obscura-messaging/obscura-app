@@ -162,7 +162,7 @@ actor APIClient {
     }
 
     /// How many one-time pre-keys of each kind the server holds for this device.
-    func fetchPreKeyCounts() async throws -> PreKeyCounts {
+    func fetchPreKeyCounts() async throws -> OneTimePreKeyCounts {
         try await json("v1/keys")
     }
 
