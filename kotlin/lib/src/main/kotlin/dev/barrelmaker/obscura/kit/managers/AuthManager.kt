@@ -198,7 +198,7 @@ internal class AuthManager(
         }
         withContext(Dispatchers.IO) {
             signalStore.transaction {
-                SignalKeyUtils.install(signalStore, keys)
+                PreKeys.install(signalStore, keys)
                 devices.storeLocalInTransaction(response.userId, LocalDevice(response.deviceId, primaryDeviceId = primaryDeviceId))
                 persist()
             }
@@ -206,7 +206,7 @@ internal class AuthManager(
         start(Credentials(response.token, response.refreshToken, response.expiresAt, response.userId, response.deviceId, username), publishAuth = publishAuth)
     }
 
-    private fun newIdentityKeys() = SignalKeyUtils.generateProvisioningKeys(IdentityKeyPair.generate())
+    private fun newIdentityKeys() = PreKeys.generateProvisioningKeys(IdentityKeyPair.generate(), clock())
 
     /** Restore stored credentials. False when nothing usable is stored or the refresh token is refused. */
     suspend fun restore(): Boolean {

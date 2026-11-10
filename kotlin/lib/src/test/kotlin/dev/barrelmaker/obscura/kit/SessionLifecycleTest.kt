@@ -3,7 +3,7 @@ package dev.barrelmaker.obscura.kit
 import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.crypto.UuidCodec
 import dev.barrelmaker.obscura.kit.managers.FakeObscuraServer
-import dev.barrelmaker.obscura.kit.managers.SignalKeyUtils
+import dev.barrelmaker.obscura.kit.managers.PreKeys
 import dev.barrelmaker.obscura.kit.managers.TokenStatus
 import dev.barrelmaker.obscura.kit.messaging.parsePeerBundles
 import dev.barrelmaker.obscura.kit.persistence.SessionStorage
@@ -32,7 +32,6 @@ import org.junit.jupiter.api.Test
 import org.signal.libsignal.protocol.IdentityKeyPair
 import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
 import xyz.obscura.server.contracts.ObscuraProtocol.EnvelopeBatch
-import xyz.obscura.server.contracts.ObscuraProtocol.PreKeyStatus
 import xyz.obscura.server.contracts.ObscuraProtocol.WebSocketFrame
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -285,8 +284,8 @@ class SessionLifecycleTest {
         FakeObscuraServer().use { peers ->
             val now = AtomicLong(1_000_000L)
             val c = sessionClient(url, storedSession(), clock = { now.get() })
-            val keys = SignalKeyUtils.generateProvisioningKeys(IdentityKeyPair.generate())
-            SignalKeyUtils.install(c.signalStore, keys)
+            val keys = PreKeys.generateProvisioningKeys(IdentityKeyPair.generate(), now.get())
+            PreKeys.install(c.signalStore, keys)
             c.storeLocalDevice()
             assertTrue(c.auth.restore())
 
@@ -332,6 +331,8 @@ class SessionLifecycleTest {
                     webSocket.close(1000, null)
                 }
             }).build())
+            // The prekey message makes the client check its pre-key supply.
+            server.enqueue(counts(oneTime = 99, kyber = 99))
 
             assertEquals(1, c.processPendingMessages(5_000))
             assertEquals(listOf(envId), withTimeout(5_000) { acked.await() })
@@ -369,64 +370,122 @@ class SessionLifecycleTest {
         }
     }
 
-    @Test fun `preKeyStatus frame below threshold triggers automatic prekey replenishment upload`() = runBlocking {
-        val c = sessionClient(url, storedSession())
-        val keys = SignalKeyUtils.generateProvisioningKeys(IdentityKeyPair.generate())
-        SignalKeyUtils.install(c.signalStore, keys)
+    private fun socketSending(vararg frames: okio.ByteString) = MockResponse.Builder().webSocketUpgrade(object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
+            frames.forEach { webSocket.send(it) }
+        }
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            webSocket.close(1000, null)
+        }
+    }).build()
+
+    private fun counts(oneTime: Int, kyber: Int) =
+        MockResponse.Builder().body("""{"oneTimePreKeyCount":$oneTime,"kyberPreKeyCount":$kyber}""").build()
+
+    /** A client provisioned at [provisionedAt] whose clock reads [now]. */
+    private suspend fun provisionedClient(provisionedAt: Long, now: Long): Pair<ObscuraClient, dev.barrelmaker.obscura.kit.managers.ProvisioningKeys> {
+        val c = sessionClient(url, storedSession(), clock = { now })
+        val keys = PreKeys.generateProvisioningKeys(IdentityKeyPair.generate(), provisionedAt)
+        PreKeys.install(c.signalStore, keys)
         c.storeLocalDevice()
         assertTrue(c.auth.restore())
+        return c to keys
+    }
 
-        val okStatus = WebSocketFrame.newBuilder()
-            .setPreKeyStatus(PreKeyStatus.newBuilder().setOneTimePreKeyCount(25).setMinThreshold(20))
-            .build().toByteArray().toByteString()
-        val lowStatus = WebSocketFrame.newBuilder()
-            .setPreKeyStatus(PreKeyStatus.newBuilder().setOneTimePreKeyCount(5).setMinThreshold(20))
-            .build().toByteArray().toByteString()
+    @Test fun `a pre-key message makes the client check its supply and refill the kind that is low`() = runBlocking {
+        FakeObscuraServer().use { peers ->
+            val (c, keys) = provisionedClient(provisionedAt = 1_000_000L, now = 1_000_000L)
+            val peer = peers.register("019f025a-0000-7de6-84b6-000000000002")
+            peer.directory.add(SELF_USER_ID, listOf(SELF_DEVICE_ID))
+            peer.messenger.establishSession(parsePeerBundles(JSONArray().put(keys.bundle(SELF_DEVICE_ID))).single())
+            val sub = peer.messenger.prepareSubmission(SELF_DEVICE_ID, ClientMessage.newBuilder().setTimestamp(1).setDirectMessage(
+                DirectMessage.newBuilder().setId("dm").setPeerUserId(SELF_USER_ID).setContent("hi"),
+            ).build())
+            val env = Envelope.newBuilder()
+                .setId(UuidCodec.uuidToBytes(UUID.randomUUID()))
+                .setSenderUserId(UuidCodec.uuidToBytes(UUID.fromString(peer.userId)))
+                .setSenderDeviceId(UuidCodec.uuidToBytes(UUID.fromString(peer.deviceId)))
+                .setMessage(sub.message)
+                .build()
+            val batch = WebSocketFrame.newBuilder().setEnvelopeBatch(EnvelopeBatch.newBuilder().addEnvelopes(env))
+                .build().toByteArray().toByteString()
 
-        server.enqueue(MockResponse.Builder().body("""{"ticket":"t"}""").build())
-        server.enqueue(MockResponse.Builder().webSocketUpgrade(object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
-                webSocket.send(okStatus)
-                webSocket.send(lowStatus)
-            }
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                webSocket.close(1000, null)
-            }
-        }).build())
-        server.enqueue(MockResponse.Builder().code(200).build())
+            server.enqueue(MockResponse.Builder().body("""{"ticket":"t"}""").build())
+            server.enqueue(socketSending(batch))
+            server.enqueue(counts(oneTime = 9, kyber = 10))
+            server.enqueue(MockResponse.Builder().code(200).build())
+
+            c.connect()
+            // Calling connect() again while already connected and receiving is a no-op
+            c.connect()
+
+            assertEquals("/v1/gateway/ticket", server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath)
+            assertEquals("/v1/gateway", server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath)
+            val check = server.takeRequest(5, TimeUnit.SECONDS)!!
+            assertEquals("GET /v1/keys", "${check.method} ${check.url.encodedPath}")
+            val upload = server.takeRequest(5, TimeUnit.SECONDS)!!
+            assertEquals("POST /v1/keys", "${upload.method} ${upload.url.encodedPath}")
+            val uploaded = JSONObject(upload.body!!.utf8())
+            assertEquals(setOf("oneTimePreKeys"), uploaded.keySet(), "only the kind below 10 is refilled")
+            assertEquals(PreKeys.BATCH_SIZE, uploaded.getJSONArray("oneTimePreKeys").length())
+            assertEquals("hi", c.getMessages().single().content)
+
+            c.disconnect()
+            c.auth.end()
+            Unit
+        }
+    }
+
+    /** The sync runs alongside the gateway connect, so requests are answered by route rather than in order. */
+    private fun route(vararg responses: Pair<String, () -> MockResponse>) {
+        val routes = responses.toMap()
+        server.dispatcher = object : mockwebserver3.Dispatcher() {
+            override fun dispatch(request: mockwebserver3.RecordedRequest): MockResponse =
+                routes["${request.method} ${request.url.encodedPath}"]?.invoke() ?: MockResponse.Builder().code(404).build()
+        }
+    }
+
+    @Test fun `a connect 2 days after the last sync rotates the signed and last-resort keys`() = runBlocking {
+        val (c, keys) = provisionedClient(provisionedAt = 0L, now = PreKeys.REFRESH_INTERVAL_MS)
+        route(
+            "POST /v1/gateway/ticket" to { MockResponse.Builder().body("""{"ticket":"t"}""").build() },
+            "GET /v1/gateway" to { socketSending() },
+            "GET /v1/keys" to { counts(oneTime = 50, kyber = 50) },
+            "POST /v1/keys" to { MockResponse.Builder().code(200).build() },
+        )
 
         c.connect()
-        // Calling connect() again while already connected and receiving is a no-op
-        c.connect()
 
-        assertEquals("/v1/gateway/ticket", server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath)
-        assertEquals("/v1/gateway", server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath)
-        val upload = server.takeRequest(5, TimeUnit.SECONDS)!!
-        assertEquals("POST", upload.method)
-        assertEquals("/v1/keys", upload.url.encodedPath)
-        val uploadedKeys = JSONObject(upload.body!!.utf8())
-        assertEquals(50, uploadedKeys.getJSONArray("oneTimePreKeys").length())
-        assertEquals(2, uploadedKeys.getJSONObject("signedPreKey").getInt("keyId"))
+        val paths = (1..4).map { server.takeRequest(5, TimeUnit.SECONDS)!!.let { r -> r to "${r.method} ${r.url.encodedPath}" } }
+        assertEquals(setOf("POST /v1/gateway/ticket", "GET /v1/gateway", "GET /v1/keys", "POST /v1/keys"), paths.map { it.second }.toSet())
+        val uploaded = JSONObject(paths.single { it.second == "POST /v1/keys" }.first.body!!.utf8())
+        assertEquals(setOf("signedPreKey", "lastResortKyberPreKey"), uploaded.keySet())
+        withTimeout(5_000) {
+            while (c.signalStore.preKeyState()!!.active_signed_id == keys.signedPreKey.id.toLong()) kotlinx.coroutines.delay(10)
+        }
+        assertEquals(uploaded.getJSONObject("signedPreKey").getInt("keyId").toLong(), c.signalStore.preKeyState()!!.active_signed_id)
+        assertFalse(PreKeys.isSyncDue(c.signalStore, PreKeys.REFRESH_INTERVAL_MS))
 
-        // Trigger another replenish that hangs on upload, then logout() cancels replenishJob
         c.disconnect()
-        server.enqueue(MockResponse.Builder().body("""{"ticket":"t2"}""").build())
-        server.enqueue(MockResponse.Builder().webSocketUpgrade(object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
-                webSocket.send(lowStatus)
-            }
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                webSocket.close(1000, null)
-            }
-        }).build())
-        server.enqueue(MockResponse.Builder().code(200).headersDelay(5, TimeUnit.SECONDS).build())
-        c.connect()
-        assertEquals("/v1/gateway/ticket", server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath)
-        assertEquals("/v1/gateway", server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath)
-        assertEquals("/v1/keys", server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath)
-        server.enqueue(MockResponse.Builder().code(204).build())
-        c.logout()
+        c.auth.end()
         Unit
+    }
+
+    @Test fun `logout cancels a pre-key sync in flight`() = runBlocking {
+        val (c, _) = provisionedClient(provisionedAt = 0L, now = PreKeys.REFRESH_INTERVAL_MS)
+        route(
+            "POST /v1/gateway/ticket" to { MockResponse.Builder().body("""{"ticket":"t"}""").build() },
+            "GET /v1/gateway" to { socketSending() },
+            "GET /v1/keys" to { counts(oneTime = 50, kyber = 50).newBuilder().headersDelay(5, TimeUnit.SECONDS).build() },
+            "DELETE /v1/session" to { MockResponse.Builder().code(204).build() },
+        )
+        c.connect()
+        val paths = (1..3).map { server.takeRequest(5, TimeUnit.SECONDS)!!.url.encodedPath }
+        assertTrue("/v1/keys" in paths)
+
+        withTimeout(3_000) { c.logout() }
+
+        assertEquals(AuthState.LOGGED_OUT, c.authState.value)
     }
 
     @Test fun `in-flight refresh completing after logout or session replacement does not clobber current auth state`() = runBlocking {

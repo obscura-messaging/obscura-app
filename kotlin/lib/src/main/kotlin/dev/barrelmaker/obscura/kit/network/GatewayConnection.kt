@@ -21,7 +21,6 @@ import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import xyz.obscura.server.contracts.ObscuraProtocol.AckMessage
 import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
-import xyz.obscura.server.contracts.ObscuraProtocol.PreKeyStatus
 import xyz.obscura.server.contracts.ObscuraProtocol.WebSocketFrame
 import java.util.concurrent.TimeUnit
 
@@ -46,7 +45,6 @@ internal class GatewayConnection(
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
     val envelopes = Channel<Envelope>(Channel.UNLIMITED)
-    val preKeyStatus = Channel<PreKeyStatus>(Channel.CONFLATED)
 
     private val lock = Any()
     private var socket: WebSocket? = null
@@ -87,7 +85,6 @@ internal class GatewayConnection(
             reconnectAttempts = 0
             _state.value = ConnectionState.DISCONNECTED
             while (envelopes.tryReceive().isSuccess) {}
-            while (preKeyStatus.tryReceive().isSuccess) {}
             (socket to pending).also { socket = null; pending = null }
         }
         attempt?.completeExceptionally(ObscuraError.ConnectionFailed("Disconnected"))
@@ -181,7 +178,7 @@ internal class GatewayConnection(
                 webSocket.cancel()
                 return
             }
-            if (!frame.hasEnvelopeBatch() && !frame.hasPreKeyStatus()) {
+            if (!frame.hasEnvelopeBatch()) {
                 log("GATEWAY invalid server frame: ${frame.payloadCase}")
                 ended(ObscuraError.ProtocolViolation("Unexpected gateway frame: ${frame.payloadCase}"))
                 webSocket.cancel()
@@ -189,10 +186,7 @@ internal class GatewayConnection(
             }
             synchronized(lock) {
                 if (!isCurrent()) return
-                when {
-                    frame.hasEnvelopeBatch() -> frame.envelopeBatch.envelopesList.forEach { envelopes.trySend(it) }
-                    frame.hasPreKeyStatus() -> preKeyStatus.trySend(frame.preKeyStatus)
-                }
+                frame.envelopeBatch.envelopesList.forEach { envelopes.trySend(it) }
             }
         }
 

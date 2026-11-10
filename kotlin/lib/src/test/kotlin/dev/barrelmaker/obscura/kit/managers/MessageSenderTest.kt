@@ -217,6 +217,19 @@ class MessageSenderTest {
     }
 
     @Test
+    fun `a bundle whose Kyber prekey does not verify rejects the user and stores nothing`() = runBlocking {
+        val broken = server.register(bob.userId, corruptKyber = true)
+
+        val result = alice.send(bob, "one").single()
+
+        assertEquals(REJECTED, result.status)
+        assertEquals(emptyList<String>(), alice.directory.devicesOf(bob.userId))
+        assertFalse(alice.messenger.hasSession(bob.deviceId))
+        assertFalse(alice.messenger.hasSession(broken.deviceId))
+        assertEquals(0, server.requests.size)
+    }
+
+    @Test
     fun `bundles of one user that carry different identities reject the user and store nothing`() = runBlocking {
         server.register(bob.userId, identity = IdentityKeyPair.generate())
 

@@ -25,24 +25,32 @@ import java.util.UUID
  * Signal sessions and encryption for single devices, keyed by the peer's device UUID. Signal state
  * is confined to one thread; HTTP never runs on it, so a slow request cannot stall decryption.
  */
-internal class Messenger(private val signalStore: SignalStore, private val api: APIClient) {
+internal class Messenger(
+    private val signalStore: SignalStore,
+    private val api: APIClient,
+    /** This device's UUID; libsignal binds each session to both ends' addresses. */
+    private val localDeviceId: () -> String?,
+) {
     private val dispatcher = Dispatchers.Default.limitedParallelism(1)
 
     suspend fun hasSession(deviceId: String): Boolean = withContext(dispatcher) {
         signalStore.containsSession(addressFor(deviceId))
     }
 
-    /** Processing a bundle over an existing session would restart its ratchet, so an existing one wins. */
+    /**
+     * Processing a bundle over an existing session would restart its ratchet, so an existing one wins.
+     * libsignal's SessionBuilder takes (remote, local); SessionCipher takes (local, remote).
+     */
     suspend fun establishSession(peer: PeerBundle) = withContext(dispatcher) {
         val address = addressFor(peer.deviceId)
-        if (!signalStore.containsSession(address)) SessionBuilder(signalStore, address).process(peer.bundle)
+        if (!signalStore.containsSession(address)) SessionBuilder(signalStore, address, localAddress()).process(peer.bundle)
     }
 
     suspend fun prepareSubmission(deviceId: String, message: ClientMessage): SendMessageRequest.Submission =
         withContext(dispatcher) {
             val address = addressFor(deviceId)
             check(signalStore.containsSession(address)) { "No session with device $deviceId" }
-            val ciphertext = SessionCipher(signalStore, address).encrypt(message.toByteArray())
+            val ciphertext = SessionCipher(signalStore, localAddress(), address).encrypt(message.toByteArray())
             val encrypted = EncryptedMessage.newBuilder()
                 .setType(
                     if (ciphertext.type == CiphertextMessage.PREKEY_TYPE) EncryptedMessage.Type.TYPE_PREKEY_MESSAGE
@@ -101,12 +109,21 @@ internal class Messenger(private val signalStore: SignalStore, private val api: 
     private fun decryptOnDispatcher(senderDeviceId: String, message: ByteString): ByteArray {
         val encrypted = EncryptedMessage.parseFrom(message)
         val content = encrypted.content.toByteArray()
-        val cipher = SessionCipher(signalStore, addressFor(senderDeviceId))
+        val cipher = SessionCipher(signalStore, localAddress(), addressFor(senderDeviceId))
         return if (encrypted.type == EncryptedMessage.Type.TYPE_PREKEY_MESSAGE) cipher.decrypt(PreKeySignalMessage(content))
         else cipher.decrypt(SignalMessage(content))
     }
 
+    private fun localAddress() = addressFor(checkNotNull(localDeviceId()) { "No local device" })
+
     companion object {
+        /** Whether [message] starts a session, which uses up one of this device's pre-keys. */
+        fun isPreKeyMessage(message: ByteString): Boolean = try {
+            EncryptedMessage.parseFrom(message).type == EncryptedMessage.Type.TYPE_PREKEY_MESSAGE
+        } catch (e: com.google.protobuf.InvalidProtocolBufferException) {
+            false
+        }
+
         /** Send and receive must build the same address or a session splits in two. */
         fun addressFor(deviceUuid: String) = SignalProtocolAddress(deviceUuid, 1)
     }

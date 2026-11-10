@@ -80,9 +80,10 @@ data. There are no compatibility migrations.
 | `wipeDevice()` | Logs out, then deletes local Signal state, friends, devices, identity, entries and inbox |
 
 Other HTTP failures throw. Registration and account reset generate a new
-account identity key pair, registration id, signed prekey id 1, and 100
-one-time prekeys; linking generates a fresh registration id, signed prekey id 1,
-and 100 one-time prekeys signed by the imported account identity key pair.
+account identity key pair; linking imports the account's. Either way the device
+gets a fresh registration id, a signed prekey, a last-resort Kyber prekey, and
+100 one-time prekeys of each kind (EC and Kyber), all signed by the account
+identity key pair. Sessions use PQXDH, which libsignal requires.
 
 Logout revokes the refresh token best-effort; failure is logged. Unlinking this
 device or resetting the account skips server refresh-token revocation because
@@ -102,7 +103,7 @@ not restore credentials, overwrite storage, or sign out a newer session.
 
 Each account has one Signal identity key pair shared by all its devices (up to
 the server limit). Each device has its own device UUID, registration id, signed
-prekeys, one-time prekeys, and Signal sessions.
+and last-resort Kyber prekeys, one-time EC and Kyber prekeys, and Signal sessions.
 
 The first device provisioned on an account is the **primary**. Only the primary
 may link or unlink other devices or mutate the friend list (`addFriendByCode`,
@@ -127,7 +128,9 @@ in-memory cache.
 - Processing a bundle over an established session would restart its ratchet and
   must not happen.
 - All bundles for a user must carry the same account identity key and valid
-  signed-prekey signatures (`PROTOCOL_VIOLATION` otherwise).
+  signed and Kyber prekey signatures (`PROTOCOL_VIOLATION` otherwise).
+- The server allows a device 6 bundle fetches of the same target per 10
+  minutes. A `429` asking for a longer wait than 10 s is thrown, not retried.
 - If the server reports a user in `device_mismatches`, the kit adds
   `missing_device_ids` to the directory, establishes missing sessions, and
   retries only the mismatched users with a new `Idempotency-Key` (up to 3
@@ -206,13 +209,20 @@ envelope is already stored, and it is acknowledged. Decrypted plaintext that
 is not a `ClientMessage` is logged and acknowledged: its ratchet step is spent
 and it can never parse.
 An inbox duplicate counts as persisted and is
-acknowledged without another wake-up. Prekeys below 20 trigger replenishment
-of 50, with at most one upload in flight; failures are logged. Each refill
-also generates a signed prekey with an id above every locally stored signed
-prekey id, as required by the server. The identity stays unchanged. When an
-upload succeeds, every older signed prekey is marked superseded at that time
-(if not already), and those superseded 30 days ago or more, the server's
-queued-message TTL, are deleted.
+acknowledged without another wake-up.
+
+**Prekeys** follow Signal-Android's `PreKeysSyncJob`, so the server only stores
+and serves them. A sync asks the server how many one-time prekeys of each kind
+it holds for this device (`GET /v1/keys`), uploads a batch of 100 of any kind
+below 10, rotates the signed and last-resort Kyber prekeys once they are 2 days
+old, and uploads it all in one `POST /v1/keys`. It runs after every prekey
+message this device receives, and on connect when the last sync is 2 days old;
+syncs run one at a time and failures are logged. Ids start at a random point
+and wrap at 2^24 - 1; one-time and last-resort Kyber prekeys share one counter.
+Replaced keys stay for messages in flight: one-time keys for 90 days (keeping at
+least 200 of each kind), signed and last-resort keys for 30 days, the server's
+queued-message TTL (keeping the youngest older one). A first message that reuses
+a base key with a last-resort Kyber prekey is rejected as a replay.
 
 For inboxed content and local-only friend transitions, Signal ratchet/prekey
 changes and their directory, inbox, or friend writes commit together. A local

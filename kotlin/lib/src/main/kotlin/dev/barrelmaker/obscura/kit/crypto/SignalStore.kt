@@ -1,11 +1,14 @@
 package dev.barrelmaker.obscura.kit.crypto
 
+import dev.barrelmaker.obscura.kit.SignalPreKeyState
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import org.signal.libsignal.protocol.IdentityKey
 import org.signal.libsignal.protocol.IdentityKeyPair
 import org.signal.libsignal.protocol.InvalidKeyIdException
 import org.signal.libsignal.protocol.NoSessionException
+import org.signal.libsignal.protocol.ReusedBaseKeyException
 import org.signal.libsignal.protocol.SignalProtocolAddress
+import org.signal.libsignal.protocol.ecc.ECPublicKey
 import org.signal.libsignal.protocol.groups.state.SenderKeyRecord
 import org.signal.libsignal.protocol.state.IdentityKeyStore
 import org.signal.libsignal.protocol.state.KyberPreKeyRecord
@@ -17,8 +20,12 @@ import java.security.MessageDigest
 import java.util.UUID
 
 /**
- * All libsignal store interfaces over SQLite. The server has no Kyber prekeys. Peer identities are
- * trusted per account: an address `<deviceUuid>.1` resolves to its user through the device directory.
+ * All libsignal store interfaces over SQLite. Peer identities are trusted per account: an address
+ * `<deviceUuid>.1` resolves to its user through the device directory.
+ *
+ * Pre-keys are kept and cleaned up as Signal-Android keeps them: one-time keys go stale when a newer
+ * batch replaces them on the server, and old signed and last-resort keys are kept a while for
+ * messages already in flight.
  */
 internal class SignalStore(private val db: ObscuraDatabase) : SignalProtocolStore {
     private val queries = db.signalKeyQueries
@@ -47,6 +54,9 @@ internal class SignalStore(private val db: ObscuraDatabase) : SignalProtocolStor
             queries.deleteAllIdentities()
             queries.deleteAllPreKeys()
             queries.deleteAllSignedPreKeys()
+            queries.deleteAllKyberPreKeys()
+            queries.deleteAllLastResortKeyUses()
+            queries.deletePreKeyState()
             queries.deleteAllSessions()
         }
         localIdentity = null
@@ -92,6 +102,8 @@ internal class SignalStore(private val db: ObscuraDatabase) : SignalProtocolStor
         db.deviceQueries.selectUser(address.name).executeAsOneOrNull()
             ?: throw IllegalStateException("Device ${address.name} is not in the directory")
 
+    // ── One-time EC pre-keys ────────────────────────────────────────────
+
     override fun loadPreKey(preKeyId: Int): PreKeyRecord =
         queries.selectPreKey(preKeyId.toLong()).executeAsOneOrNull()?.let(::PreKeyRecord)
             ?: throw InvalidKeyIdException("No prekey with id: $preKeyId")
@@ -100,8 +112,7 @@ internal class SignalStore(private val db: ObscuraDatabase) : SignalProtocolStor
     override fun containsPreKey(preKeyId: Int): Boolean = queries.selectPreKey(preKeyId.toLong()).executeAsOneOrNull() != null
     override fun removePreKey(preKeyId: Int) = queries.deletePreKey(preKeyId.toLong())
 
-    fun getPreKeyCount(): Long = queries.countPreKeys().executeAsOne()
-    fun getHighestPreKeyId(): Long = queries.highestPreKeyId().executeAsOne().MAX ?: 0L
+    // ── Signed EC pre-keys ──────────────────────────────────────────────
 
     override fun loadSignedPreKey(signedPreKeyId: Int): SignedPreKeyRecord =
         queries.selectSignedPreKey(signedPreKeyId.toLong()).executeAsOneOrNull()?.let(::SignedPreKeyRecord)
@@ -109,8 +120,6 @@ internal class SignalStore(private val db: ObscuraDatabase) : SignalProtocolStor
 
     override fun loadSignedPreKeys(): List<SignedPreKeyRecord> =
         queries.selectAllSignedPreKeys().executeAsList().map(::SignedPreKeyRecord)
-
-    fun getHighestSignedPreKeyId(): Long = queries.highestSignedPreKeyId().executeAsOne().MAX ?: 0L
 
     override fun storeSignedPreKey(signedPreKeyId: Int, record: SignedPreKeyRecord) =
         queries.insertSignedPreKey(signedPreKeyId.toLong(), record.serialize())
@@ -120,15 +129,90 @@ internal class SignalStore(private val db: ObscuraDatabase) : SignalProtocolStor
 
     override fun removeSignedPreKey(signedPreKeyId: Int) = queries.deleteSignedPreKey(signedPreKeyId.toLong())
 
+    // ── Kyber pre-keys ──────────────────────────────────────────────────
+
+    override fun loadKyberPreKey(kyberPreKeyId: Int): KyberPreKeyRecord =
+        queries.selectKyberPreKey(kyberPreKeyId.toLong()).executeAsOneOrNull()?.let(::KyberPreKeyRecord)
+            ?: throw InvalidKeyIdException("No Kyber prekey with id: $kyberPreKeyId")
+
+    override fun loadKyberPreKeys(): List<KyberPreKeyRecord> =
+        queries.selectAllKyberPreKeys().executeAsList().map(::KyberPreKeyRecord)
+
+    fun loadLastResortKyberPreKeys(): List<KyberPreKeyRecord> =
+        queries.selectLastResortKyberPreKeys().executeAsList().map(::KyberPreKeyRecord)
+
+    /** Stores a one-time Kyber pre-key. Last-resort keys go through [storeLastResortKyberPreKey]. */
+    override fun storeKyberPreKey(kyberPreKeyId: Int, record: KyberPreKeyRecord) =
+        queries.insertKyberPreKey(kyberPreKeyId.toLong(), record.serialize(), 0)
+
+    fun storeLastResortKyberPreKey(kyberPreKeyId: Int, record: KyberPreKeyRecord) =
+        queries.insertKyberPreKey(kyberPreKeyId.toLong(), record.serialize(), 1)
+
+    override fun containsKyberPreKey(kyberPreKeyId: Int): Boolean =
+        queries.selectKyberPreKey(kyberPreKeyId.toLong()).executeAsOneOrNull() != null
+
     /**
-     * Call once the server has accepted signed prekey [publishedId]. Every older key stops being
-     * advertised now; one superseded longer than the server keeps queued messages can no longer be
-     * named by a deliverable message, so it is deleted.
+     * A one-time key is deleted. A last-resort key stays, so each session started with it is
+     * recorded instead, and one started again with the same keys and base key is a replay.
      */
-    fun retireSignedPreKeys(publishedId: Int, nowMs: Long = System.currentTimeMillis()) = db.transaction {
-        queries.supersedeSignedPreKeysBelow(nowMs, publishedId.toLong())
-        queries.deleteSignedPreKeysSupersededBefore(nowMs - SIGNED_PREKEY_GRACE_MS)
+    override fun markKyberPreKeyUsed(kyberPreKeyId: Int, signedPreKeyId: Int, baseKey: ECPublicKey) = db.transaction {
+        val id = kyberPreKeyId.toLong()
+        if (queries.isLastResortKyberPreKey(id).executeAsOneOrNull() != 1L) {
+            queries.deleteOneTimeKyberPreKey(id)
+            return@transaction
+        }
+        val base = baseKey.serialize()
+        if (queries.hasLastResortKeyUse(id, signedPreKeyId.toLong(), base).executeAsOne()) {
+            throw ReusedBaseKeyException("Base key reused with last-resort Kyber prekey $kyberPreKeyId")
+        }
+        queries.insertLastResortKeyUse(id, signedPreKeyId.toLong(), base)
     }
+
+    fun removeKyberPreKey(kyberPreKeyId: Int) = db.transaction {
+        queries.deleteKyberPreKey(kyberPreKeyId.toLong())
+        queries.deleteLastResortKeyUses(kyberPreKeyId.toLong())
+    }
+
+    // ── Pre-key bookkeeping ─────────────────────────────────────────────
+
+    fun preKeyState(): SignalPreKeyState? = queries.selectPreKeyState().executeAsOneOrNull()
+
+    fun savePreKeyState(state: SignalPreKeyState) = queries.insertPreKeyState(
+        state.next_signed_id, state.next_one_time_id, state.next_kyber_id, state.active_signed_id,
+        state.active_last_resort_id, state.signed_rotated_at, state.last_resort_rotated_at, state.synced_at,
+    )
+
+    /** The one-time EC keys stored so far, about to be replaced on the server by a new batch. */
+    fun markOneTimeEcPreKeysStale(nowMs: Long) = queries.markPreKeysStale(nowMs)
+
+    /** The one-time Kyber keys stored so far, about to be replaced on the server by a new batch. */
+    fun markOneTimeKyberPreKeysStale(nowMs: Long) = queries.markKyberPreKeysStale(nowMs)
+
+    /**
+     * Signal-Android's cleanup. Signed and last-resort keys other than the active one are deleted
+     * once older than [ARCHIVE_AGE_MS], except the youngest of those, which may still be named by a
+     * message in flight. One-time keys stale for longer than [STALE_ONE_TIME_AGE_MS] are deleted,
+     * keeping at least [MIN_ONE_TIME_KEPT] of each kind.
+     */
+    fun cleanPreKeys(nowMs: Long) = db.transaction {
+        val state = preKeyState()
+        state?.active_signed_id?.let { active ->
+            archived(loadSignedPreKeys(), active, nowMs, { it.id }, { it.timestamp }).forEach { removeSignedPreKey(it.id) }
+        }
+        state?.active_last_resort_id?.let { active ->
+            archived(loadLastResortKyberPreKeys(), active, nowMs, { it.id }, { it.timestamp }).forEach { removeKyberPreKey(it.id) }
+        }
+        val cutoff = nowMs - STALE_ONE_TIME_AGE_MS
+        queries.deleteStalePreKeys(cutoff, MIN_ONE_TIME_KEPT)
+        queries.deleteStaleKyberPreKeys(cutoff, MIN_ONE_TIME_KEPT)
+    }
+
+    private fun <T> archived(records: List<T>, activeId: Long, nowMs: Long, id: (T) -> Int, createdAt: (T) -> Long): List<T> =
+        records.filter { id(it).toLong() != activeId && nowMs - createdAt(it) > ARCHIVE_AGE_MS }
+            .sortedByDescending(createdAt)
+            .drop(1)
+
+    // ── Sessions ────────────────────────────────────────────────────────
 
     override fun loadSession(address: SignalProtocolAddress): SessionRecord =
         queries.selectSession(address.key()).executeAsOneOrNull()?.let(::SessionRecord) ?: SessionRecord()
@@ -159,16 +243,15 @@ internal class SignalStore(private val db: ObscuraDatabase) : SignalProtocolStor
     override fun loadSenderKey(sender: SignalProtocolAddress, distributionId: UUID): SenderKeyRecord? =
         throw UnsupportedOperationException("No sender keys")
 
-    override fun loadKyberPreKey(kyberPreKeyId: Int): KyberPreKeyRecord = throw InvalidKeyIdException("No Kyber prekeys")
-    override fun loadKyberPreKeys(): List<KyberPreKeyRecord> = emptyList()
-    override fun storeKyberPreKey(kyberPreKeyId: Int, record: KyberPreKeyRecord) = throw UnsupportedOperationException("No Kyber prekeys")
-    override fun containsKyberPreKey(kyberPreKeyId: Int): Boolean = false
-    override fun markKyberPreKeyUsed(kyberPreKeyId: Int) = throw UnsupportedOperationException("No Kyber prekeys")
-
     private fun SignalProtocolAddress.key() = "$name.$deviceId"
 
     companion object {
-        /** The server's queued-message TTL. */
-        const val SIGNED_PREKEY_GRACE_MS = 30L * 24 * 60 * 60 * 1000
+        /** How long a replaced signed or last-resort key is kept: the server's queued-message TTL. */
+        const val ARCHIVE_AGE_MS = 30L * 24 * 60 * 60 * 1000
+
+        /** How long a replaced one-time key is kept, as in Signal-Android. */
+        const val STALE_ONE_TIME_AGE_MS = 90L * 24 * 60 * 60 * 1000
+
+        const val MIN_ONE_TIME_KEPT = 200L
     }
 }

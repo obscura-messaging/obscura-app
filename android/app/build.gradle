@@ -202,7 +202,7 @@ dependencies {
     implementation("androidx.sqlite:sqlite:2.7.1")
 
     // libsignal Android native (replaces JVM variant from ObscuraKit)
-    implementation("org.signal:libsignal-android:0.72.0")
+    implementation("org.signal:libsignal-android:0.106.2")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")

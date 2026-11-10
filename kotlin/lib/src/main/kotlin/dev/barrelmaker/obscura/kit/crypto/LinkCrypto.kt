@@ -6,7 +6,6 @@ import dev.barrelmaker.obscura.kit.ObscuraError
 import obscura.client.v1.Client.LinkCode
 import obscura.client.v1.Client.LinkEnvelope
 import org.signal.libsignal.protocol.InvalidKeyException
-import org.signal.libsignal.protocol.ecc.Curve
 import org.signal.libsignal.protocol.ecc.ECKeyPair
 import org.signal.libsignal.protocol.ecc.ECPrivateKey
 import org.signal.libsignal.protocol.ecc.ECPublicKey
@@ -25,10 +24,10 @@ internal object LinkCrypto {
     fun seal(
         plaintext: ByteArray,
         peer: ECPublicKey,
-        ephemeral: ECKeyPair = Curve.generateKeyPair(),
+        ephemeral: ECKeyPair = ECKeyPair.generate(),
         nonce: ByteArray = AttachmentCrypto.randomNonce(),
     ): LinkEnvelope {
-        val key = key(Curve.calculateAgreement(peer, ephemeral.privateKey))
+        val key = key(ephemeral.privateKey.calculateAgreement(peer))
         return LinkEnvelope.newBuilder()
             .setEphemeralPublicKey(ByteString.copyFrom(ephemeral.publicKey.serialize()))
             .setNonce(ByteString.copyFrom(nonce))
@@ -42,8 +41,8 @@ internal object LinkCrypto {
         if (parsed.nonce.size() != AttachmentCrypto.NONCE_SIZE) {
             throw ObscuraError.LinkFailed("Link envelope nonce has invalid length")
         }
-        val peer = Curve.decodePoint(parsed.ephemeralPublicKey.toByteArray(), 0)
-        AttachmentCrypto.decrypt(parsed.ciphertext.toByteArray(), key(Curve.calculateAgreement(peer, own)), parsed.nonce.toByteArray())
+        val peer = ECPublicKey(parsed.ephemeralPublicKey.toByteArray())
+        AttachmentCrypto.decrypt(parsed.ciphertext.toByteArray(), key(own.calculateAgreement(peer)), parsed.nonce.toByteArray())
     } catch (e: InvalidProtocolBufferException) {
         throw ObscuraError.LinkFailed("Link envelope is malformed", e)
     } catch (e: InvalidKeyException) {
@@ -70,5 +69,5 @@ internal object LinkCrypto {
         return code
     }
 
-    fun publicKey(code: LinkCode): ECPublicKey = Curve.decodePoint(code.ephemeralPublicKey.toByteArray(), 0)
+    fun publicKey(code: LinkCode): ECPublicKey = ECPublicKey(code.ephemeralPublicKey.toByteArray())
 }

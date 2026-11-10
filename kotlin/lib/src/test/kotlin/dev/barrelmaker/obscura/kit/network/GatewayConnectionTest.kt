@@ -185,25 +185,15 @@ class GatewayConnectionTest {
             .build()
             .toByteArray()
             .toByteString()
-        val statusFrame = xyz.obscura.server.contracts.ObscuraProtocol.WebSocketFrame.newBuilder()
-            .setPreKeyStatus(xyz.obscura.server.contracts.ObscuraProtocol.PreKeyStatus.newBuilder().setOneTimePreKeyCount(5).setMinThreshold(10))
-            .build()
-            .toByteArray()
-            .toByteString()
-
-        enqueueGateway { ws ->
-            ws.send(batchFrame)
-            ws.send(statusFrame)
-        }
+        enqueueGateway { ws -> ws.send(batchFrame) }
         gateway.connect()
         gateway.ack(com.google.protobuf.ByteString.copyFromUtf8("env-1"))
 
         withTimeout(5_000) {
-            while (gateway.envelopes.isEmpty || gateway.preKeyStatus.isEmpty) delay(10)
+            while (gateway.envelopes.isEmpty) delay(10)
         }
         gateway.disconnect()
         assertTrue(gateway.envelopes.isEmpty)
-        assertTrue(gateway.preKeyStatus.isEmpty)
 
         // Failed WebSocket upgrade after ticket fetch fails connect without reconnecting
         server.enqueue(MockResponse.Builder().body("""{"ticket":"t"}""").build())

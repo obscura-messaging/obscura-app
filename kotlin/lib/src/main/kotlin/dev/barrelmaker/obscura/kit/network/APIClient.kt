@@ -92,7 +92,11 @@ internal class APIClient(
         send("POST", "/v1/keys", keys.toJson().body(), Auth.Session)
     }
 
-    /** One bundle per device of [userId]; consumes a one-time prekey on each. */
+    /** How many one-time pre-keys of each kind the server holds for this device. */
+    suspend fun fetchPreKeyCounts(): PreKeyCounts =
+        parse("/v1/keys") { PreKeyCounts.from(JSONObject(String(send("GET", "/v1/keys", null, Auth.Session)))) }
+
+    /** One bundle per device of [userId]; consumes a one-time EC and Kyber prekey on each where available. */
     suspend fun fetchPreKeyBundles(userId: String): JSONArray =
         parse("/v1/keys") { JSONObject(String(send("GET", "/v1/keys/${enc(userId)}", null, Auth.Session))).getJSONArray("bundles") }
 
@@ -172,7 +176,10 @@ internal class APIClient(
         vararg headers: Pair<String, String>,
     ): ByteArray = exchange(method, path, body, auth, *headers).second
 
-    /** Retries 429 and 503 after `Retry-After`; any other non-2xx is [ObscuraError.Http]. */
+    /**
+     * Retries 429 and 503 after `Retry-After` when that is at most [MAX_RETRY_AFTER_S]; any other non-2xx,
+     * or a longer wait (such as the pre-key fetch limit's), is [ObscuraError.Http].
+     */
     private suspend fun exchange(
         method: String,
         path: String,
@@ -202,9 +209,10 @@ internal class APIClient(
                     TokenStatus.UNAVAILABLE -> Unit
                 }
             }
-            if (status !in RETRYABLE || retries == MAX_RETRIES) throw ObscuraError.Http(status, String(bytes))
+            val waitMs = retryAfterMs(retryAfter)
+            if (status !in RETRYABLE || retries == MAX_RETRIES || waitMs == null) throw ObscuraError.Http(status, String(bytes))
             retries++
-            delay(retryAfterMs(retryAfter))
+            delay(waitMs)
         }
     }
 
@@ -238,7 +246,15 @@ internal class APIClient(
         private val RETRYABLE = setOf(429, 503)
         private const val MAX_RETRIES = 2
 
-        /** `Retry-After` seconds clamped to [1, 10]; the server sends 0 for a sub-second wait. */
-        fun retryAfterMs(header: String?): Long = (header?.trim()?.toLongOrNull() ?: 1L).coerceIn(1L, 10L) * 1000
+        private const val MAX_RETRY_AFTER_S = 10L
+
+        /**
+         * `Retry-After` in ms, at least 1 s since the server sends 0 for a sub-second wait; null when the
+         * server asks for longer than [MAX_RETRY_AFTER_S], which is not worth holding a request open for.
+         */
+        fun retryAfterMs(header: String?): Long? {
+            val seconds = (header?.trim()?.toLongOrNull() ?: 1L).coerceAtLeast(1L)
+            return if (seconds > MAX_RETRY_AFTER_S) null else seconds * 1000
+        }
     }
 }

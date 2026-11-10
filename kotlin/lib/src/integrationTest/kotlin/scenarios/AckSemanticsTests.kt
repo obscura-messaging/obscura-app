@@ -29,7 +29,7 @@ class AckSemanticsTests {
         override fun decryptFailed(sourceUserId: String, reason: String) { decryptFailures.incrementAndGet() }
         override fun ackFailed(envelopeId: String, reason: String) {}
         override fun tokenRefreshFailed(attempt: Int, reason: String) {}
-        override fun preKeyReplenishFailed(reason: String) {}
+        override fun preKeySyncFailed(reason: String) {}
         override fun identityChanged(userId: String) {}
         override fun sessionEstablishFailed(userId: String, reason: String) {}
         override fun databaseError(store: String, operation: String, reason: String) {}
@@ -39,7 +39,7 @@ class AckSemanticsTests {
     private suspend fun sendCorruptCiphertext(sender: ObscuraClient, userId: String, deviceId: String) {
         val address = Messenger.addressFor(deviceId)
         val plaintext = ClientMessage.newBuilder().setDirectMessage(DirectMessage.newBuilder().setId("corrupt")).build()
-        val ciphertext = SessionCipher(sender.signalStore, address).encrypt(plaintext.toByteArray())
+        val ciphertext = SessionCipher(sender.signalStore, Messenger.addressFor(sender.deviceId!!), address).encrypt(plaintext.toByteArray())
         val bytes = ciphertext.serialize().also { it[it.size - 1] = (it[it.size - 1].toInt() xor 0xFF).toByte() }
         val encrypted = EncryptedMessage.newBuilder()
             .setType(
