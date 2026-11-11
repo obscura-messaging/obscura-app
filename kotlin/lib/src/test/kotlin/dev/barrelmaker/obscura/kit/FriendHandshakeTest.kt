@@ -1,7 +1,6 @@
 package dev.barrelmaker.obscura.kit
 
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
-import dev.barrelmaker.obscura.kit.managers.FakeObscuraServer
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
@@ -13,8 +12,8 @@ import obscura.client.v1.Client.ClientMessage
 import org.json.JSONArray
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
-import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
+import obscura.v1.Obscura.Envelope
+import obscura.v1.Obscura.SendMessageRequest
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 

@@ -55,7 +55,7 @@ final class LinkingTests: XCTestCase {
         _ = try await client.login("alice", "password")
         let oldIdentity = try client.signalStore.identityKeyPair(context: NullContext()).serialize()
         try await client.content.insertConversationItem(ConversationItem(
-            id: "e", peerUserId: "u", kind: "message", authorUserId: "u", sentAt: 1,
+            id: "e", peerUserId: "u", kind: .message, authorUserId: "u", sentAt: 1,
             viewedAt: nil, content: "x", attachment: nil,
             caption: nil, captionMeta: nil, displayDuration: 0
         ))
@@ -83,7 +83,7 @@ final class LinkingTests: XCTestCase {
             attachment: nil, captionMeta: nil
         ))
         try await phoneClient.content.insertConversationItem(ConversationItem(
-            id: "p1", peerUserId: "bob-id", kind: "message", authorUserId: "bob-id", sentAt: 9,
+            id: "p1", peerUserId: "bob-id", kind: .message, authorUserId: "bob-id", sentAt: 9,
             viewedAt: nil, content: "ü", attachment: nil,
             caption: nil, captionMeta: nil, displayDuration: 0
         ))
@@ -289,7 +289,7 @@ final class LinkingTests: XCTestCase {
     func testCompleteLinkPollsApprovesAndRestoresHistory() async throws {
         try await phoneClient.friends.add(UUID().uuidString.lowercased(), username: "bob", status: .accepted)
         try await phoneClient.content.insertConversationItem(ConversationItem(
-            id: "hist_msg_1", peerUserId: "bob-id", kind: "message", authorUserId: "bob-id",
+            id: "hist_msg_1", peerUserId: "bob-id", kind: .message, authorUserId: "bob-id",
             sentAt: 500, viewedAt: nil, content: "history hello", attachment: nil,
             caption: nil, captionMeta: nil, displayDuration: 0
         ))

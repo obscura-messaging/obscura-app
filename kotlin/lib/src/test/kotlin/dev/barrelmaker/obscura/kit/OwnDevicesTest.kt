@@ -1,6 +1,5 @@
 package dev.barrelmaker.obscura.kit
 
-import dev.barrelmaker.obscura.kit.managers.FakeObscuraServer
 import dev.barrelmaker.obscura.kit.messaging.Messenger
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockResponse
@@ -89,9 +88,9 @@ class OwnDevicesTest {
             assertEquals("hi", c.getMessages().single().content)
             val requests = List(server.requestCount) { server.takeRequest() }
             assertEquals(listOf("/v1/keys/${peer.userId}", "/v1/messages"), requests.map { it.url.encodedPath })
-            val batched = xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest.parseFrom(requests[1].body!!.toByteArray())
+            val batched = obscura.v1.Obscura.SendMessageRequest.parseFrom(requests[1].body!!.toByteArray())
             assertEquals(1, batched.recipientsList.sumOf { it.submissionsCount })
-            assertEquals(listOf(peer.userId, SELF_USER_ID), batched.recipientsList.map { dev.barrelmaker.obscura.kit.crypto.UuidCodec.uuidString(it.userId) })
+            assertEquals(listOf(peer.userId, SELF_USER_ID), batched.recipientsList.map { dev.barrelmaker.obscura.kit.wire.UuidCodec.uuidString(it.userId) })
             c.auth.end()
             Unit
         }

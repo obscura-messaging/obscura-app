@@ -48,7 +48,7 @@ describe('Obscura.getMessages', () => {
         authorUserId: 'u_bob',
         sentAt: 200,
         viewedAt: 250,
-        attachment: { id: 'att_1', contentKey: 'k1', nonce: 'n1', mediaType: 'video' },
+        attachment: { id: 'att_1', mediaType: 'video' },
         caption: 'clip',
         captionMeta: JSON.stringify(boldMeta),
         displayDuration: 8,
@@ -60,7 +60,7 @@ describe('Obscura.getMessages', () => {
         authorUserId: 'u_self',
         sentAt: 300,
         viewedAt: null,
-        attachment: { id: 'att_2', contentKey: 'k2', nonce: 'n2', mediaType: 'image/jpeg' },
+        attachment: { id: 'att_2', mediaType: 'image/jpeg' },
         caption: null,
         captionMeta: 'invalid-json',
         displayDuration: 5,
@@ -86,7 +86,7 @@ describe('Obscura.getMessages', () => {
         authorUserId: 'u_bob',
         sentAt: 200,
         viewedAt: 250,
-        attachment: { id: 'att_1', contentKey: 'k1', nonce: 'n1', mediaType: 'video' },
+        attachment: { id: 'att_1', mediaType: 'video' },
         caption: 'clip',
         captionMeta: boldMeta,
         displayDuration: 8,
@@ -98,7 +98,7 @@ describe('Obscura.getMessages', () => {
         authorUserId: 'u_self',
         sentAt: 300,
         viewedAt: null,
-        attachment: { id: 'att_2', contentKey: 'k2', nonce: 'n2', mediaType: 'photo' },
+        attachment: { id: 'att_2', mediaType: 'photo' },
         caption: null,
         captionMeta: null,
         displayDuration: 5,
@@ -117,7 +117,7 @@ describe('Obscura.getStories', () => {
         authorUserId: 'u_bob',
         sentAt: 100,
         content: 'sunset',
-        attachment: { id: 'att_1', contentKey: 'k', nonce: 'n', mediaType: 'photo' },
+        attachment: { id: 'att_1', mediaType: 'photo' },
         captionMeta: JSON.stringify(barMeta),
       },
       {
@@ -125,7 +125,7 @@ describe('Obscura.getStories', () => {
         authorUserId: 'u_bob',
         sentAt: 200,
         content: 'movie',
-        attachment: { id: 'att_2', contentKey: 'k2', nonce: 'n2', mediaType: 'video' },
+        attachment: { id: 'att_2', mediaType: 'video' },
         captionMeta: null,
       },
       {
@@ -153,7 +153,7 @@ describe('Obscura.getStories', () => {
         authorUserId: 'u_bob',
         sentAt: 100,
         content: 'sunset',
-        attachment: { id: 'att_1', contentKey: 'k', nonce: 'n', mediaType: 'photo' },
+        attachment: { id: 'att_1', mediaType: 'photo' },
         captionMeta: barMeta,
       },
       {
@@ -161,7 +161,7 @@ describe('Obscura.getStories', () => {
         authorUserId: 'u_bob',
         sentAt: 200,
         content: 'movie',
-        attachment: { id: 'att_2', contentKey: 'k2', nonce: 'n2', mediaType: 'video' },
+        attachment: { id: 'att_2', mediaType: 'video' },
         captionMeta: null,
       },
       {
@@ -180,25 +180,6 @@ describe('Obscura.getStories', () => {
         attachment: null,
         captionMeta: null,
       },
-    ]);
-  });
-});
-
-describe('Obscura.sendPix & Obscura.postStory', () => {
-  it('serializes CaptionMeta objects to JSON strings before calling the native bridge', async () => {
-    bridge.__setFriends([{ userId: 'u_bob', username: 'bob', status: 'accepted' }]);
-    const meta = { style: 'bar' as const, y: 0.72 };
-
-    await Obscura.sendPix('u_bob', 'att_1', 'k', 'n', 'photo', 'hi', meta, 5);
-    await Obscura.postStory('story', 'att_1', 'k', 'n', 'photo', meta);
-    await Obscura.postStory('preencoded', null, null, null, null, '{"style":"bar","y":0.2}');
-
-    expect(bridge.messages).toEqual([
-      expect.objectContaining({ kind: 'pix', captionMeta: JSON.stringify(meta) }),
-    ]);
-    expect(bridge.stories).toEqual([
-      expect.objectContaining({ content: 'story', captionMeta: JSON.stringify(meta) }),
-      expect.objectContaining({ content: 'preencoded', captionMeta: '{"style":"bar","y":0.2}' }),
     ]);
   });
 });

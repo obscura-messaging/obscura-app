@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import ObscuraKit
 
-final class ServerContractTests: XCTestCase {
+final class ServerContractTests: ScenarioTestCase {
     func testLocalFriendRequestAndAcceptWritesRecoverAfterDecryptFailure() async throws {
         let alice = try await TestUser.register()
         let bob = try await TestUser.register()

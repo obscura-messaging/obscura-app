@@ -4,7 +4,7 @@ import SwiftProtobuf
 @testable import ObscuraKit
 
 /// Vector-driven client-wire conformance, consuming the shared
-/// `../protocol/conformance/wire.json`. Both platforms run the
+/// `../client-protocol/conformance/wire.json`. Both platforms run the
 /// same file.
 ///
 /// Pins the signal enum <-> app-facing-form mapping via the production
@@ -51,6 +51,19 @@ final class WireConformanceTests: XCTestCase {
             }
             XCTAssertEqual(WireCodec.decodeTypingState(wireState), appState, "decode \(wire)")
             XCTAssertEqual(WireCodec.encodeTypingState(appState), wireState, "encode \(app)")
+        }
+
+        for m in (v["mediaTypes"] as? [[String: Any]] ?? []) {
+            let wire = m["wire"] as? String ?? "", app = m["app"] as? String ?? ""
+            let decoded = MediaType(wire: wire)
+            XCTAssertEqual(decoded.rawValue, app, "decode \"\(wire)\"")
+            if wire == app { XCTAssertEqual(decoded.rawValue, wire, "encode \(app)") }
+        }
+
+        for m in (v["conversationKinds"] as? [[String: Any]] ?? []) {
+            let wire = m["wire"] as? String ?? "", app = m["app"] as? String ?? ""
+            XCTAssertEqual(ConversationKind(rawValue: wire)?.rawValue, app, "decode \(wire)")
+            XCTAssertEqual(ConversationKind(rawValue: app)?.rawValue, wire, "encode \(app)")
         }
 
         for rt in (v["roundTrip"] as? [[String: Any]] ?? []) {

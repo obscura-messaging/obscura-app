@@ -9,10 +9,9 @@ import { displayNameFor, type Friend, type Identity } from './friends';
 
 export type MediaType = 'photo' | 'video';
 
+/** The decryption keys stay in the native kit; the app downloads an attachment by its entry id. */
 export interface MediaAttachment {
   id: string;
-  contentKey: string;
-  nonce: string;
   mediaType: MediaType;
 }
 

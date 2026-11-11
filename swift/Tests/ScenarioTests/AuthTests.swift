@@ -2,7 +2,7 @@ import LibSignalClient
 import XCTest
 @testable import ObscuraKit
 
-final class AuthTests: XCTestCase {
+final class AuthTests: ScenarioTestCase {
     func testRegisterAuthenticatesAndPersistsExactlyTheSessionKeys() async throws {
         let storage = MemorySessionStorage()
         let alice = try await TestUser.register(makeClient(storage: storage))

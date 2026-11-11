@@ -38,8 +38,8 @@ sourceSets {
             // Transport is shared with the server through the root submodule.
             // Client content belongs to this repository and is shared only by
             // the Kotlin and Swift implementations.
-            srcDir("../../proto/obscura/v1")
-            srcDir("../../protocol/obscura/client/v1")
+            srcDir("../../server-proto/obscura/v1")
+            srcDir("../../client-protocol/obscura/client/v1")
         }
     }
     create("integrationTest") {
@@ -195,9 +195,8 @@ kover {
                     "dev.barrelmaker.obscura.kit.SignalSession",
                     "dev.barrelmaker.obscura.kit.SignalSignedPreKey",
                     "dev.barrelmaker.obscura.kit.SignalLocalIdentity",
-                    "obscura.*",                             // protobuf-generated (obscura.v2.*)
+                    "obscura.*",                             // protobuf-generated (obscura.v1, obscura.client.v1)
                     "client.*",                              // protobuf-generated
-                    "xyz.obscura.server.contracts.*",        // protobuf-generated (server contract types)
                     "scenarios.*"                            // integration test classes
                 )
             }

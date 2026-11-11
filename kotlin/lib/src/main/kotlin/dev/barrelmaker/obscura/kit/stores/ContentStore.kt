@@ -4,6 +4,9 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.ConversationEntry
+import dev.barrelmaker.obscura.kit.ConversationKind
+import dev.barrelmaker.obscura.kit.EntryModel
+import dev.barrelmaker.obscura.kit.MediaType
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.ProfileEntry
 import dev.barrelmaker.obscura.kit.StoryEntry
@@ -32,16 +35,15 @@ class MediaAttachment(
     val id: String,
     val contentKey: ByteArray,
     val nonce: ByteArray,
-    mediaType: String = "photo",
+    val mediaType: MediaType = MediaType.PHOTO,
 ) {
-    val mediaType: String = mediaType.ifBlank { "photo" }
 
     fun toProto(): AttachmentPointer =
         AttachmentPointer.newBuilder()
             .setId(id)
             .setContentKey(ByteString.copyFrom(contentKey))
             .setNonce(ByteString.copyFrom(nonce))
-            .setMediaType(mediaType)
+            .setMediaType(mediaType.value)
             .build()
 
     override fun equals(other: Any?): Boolean =
@@ -66,7 +68,7 @@ class MediaAttachment(
                     id = att.id,
                     contentKey = att.contentKey.toByteArray(),
                     nonce = att.nonce.toByteArray(),
-                    mediaType = att.mediaType,
+                    mediaType = MediaType.of(att.mediaType),
                 )
             } else null
     }
@@ -75,7 +77,7 @@ class MediaAttachment(
 data class ConversationItem(
     val id: String,
     val peerUserId: String,
-    val kind: String,
+    val kind: ConversationKind,
     val authorUserId: String,
     val sentAt: Long,
     val viewedAt: Long?,
@@ -88,8 +90,7 @@ data class ConversationItem(
     val undelivered: Boolean = false,
 ) {
     init {
-        require(kind == "message" || kind == "pix") { "Invalid conversation item kind: $kind" }
-        if (kind == "pix") {
+        if (kind == ConversationKind.PIX) {
             requireNotNull(attachment) { "pix requires an attachment" }
         } else {
             require(attachment == null && caption == null && captionMeta == null && displayDuration == 0) {
@@ -130,7 +131,7 @@ data class ConversationItem(
         return StoredMessageRecord.newBuilder()
             .setId(id)
             .setPeerUserId(peerUserId)
-            .setKind(kind)
+            .setKind(kind.value)
             .setAuthorUserId(authorUserId)
             .setSentAt(sentAt)
             .setViewedAt(viewedAt ?: 0L)
@@ -154,7 +155,7 @@ data class ConversationItem(
         ): ConversationItem = ConversationItem(
             id = id,
             peerUserId = peerUserId,
-            kind = "message",
+            kind = ConversationKind.MESSAGE,
             authorUserId = authorUserId,
             sentAt = sentAt,
             viewedAt = viewedAt,
@@ -176,7 +177,7 @@ data class ConversationItem(
         ): ConversationItem = ConversationItem(
             id = id,
             peerUserId = peerUserId,
-            kind = "pix",
+            kind = ConversationKind.PIX,
             authorUserId = authorUserId,
             sentAt = sentAt,
             viewedAt = viewedAt,
@@ -257,7 +258,7 @@ data class ProfileItem(
 
 data class SweepOutcome(
     val purgedMediaRefs: List<String>,
-    val touchedModels: List<String>,
+    val touchedModels: List<EntryModel>,
 )
 
 /** Typed local storage for messages, pix, stories, profiles, erased tombstones, and processed envelopes. */
@@ -290,7 +291,7 @@ internal class ContentStore(
         queries.insertMessage(
             id = item.id,
             peer_user_id = item.peerUserId,
-            kind = item.kind,
+            kind = item.kind.value,
             author_user_id = item.authorUserId,
             sent_at = item.sentAt,
             viewed_at = item.viewedAt,
@@ -299,7 +300,7 @@ internal class ContentStore(
             media_ref = att?.id,
             content_key = att?.contentKey,
             nonce = att?.nonce,
-            media_type = att?.mediaType,
+            media_type = att?.mediaType?.value,
             caption = item.caption,
             caption_meta = item.captionMeta,
             display_duration = item.displayDuration.toLong(),
@@ -316,6 +317,13 @@ internal class ContentStore(
 
     suspend fun getConversation(id: String): ConversationItem? = withContext(dispatcher) {
         getConversationInTransaction(id)
+    }
+
+    /** The attachment of the pix or story [entryId], if it has one. */
+    suspend fun getAttachment(entryId: String): MediaAttachment? = withContext(dispatcher) {
+        queries.selectAttachment(entryId).executeAsList().firstNotNullOfOrNull {
+            toAttachment(it.media_ref, it.content_key, it.nonce, it.media_type)
+        }
     }
 
     fun markConversationViewedInTransaction(id: String, viewedAt: Long, expiresAt: Long) {
@@ -352,7 +360,7 @@ internal class ContentStore(
             media_ref = att?.id,
             content_key = att?.contentKey,
             nonce = att?.nonce,
-            media_type = att?.mediaType,
+            media_type = att?.mediaType?.value,
             caption_meta = item.captionMeta,
             undelivered = if (item.undelivered) 1L else 0L,
         )
@@ -440,11 +448,11 @@ internal class ContentStore(
             val expiredStories = queries.selectExpiredStories(now).executeAsList()
 
             val purgedMediaRefs = mutableListOf<String>()
-            val touchedModels = mutableListOf<String>()
+            val touchedModels = mutableListOf<EntryModel>()
 
-            if (expiredMessages.any { it.kind == "message" }) touchedModels.add("directMessage")
-            if (expiredMessages.any { it.kind == "pix" }) touchedModels.add("pix")
-            if (expiredStories.isNotEmpty()) touchedModels.add("story")
+            if (expiredMessages.any { it.kind == ConversationKind.MESSAGE.value }) touchedModels.add(EntryModel.DIRECT_MESSAGE)
+            if (expiredMessages.any { it.kind == ConversationKind.PIX.value }) touchedModels.add(EntryModel.PIX)
+            if (expiredStories.isNotEmpty()) touchedModels.add(EntryModel.STORY)
 
             for (m in expiredMessages) {
                 if (!m.media_ref.isNullOrBlank()) purgedMediaRefs.add(m.media_ref)
@@ -480,14 +488,14 @@ private fun toAttachment(mediaRef: String?, contentKey: ByteArray?, nonce: ByteA
             id = mediaRef,
             contentKey = contentKey,
             nonce = nonce,
-            mediaType = mediaType.orEmpty(),
+            mediaType = MediaType.of(mediaType),
         )
     } else null
 
 private fun ConversationEntry.toData() = ConversationItem(
     id = id,
     peerUserId = peer_user_id,
-    kind = kind,
+    kind = ConversationKind.of(kind),
     authorUserId = author_user_id,
     sentAt = sent_at,
     viewedAt = viewed_at,

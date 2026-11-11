@@ -1,12 +1,10 @@
 package dev.barrelmaker.obscura.kit
 
 import com.google.protobuf.ByteString
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
-import dev.barrelmaker.obscura.kit.managers.FakeObscuraServer
-import dev.barrelmaker.obscura.kit.managers.PreKeys
-import dev.barrelmaker.obscura.kit.managers.TokenStatus
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
+import dev.barrelmaker.obscura.kit.crypto.PreKeys
+import dev.barrelmaker.obscura.kit.auth.TokenStatus
 import dev.barrelmaker.obscura.kit.messaging.parsePeerBundles
-import dev.barrelmaker.obscura.kit.persistence.SessionStorage
 import dev.barrelmaker.obscura.kit.stores.pragma
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -30,9 +28,9 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.signal.libsignal.protocol.IdentityKeyPair
-import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
-import xyz.obscura.server.contracts.ObscuraProtocol.EnvelopeBatch
-import xyz.obscura.server.contracts.ObscuraProtocol.WebSocketFrame
+import obscura.v1.Obscura.Envelope
+import obscura.v1.Obscura.EnvelopeBatch
+import obscura.v1.Obscura.WebSocketFrame
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -191,7 +189,7 @@ class SessionLifecycleTest {
         assertEquals(emptyList<String>(), c.observeTyping("ctx").first())
         c.content.putConversation(
             ConversationItem(
-                "e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), "kept",
+                "e", SELF_USER_ID, ConversationKind.MESSAGE, SELF_USER_ID, 1, null, expiresAt(1, null), "kept",
             ),
         )
         val wipeError = runCatching { c.wipeDevice() }.exceptionOrNull()
@@ -266,7 +264,7 @@ class SessionLifecycleTest {
         val secret = "DEVICE-WIPE-SECRET-83a10"
         c.content.putConversation(
             ConversationItem(
-                "e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), secret,
+                "e", SELF_USER_ID, ConversationKind.MESSAGE, SELF_USER_ID, 1, null, expiresAt(1, null), secret,
             ),
         )
         fun onDisk() = listOf(file, java.io.File("${file.absolutePath}-wal")).filter { it.exists() }
@@ -383,7 +381,7 @@ class SessionLifecycleTest {
         MockResponse.Builder().body("""{"oneTimePreKeyCount":$oneTime,"kyberPreKeyCount":$kyber}""").build()
 
     /** A client provisioned at [provisionedAt] whose clock reads [now]. */
-    private suspend fun provisionedClient(provisionedAt: Long, now: Long): Pair<ObscuraClient, dev.barrelmaker.obscura.kit.managers.ProvisioningKeys> {
+    private suspend fun provisionedClient(provisionedAt: Long, now: Long): Pair<ObscuraClient, dev.barrelmaker.obscura.kit.crypto.ProvisioningKeys> {
         val c = sessionClient(url, storedSession(), clock = { now })
         val keys = PreKeys.generateProvisioningKeys(IdentityKeyPair.generate(), provisionedAt)
         PreKeys.install(c.signalStore, keys)
@@ -610,8 +608,8 @@ class SessionLifecycleTest {
         val mgrScope = kotlinx.coroutines.CoroutineScope(
             kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.test.StandardTestDispatcher(testScheduler),
         )
-        lateinit var mgr: dev.barrelmaker.obscura.kit.managers.AuthManager
-        mgr = dev.barrelmaker.obscura.kit.managers.AuthManager(
+        lateinit var mgr: dev.barrelmaker.obscura.kit.auth.AuthManager
+        mgr = dev.barrelmaker.obscura.kit.auth.AuthManager(
             api = api,
             signalStore = signalStore,
             devices = devices,

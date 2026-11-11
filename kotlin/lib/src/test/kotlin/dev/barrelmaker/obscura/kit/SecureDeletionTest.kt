@@ -35,7 +35,7 @@ class SecureDeletionTest {
         val signalMarker = client.signalStore.generateIdentity().first.serialize()
         val entryMarker = "CHECKPOINT-SECRET-${UUID.randomUUID()}"
         client.content.putConversation(
-            ConversationItem("e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, 10, entryMarker),
+            ConversationItem("e", SELF_USER_ID, ConversationKind.MESSAGE, SELF_USER_ID, 1, null, 10, entryMarker),
         )
         driver.truncateWal()
         driver.pragma("PRAGMA secure_delete = OFF")
@@ -49,7 +49,7 @@ class SecureDeletionTest {
                 statement.executeQuery("SELECT content FROM ConversationEntry").use { rows ->
                     assertTrue(rows.next())
                     client.content.putConversation(
-                        ConversationItem("e", SELF_USER_ID, "message", SELF_USER_ID, 2, null, 10, "$entryMarker-updated"),
+                        ConversationItem("e", SELF_USER_ID, ConversationKind.MESSAGE, SELF_USER_ID, 2, null, 10, "$entryMarker-updated"),
                     )
                     assertTrue(contains(file, signalMarker), "control: Signal identity is present in main database")
                     assertTrue(contains(file, entryMarker.toByteArray()), "control: entry is present in main database")

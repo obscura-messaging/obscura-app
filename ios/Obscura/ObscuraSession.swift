@@ -34,7 +34,7 @@ final class ObscuraSession {
     private var restoreTask: Task<Void, Never>?
     private var messageTask: Task<Void, Never>?
     var onClientReplaced: ((ObscuraClient?) -> Void)?
-    var onMessageReceived: ((String) -> Void)?
+    var onMessageReceived: ((EntryModel) -> Void)?
     var onAppStateChanged: ((Bool) -> Void)?
 
     private init() {

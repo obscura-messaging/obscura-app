@@ -2,7 +2,7 @@ import XCTest
 @testable import ObscuraKit
 
 /// One account on a primary and linked devices, against a real server.
-final class MultiDeviceTests: XCTestCase {
+final class MultiDeviceTests: ScenarioTestCase {
     func testLinkedDevicesReceiveEveryMessageAndSyncTheirOwnWrites() async throws {
         let alice = try await TestUser.register()
         let laptop = try await TestUser.link(to: alice, name: "laptop")
@@ -166,7 +166,7 @@ final class MultiDeviceTests: XCTestCase {
             attachment: nil, captionMeta: nil
         )
         let msg = ConversationItem(
-            id: "m1", peerUserId: "some-peer-user", kind: "message", authorUserId: "some-peer-user",
+            id: "m1", peerUserId: "some-peer-user", kind: .message, authorUserId: "some-peer-user",
             sentAt: now, viewedAt: nil, content: "opaque", attachment: nil,
             caption: nil, captionMeta: nil, displayDuration: 0
         )

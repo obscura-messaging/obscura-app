@@ -1,6 +1,7 @@
 package scenarios
 
 import dev.barrelmaker.obscura.kit.AuthState
+import dev.barrelmaker.obscura.kit.ConversationKind
 import dev.barrelmaker.obscura.kit.LoginScenario
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.stores.ConversationItem
@@ -176,7 +177,7 @@ class MultiDeviceTests {
             ConversationItem(
                 id = "e$it",
                 peerUserId = "019f025a-0000-7de6-84b6-000000000002",
-                kind = "message",
+                kind = ConversationKind.MESSAGE,
                 authorUserId = alice.userId!!,
                 sentAt = 1_000L + it,
                 viewedAt = null,

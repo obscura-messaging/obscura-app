@@ -1,7 +1,7 @@
 import XCTest
 @testable import ObscuraKit
 
-final class TypingTests: XCTestCase {
+final class TypingTests: ScenarioTestCase {
     func testTypingReachesOnlyTheNamedRecipientsAndStoppedClearsIt() async throws {
         let (alice, bob) = try await TestUser.friends()
         let carol = try await TestUser.register()

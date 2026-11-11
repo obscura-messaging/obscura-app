@@ -83,11 +83,11 @@ bundle: ensure-node-modules
 
 # Lint the client-to-client protocol.
 protocol-lint:
-    buf lint protocol
+    buf lint client-protocol
 
 # Validate protocol conformance fixtures.
 protocol-vectors:
-    python3 protocol/conformance/validate.py
+    python3 client-protocol/conformance/validate.py
 
 # Run protocol conformance, then the Kotlin unit tests with coverage reports
 # and thresholds, in one Gradle process.

@@ -8,7 +8,7 @@ suite verifies that its codec satisfies the vectors.
 Runs with only the Python stdlib. Collects every violation, then exits non-zero
 so an author sees all problems at once.
 
-    python3 protocol/conformance/validate.py
+    python3 client-protocol/conformance/validate.py
 """
 
 from __future__ import annotations
@@ -92,8 +92,9 @@ def _unique_names(rep: Report, where: str, cases: list) -> None:
 def check_wire(rep: Report, doc: dict) -> None:
     f = "wire.json"
     _check_common(rep, f, doc, "wire")
-    rep.only_keys(f, doc, {"version", "kind", "description", "messageTypes", "typingStates", "roundTrip"})
-    for mapping in ("messageTypes", "typingStates"):
+    rep.only_keys(f, doc, {"version", "kind", "description", "messageTypes", "typingStates", "mediaTypes",
+                         "conversationKinds", "roundTrip"})
+    for mapping in ("messageTypes", "typingStates", "mediaTypes", "conversationKinds"):
         if rep.is_nonempty_list(f, doc, mapping):
             for i, m in enumerate(doc[mapping]):
                 w = f"{f} {mapping}[{i}]"
@@ -101,7 +102,11 @@ def check_wire(rep: Report, doc: dict) -> None:
                     rep.err(w, "must be an object")
                     continue
                 rep.only_keys(w, m, {"wire", "app"})
-                rep.is_str(w, m, "wire")
+                # A peer's media type is free text, so a blank one is a case worth pinning.
+                if mapping == "mediaTypes" and m.get("wire") == "":
+                    pass
+                else:
+                    rep.is_str(w, m, "wire")
                 rep.is_str(w, m, "app")
     if rep.is_nonempty_list(f, doc, "roundTrip"):
         _unique_names(rep, f + " roundTrip", doc["roundTrip"])

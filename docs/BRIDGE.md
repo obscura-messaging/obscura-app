@@ -18,6 +18,12 @@ constrained as it is.
   Resizing runs natively with bounded sampling (`inSampleSize` on Android,
   ImageIO thumbnailing on iOS) and EXIF orientation applied so JS never
   allocates uncompressed full-sensor bitmaps.
+- **Attachment keys stay native:** Each attachment's AES key and nonce live
+  only in the kit's encrypted database. JS sends a capture by path in one
+  `sendCapture` call and downloads by entry id, so key material never enters
+  the JS heap, logs, or crash reports. `captionMeta` stays a JSON string at
+  the boundary: its schema belongs to `src/domain/caption.ts`, and the kits
+  store it opaquely.
 - **Link secrets stay native:** During device linking, `LinkRequest` holds an
   ephemeral private key. Keeping the pending request inside the native bridge
   slot and exposing only the display string to JS prevents ephemeral key

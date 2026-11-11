@@ -151,19 +151,17 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
 
   const group = groups[groupIdx];
   const slide = group?.stories[storyIdx];
-  const rawAtt = slide?.attachment ?? null;
-  const attId = rawAtt?.id;
-  const attKey = rawAtt?.contentKey;
-  const attNonce = rawAtt?.nonce;
-  const attMediaType = rawAtt?.mediaType;
+  // Media is downloaded and cached by the id of the entry that carries it.
+  const mediaEntryId = slide?.attachment ? slide.id : undefined;
+  const attMediaType = slide?.attachment?.mediaType;
   const attachment = useMemo(
-    () => (attId !== undefined && attKey !== undefined && attNonce !== undefined && attMediaType !== undefined
-      ? { id: attId, contentKey: attKey, nonce: attNonce, mediaType: attMediaType }
+    () => (mediaEntryId !== undefined && attMediaType !== undefined
+      ? { entryId: mediaEntryId, mediaType: attMediaType }
       : null),
-    [attId, attKey, attNonce, attMediaType],
+    [mediaEntryId, attMediaType],
   );
   const mediaUri = attachment
-    ? (loadedMedia?.id === attachment.id ? loadedMedia.uri : mediaUris.get(attachment.id) ?? null)
+    ? (loadedMedia?.id === attachment.entryId ? loadedMedia.uri : mediaUris.get(attachment.entryId) ?? null)
     : null;
 
   useEffect(() => {
@@ -216,7 +214,7 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const rewind = useCallback(() => applyStep('rewind'), [applyStep]);
 
   useEffect(() => {
-    if (!attachment || mediaUris.has(attachment.id)) {
+    if (!attachment || mediaUris.has(attachment.entryId)) {
       setMediaLoading(false);
       return;
     }
@@ -224,8 +222,8 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
     setMediaLoading(true);
     (async () => {
       try {
-        const uri = await loadAttachmentUri(attachment, mediaUris);
-        if (!cancelled) setLoadedMedia({ id: attachment.id, uri });
+        const uri = await loadAttachmentUri(attachment.entryId, mediaUris);
+        if (!cancelled) setLoadedMedia({ id: attachment.entryId, uri });
       } catch (e) {
         logError('storyMedia.load', e);
       } finally {
@@ -242,9 +240,8 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
       groups[groupIdx - 1]?.stories[0],
     ];
     for (const candidate of candidates) {
-      const att = candidate?.attachment;
-      if (att && !mediaUris.has(att.id)) {
-        loadAttachmentUri(att, mediaUris).catch((e) => logError('storyMedia.prefetch', e));
+      if (candidate?.attachment && !mediaUris.has(candidate.id)) {
+        loadAttachmentUri(candidate.id, mediaUris).catch((e) => logError('storyMedia.prefetch', e));
       }
     }
   }, [group, storyIdx, groups, groupIdx, mediaUris]);

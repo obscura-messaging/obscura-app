@@ -3,7 +3,7 @@ package scenarios
 import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraLogger
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
 import dev.barrelmaker.obscura.kit.messaging.Messenger
 import kotlinx.coroutines.runBlocking
 import obscura.client.v1.Client.ClientMessage
@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.signal.libsignal.protocol.SessionCipher
 import org.signal.libsignal.protocol.message.CiphertextMessage
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
+import obscura.v1.Obscura.SendMessageRequest
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 

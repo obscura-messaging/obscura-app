@@ -1,11 +1,11 @@
 /**
- * Dumb Tier-2 `ObscuraBridge` stub for testing `ObscuraModule.ts` and `src/state/`.
+ * A dumb `ObscuraBridge` stub for testing `ObscuraModule.ts` and `src/state/`.
  * Holds plain arrays and state fields, records calls, and emits events on demand.
  */
 
 import { serializeCaptionMeta, type CaptionMeta } from '../../domain/caption';
 import type {
-  AuthState, ConnectionState, DeviceInfo, Friend, LaunchIntent,
+  AuthState, CaptureRequest, CaptureResult, ConnectionState, DeviceInfo, EntryModel, Friend, LaunchIntent,
   LoginScenario, ObscuraBridge, ProfileItem, RawAttachment,
   RawConversationItem, RawDirectMessageItem, RawPixItem, RawStoryItem,
 } from '../ObscuraModule';
@@ -49,7 +49,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
   private deferred = new Map<string, Promise<void>>();
   private loginQueue: LoginScenario[] = [];
   private unreachable = new Set<string>();
-  private sweepResult: string[] = ['directMessage', 'pix', 'story'];
+  private sweepResult: EntryModel[] = ['directMessage', 'pix', 'story'];
   private linkCode: string | null = null;
   private linkWait: { resolve: () => void; reject: (e: Error) => void } | null = null;
   private seq = 1_700_000_000_000;
@@ -93,7 +93,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
   getStories(): Promise<RawStoryItem[]> { return this.step('getStories', () => [...this.stories]); }
   getProfiles(): Promise<ProfileItem[]> { return this.step('getProfiles', () => [...this.profiles]); }
   flushOutbox(): Promise<number> { return this.step('flushOutbox', () => 0); }
-  sweepExpired(): Promise<string[]> { return this.step('sweepExpired', () => [...this.sweepResult]); }
+  sweepExpired(): Promise<EntryModel[]> { return this.step('sweepExpired', () => [...this.sweepResult]); }
 
   async sendMessage(peerUserId: string, content: string): Promise<string> {
     this.__calls.push('sendMessage');
@@ -105,20 +105,32 @@ export class FakeObscuraBridge implements ObscuraBridge {
     return id;
   }
 
-  async sendPix(
-    peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
-    mediaType: string, caption: string, captionMeta: string | null, displayDuration: number,
-  ): Promise<string> {
-    this.__calls.push('sendPix');
-    if (peerUserId.trim() === '') throw rejection('INVALID_ARGUMENT', 'peerUserId is required');
-    const sentAt = ++this.seq, id = `pix_${sentAt}`;
-    this.messages.push({
-      kind: 'pix', id, peerUserId, authorUserId: this.userId, sentAt, viewedAt: null,
-      attachment: { id: mediaRef, contentKey, nonce, mediaType }, caption, captionMeta, displayDuration,
-    });
-    this.checkFailure('sendPix');
-    if (this.unreachable.has(peerUserId)) throw rejection('SEND_FAILED', 'pix reached none of its recipients');
-    return id;
+  /** Mirrors the kit: one upload, then every pix and the story are stored whether or not they reach anyone. */
+  async sendCapture(capture: CaptureRequest): Promise<CaptureResult> {
+    this.__calls.push('sendCapture');
+    this.checkFailure('sendCapture');
+    const attachment: RawAttachment = { id: `att_${++this.seq}`, mediaType: capture.mediaType };
+    const undeliveredUserIds: string[] = [];
+    for (const peerUserId of capture.recipientUserIds) {
+      const sentAt = ++this.seq;
+      this.messages.push({
+        kind: 'pix', id: `pix_${sentAt}`, peerUserId, authorUserId: this.userId, sentAt, viewedAt: null,
+        attachment, caption: capture.caption, captionMeta: capture.captionMeta,
+        displayDuration: capture.displayDuration,
+      });
+      if (this.unreachable.has(peerUserId)) undeliveredUserIds.push(peerUserId);
+    }
+    let storyUndelivered = false;
+    if (capture.toStory) {
+      const sentAt = ++this.seq;
+      this.stories.push({
+        id: `story_${sentAt}`, authorUserId: this.userId, sentAt, content: capture.caption,
+        attachment, captionMeta: capture.captionMeta,
+      });
+      // Like the kit: undelivered only when there is an audience and none of it was reached.
+      storyUndelivered = this.friends.length > 0 && this.friends.every((f) => this.unreachable.has(f.userId));
+    }
+    return { undeliveredUserIds, storyUndelivered };
   }
 
   markSeen(entryId: string): Promise<void> {
@@ -127,22 +139,6 @@ export class FakeObscuraBridge implements ObscuraBridge {
       if (!item || item.authorUserId === this.userId || item.viewedAt !== null) return;
       item.viewedAt = ++this.seq;
     });
-  }
-
-  async postStory(
-    content: string, mediaRef: string | null, contentKey: string | null,
-    nonce: string | null, mediaType: string | null, captionMeta: string | null,
-  ): Promise<string> {
-    this.__calls.push('postStory');
-    const sentAt = ++this.seq, id = `story_${sentAt}`;
-    const attachment: RawAttachment | null = mediaRef && contentKey && nonce
-      ? { id: mediaRef, contentKey, nonce, mediaType: mediaType ?? 'photo' } : null;
-    this.stories.push({ id, authorUserId: this.userId, sentAt, content, attachment, captionMeta });
-    this.checkFailure('postStory');
-    if (this.friends.some((f) => this.unreachable.has(f.userId))) {
-      throw rejection('SEND_FAILED', 'story reached none of its recipients');
-    }
-    return id;
   }
 
   async updateProfile(displayName: string, bio: string): Promise<void> {
@@ -266,12 +262,8 @@ export class FakeObscuraBridge implements ObscuraBridge {
   observeTyping(_peerUserId: string): Promise<void> { return this.step('observeTyping', () => {}); }
   stopObservingTyping(_peerUserId: string): Promise<void> { return this.step('stopObservingTyping', () => {}); }
 
-  uploadAttachment(filePath: string): Promise<{ id: string; contentKey: string; nonce: string }> {
-    return this.step('uploadAttachment', () => ({ id: `att_${++this.seq}`, contentKey: 'key_' + filePath.length, nonce: 'nonce' }));
-  }
-
-  downloadAttachment(id: string, _contentKey: string, _nonce: string): Promise<string> {
-    return this.step('downloadAttachment', () => `/fake/cache/${id}`);
+  downloadAttachment(entryId: string): Promise<string> {
+    return this.step('downloadAttachment', () => `/fake/cache/${entryId}`);
   }
 
   resizeImage(srcPath: string, maxDim: number, _quality: number): Promise<{ path: string; width: number; height: number }> {
@@ -300,7 +292,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
     return release;
   }
   __setUnreachable(userIds: string[]): void { this.unreachable = new Set(userIds); }
-  __setSweepResult(models: string[]): void { this.sweepResult = models; }
+  __setSweepResult(models: EntryModel[]): void { this.sweepResult = models; }
 
   __deliverMessage(input: Partial<RawDirectMessageItem> = {}): RawDirectMessageItem {
     const sentAt = input.sentAt ?? ++this.seq;
@@ -325,7 +317,7 @@ export class FakeObscuraBridge implements ObscuraBridge {
       kind: 'pix', id: input.id ?? `pix_${sentAt}`,
       peerUserId: input.peerUserId ?? (authorUserId === this.userId ? 'user_peer' : authorUserId),
       authorUserId, sentAt, viewedAt: input.viewedAt ?? null,
-      attachment: input.attachment ?? { id: 'att_1', contentKey: 'key', nonce: 'nonce', mediaType: 'photo' },
+      attachment: input.attachment ?? { id: 'att_1', mediaType: 'photo' },
       caption: input.caption ?? null,
       captionMeta: typeof input.captionMeta === 'object' && input.captionMeta !== null ? serializeCaptionMeta(input.captionMeta) : (input.captionMeta ?? null),
       displayDuration: input.displayDuration ?? 5,

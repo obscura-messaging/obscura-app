@@ -1,7 +1,6 @@
 package dev.barrelmaker.obscura.kit
 
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
-import dev.barrelmaker.obscura.kit.managers.FakeObscuraServer
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
 import dev.barrelmaker.obscura.kit.stores.Friend
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import dev.barrelmaker.obscura.kit.wire.WireCodec
@@ -18,7 +17,7 @@ import obscura.client.v1.Client.FriendStatus as WireFriendStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
+import obscura.v1.Obscura.SendMessageRequest
 import java.util.Collections
 
 /** The primary owns the friend list; linked devices follow its FriendListSync. */

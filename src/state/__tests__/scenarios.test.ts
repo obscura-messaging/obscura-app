@@ -136,7 +136,7 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
       id: 'pix_in_1',
       peerUserId: BOB.userId,
       authorUserId: BOB.userId,
-      attachment: { id: 'att_1', contentKey: 'k', nonce: 'n', mediaType: 'photo' },
+      attachment: { id: 'att_1', mediaType: 'photo' },
       caption: 'look!',
       displayDuration: 5,
     });

@@ -76,7 +76,7 @@ describe('slide projections & viewer groups', () => {
       authorUserId: BOB.userId,
       sentAt: 100,
       content: 'hello story',
-      attachment: { id: 'att_s', contentKey: 'k', nonce: 'n', mediaType: 'photo' },
+      attachment: { id: 'att_s', mediaType: 'photo' },
       captionMeta: { style: 'bar', y: 0.5 },
     };
     const storyNewer: StoryItem = {
@@ -107,7 +107,7 @@ describe('slide projections & viewer groups', () => {
       authorUserId: BOB.userId,
       sentAt: 100,
       viewedAt: null,
-      attachment: { id: 'att_p', contentKey: 'k', nonce: 'n', mediaType: 'video' },
+      attachment: { id: 'att_p', mediaType: 'video' },
       caption: 'watch this',
       captionMeta: null,
       displayDuration: 10,

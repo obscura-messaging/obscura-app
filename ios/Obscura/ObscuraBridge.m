@@ -57,9 +57,9 @@ RCT_EXTERN_METHOD(stopObservingTyping:(NSString *)peerUserId
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 
 // ── Attachments ───────────────────────────────────────────────────────────
-RCT_EXTERN_METHOD(uploadAttachment:(NSString *)filePath
+RCT_EXTERN_METHOD(sendCapture:(NSDictionary *)capture
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(downloadAttachment:(NSString *)id contentKey:(NSString *)contentKey nonce:(NSString *)nonce
+RCT_EXTERN_METHOD(downloadAttachment:(NSString *)entryId
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 
 // ── Image processing ──────────────────────────────────────────────────────
@@ -91,16 +91,9 @@ RCT_EXTERN_METHOD(registerPushToken:(NSString *)token
 RCT_EXTERN_METHOD(getMessages:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(sendMessage:(NSString *)peerUserId content:(NSString *)content
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(sendPix:(NSString *)peerUserId mediaRef:(NSString *)mediaRef contentKey:(NSString *)contentKey
-                  nonce:(NSString *)nonce mediaType:(NSString *)mediaType caption:(NSString *)caption
-                  captionMeta:(NSString *)captionMeta displayDuration:(nonnull NSNumber *)displayDuration
-                  resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(markSeen:(NSString *)entryId
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(getStories:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-RCT_EXTERN_METHOD(postStory:(NSString *)content mediaRef:(NSString *)mediaRef contentKey:(NSString *)contentKey
-                  nonce:(NSString *)nonce mediaType:(NSString *)mediaType captionMeta:(NSString *)captionMeta
-                  resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(getProfiles:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(updateProfile:(NSString *)displayName bio:(NSString *)bio
                   resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)

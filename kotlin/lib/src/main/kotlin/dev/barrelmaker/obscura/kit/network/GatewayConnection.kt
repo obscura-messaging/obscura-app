@@ -19,9 +19,9 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
-import xyz.obscura.server.contracts.ObscuraProtocol.AckMessage
-import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
-import xyz.obscura.server.contracts.ObscuraProtocol.WebSocketFrame
+import obscura.v1.Obscura.AckMessage
+import obscura.v1.Obscura.Envelope
+import obscura.v1.Obscura.WebSocketFrame
 import java.util.concurrent.TimeUnit
 
 /**
@@ -130,7 +130,6 @@ internal class GatewayConnection(
     private fun scheduleReconnect(): Unit = synchronized(lock) {
         val delayMs = (1_000L shl reconnectAttempts.coerceAtMost(5)).coerceAtMost(30_000L)
         reconnectAttempts++
-        _state.value = ConnectionState.RECONNECTING
         reconnectJob = scope.launch {
             delay(delayMs)
             val attempt = synchronized(lock) {
@@ -147,6 +146,8 @@ internal class GatewayConnection(
                 if (abandon(attempt)) scheduleReconnect()
             }
         }
+        // Only after the reconnect is scheduled: whoever sees RECONNECTING can rely on one being pending.
+        _state.value = ConnectionState.RECONNECTING
     }
 
     private inner class Listener(

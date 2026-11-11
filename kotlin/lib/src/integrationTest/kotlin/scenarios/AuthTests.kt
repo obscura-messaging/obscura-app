@@ -99,7 +99,7 @@ class AuthTests {
         val client = registerAndConnect("scope")
         client.disconnect()
 
-        assertEquals(dev.barrelmaker.obscura.kit.managers.TokenStatus.FRESH, client.auth.refresh())
+        assertEquals(dev.barrelmaker.obscura.kit.auth.TokenStatus.FRESH, client.auth.refresh())
 
         client.connect()
         assertEquals(ConnectionState.CONNECTED, client.connectionState.value)

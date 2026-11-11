@@ -3,9 +3,9 @@ package dev.barrelmaker.obscura.kit.wire
 import org.json.JSONObject
 import java.io.File
 
-/** A vector file from `protocol/conformance/`, resolved from `:lib:test`'s working directory (`kotlin/lib`). */
+/** A vector file from `client-protocol/conformance/`, resolved from `:lib:test`'s working directory (`kotlin/lib`). */
 fun loadVectors(name: String): JSONObject {
-    val file = File("../../protocol/conformance/$name")
+    val file = File("../../client-protocol/conformance/$name")
     check(file.exists()) { "conformance vector '$name' not found at ${file.path}" }
     return JSONObject(file.readText())
 }

@@ -9,7 +9,8 @@ A **pix** is a direct, disappearing photo or video message, not the app's name.
 ## Layer boundaries
 
 Code and tests are the authority on behaviour; Markdown documents explain only
-**why** boundaries and constraints exist.
+**why** boundaries and constraints exist. The exception is
+[`docs/KIT_API.md`](docs/KIT_API.md), the behaviour contract both kits implement.
 
 - **Bridge & storage (`src/native/`, `android/`, `ios/`):**
   Native hosts manage OS lifecycle, permissions, files, push, and React Native
@@ -29,7 +30,7 @@ Code and tests are the authority on behaviour; Markdown documents explain only
 - [`docs/DOMAIN_CONTRACT.md`](docs/DOMAIN_CONTRACT.md): why the domain rules are
   shaped as they are.
 - [`docs/BRIDGE.md`](docs/BRIDGE.md): why the React Native bridge is constrained
-  as it is ([kit rationale](docs/KIT_API.md)).
+  as it is ([kit contract](docs/KIT_API.md)).
 - [`docs/PUSH_NOTIFICATIONS.md`](docs/PUSH_NOTIFICATIONS.md): push privacy
   rationale.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): setup, `just check`, and native pin.

@@ -5,6 +5,16 @@ public struct AttachmentUpload: Sendable, Equatable {
     public let id: String
     public let contentKey: Data
     public let nonce: Data
+
+    public func media(_ mediaType: MediaType) -> MediaAttachment {
+        MediaAttachment(id: id, contentKey: contentKey, nonce: nonce, mediaType: mediaType)
+    }
+}
+
+/// What `sendCapture` reached nobody with.
+public struct CaptureResult: Sendable, Equatable {
+    public let undeliveredPeerUserIds: [String]
+    public let storyUndelivered: Bool
 }
 
 /// AES-256-GCM without associated data. The ciphertext is `ciphertext || tag`, the nonce travels separately.

@@ -1,6 +1,7 @@
 package scenarios
 
 import dev.barrelmaker.obscura.kit.ConnectionState
+import dev.barrelmaker.obscura.kit.EntryModel
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -19,11 +20,11 @@ class PushTests {
 
         alice.sendMessage(bob.userId!!, "a1")
         alice.sendMessage(bob.userId!!, "a2")
-        alice.postStory("b1", null, null, null, null, null)
+        alice.postStory("b1", null, null)
 
         assertEquals(3, bob.processPendingMessages(timeoutMs = 10_000))
         assertEquals(ConnectionState.CONNECTED, bob.connectionState.value)
-        assertEquals(listOf("directMessage", "directMessage", "story"), List(3) { bob.messageReceived.tryReceive().getOrNull() })
+        assertEquals(listOf(EntryModel.DIRECT_MESSAGE, EntryModel.DIRECT_MESSAGE, EntryModel.STORY), List(3) { bob.messageReceived.tryReceive().getOrNull() })
         assertEquals(2, bob.getMessages().size)
         assertEquals(1, bob.getStories().size)
         alice.disconnect(); bob.disconnect()

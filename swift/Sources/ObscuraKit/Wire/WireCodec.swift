@@ -1,6 +1,6 @@
 import Foundation
 
-/// Wire <-> app-facing mappings, pinned by `protocol/conformance/wire.json`.
+/// Wire <-> app-facing mappings, pinned by `client-protocol/conformance/wire.json`.
 enum WireCodec {
     /// The set payload arm's field name in upper snake case; "" when unset or unknown.
     static func messageKind(_ payload: Obscura_Client_V1_ClientMessage.OneOf_Payload?) -> String {

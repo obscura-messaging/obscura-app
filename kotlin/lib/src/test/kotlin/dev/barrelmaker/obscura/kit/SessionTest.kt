@@ -61,7 +61,7 @@ class SessionTest {
 
     @Test
     fun `Credentials from rejects each missing or malformed field`() {
-        val valid = dev.barrelmaker.obscura.kit.managers.Credentials(
+        val valid = dev.barrelmaker.obscura.kit.auth.Credentials(
             token = "tok",
             refreshToken = "ref",
             expiresAt = 1_000L,
@@ -69,7 +69,7 @@ class SessionTest {
             deviceId = SELF_DEVICE_ID,
             username = "self",
         ).toMap()
-        assertEquals("tok", dev.barrelmaker.obscura.kit.managers.Credentials.from(valid)?.token)
+        assertEquals("tok", dev.barrelmaker.obscura.kit.auth.Credentials.from(valid)?.token)
 
         val invalidMaps = listOf(
             valid - "token",
@@ -88,7 +88,7 @@ class SessionTest {
             valid + ("username" to " "),
         )
         for (map in invalidMaps) {
-            assertNull(dev.barrelmaker.obscura.kit.managers.Credentials.from(map), "expected null for $map")
+            assertNull(dev.barrelmaker.obscura.kit.auth.Credentials.from(map), "expected null for $map")
         }
     }
 
@@ -140,7 +140,7 @@ class SessionTest {
 
         val results = List(8) { async(kotlinx.coroutines.Dispatchers.Default) { c.auth.refresh() } }.awaitAll()
 
-        assertTrue(results.all { it == dev.barrelmaker.obscura.kit.managers.TokenStatus.FRESH })
+        assertTrue(results.all { it == dev.barrelmaker.obscura.kit.auth.TokenStatus.FRESH })
         assertEquals(1, refreshCalls.get())
     }
 
@@ -172,7 +172,7 @@ class SessionTest {
         c.route(friendRequest(), "019f025a-0000-7de6-84b6-000000000002", "dev", "env-1")
         c.route(ClientMessage.getDefaultInstance(), "019f025a-0000-7de6-84b6-000000000002", "dev", "env-2")
         c.content.putConversation(
-            ConversationItem("e", "019f025a-0000-7de6-84b6-000000000002", "message", SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
+            ConversationItem("e", "019f025a-0000-7de6-84b6-000000000002", ConversationKind.MESSAGE, SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
         )
 
         c.wipeDevice()
