@@ -282,8 +282,24 @@ jobs:
           SERVER_SHA: ${{ steps.server-ref.outputs.sha }}
         run: just server-up "$SERVER_SHA"
 
+      # DIAGNOSTIC (not for merge): reproduce the CI stalls on purpose. Every few seconds Valkey holds
+      # all clients for 800 ms, past the server's 500 ms response timeout, and each pause is logged on
+      # the same clock as the kit's log.
       - name: Integration tests
-        run: just swift-integration http://localhost:3000
+        run: |
+          (
+            while :; do
+              sleep 3
+              echo "[valkey-pause $(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)] CLIENT PAUSE 800" >> "$RUNNER_TEMP/valkey-pauses.log"
+              valkey-cli -p 6379 CLIENT PAUSE 800 ALL >/dev/null 2>&1 || true
+            done
+          ) &
+          pauser=$!
+          status=0
+          just swift-integration http://localhost:3000 || status=$?
+          kill "$pauser" 2>/dev/null || true
+          cp "$RUNNER_TEMP/valkey-pauses.log" ~/.cache/obscura-server/run/valkey-pauses.log 2>/dev/null || true
+          exit "$status"
 
       - name: Server log
         if: failure()
