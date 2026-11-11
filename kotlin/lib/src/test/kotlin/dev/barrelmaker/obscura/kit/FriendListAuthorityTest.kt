@@ -1,7 +1,6 @@
 package dev.barrelmaker.obscura.kit
 
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
-import dev.barrelmaker.obscura.kit.managers.FakeObscuraServer
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
 import dev.barrelmaker.obscura.kit.stores.Friend
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import dev.barrelmaker.obscura.kit.wire.WireCodec

@@ -5,7 +5,6 @@ import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.crypto.LinkCrypto
 import dev.barrelmaker.obscura.kit.stores.Friend
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
-import dev.barrelmaker.obscura.kit.wire.WireCodec
 import obscura.client.v1.Client.HistorySnapshot
 import obscura.client.v1.Client.LinkBundle
 import obscura.client.v1.Client.LinkCode

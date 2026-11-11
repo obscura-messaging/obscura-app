@@ -1,7 +1,7 @@
 package dev.barrelmaker.obscura.kit.network
 
 import dev.barrelmaker.obscura.kit.ObscuraError
-import dev.barrelmaker.obscura.kit.managers.TokenStatus
+import dev.barrelmaker.obscura.kit.auth.TokenStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call

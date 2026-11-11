@@ -1,11 +1,8 @@
-package dev.barrelmaker.obscura.kit.managers
+package dev.barrelmaker.obscura.kit.messaging
 
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.SubmissionResult
 import dev.barrelmaker.obscura.kit.SubmissionStatus
-import dev.barrelmaker.obscura.kit.messaging.Messenger
-import dev.barrelmaker.obscura.kit.messaging.PeerBundle
-import dev.barrelmaker.obscura.kit.messaging.UserSubmission
 import dev.barrelmaker.obscura.kit.messaging.parsePeerBundle
 import dev.barrelmaker.obscura.kit.messaging.parsePeerBundles
 import dev.barrelmaker.obscura.kit.messaging.requireConsistent

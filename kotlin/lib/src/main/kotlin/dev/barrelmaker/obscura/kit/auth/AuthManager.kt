@@ -1,15 +1,17 @@
-package dev.barrelmaker.obscura.kit.managers
+package dev.barrelmaker.obscura.kit.auth
 
 import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.LoginScenario
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.ObscuraLogger
+import dev.barrelmaker.obscura.kit.SessionStorage
+import dev.barrelmaker.obscura.kit.crypto.PreKeys
+import dev.barrelmaker.obscura.kit.crypto.ProvisioningKeys
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
 import dev.barrelmaker.obscura.kit.network.APIClient
 import dev.barrelmaker.obscura.kit.network.AuthResponse
 import dev.barrelmaker.obscura.kit.network.LinkSession
 import dev.barrelmaker.obscura.kit.network.isUuid
-import dev.barrelmaker.obscura.kit.persistence.SessionStorage
 import dev.barrelmaker.obscura.kit.stores.DeviceStore
 import dev.barrelmaker.obscura.kit.stores.LocalDevice
 import kotlinx.coroutines.CancellationException

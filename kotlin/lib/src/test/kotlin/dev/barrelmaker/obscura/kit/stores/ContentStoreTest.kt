@@ -12,7 +12,7 @@ import dev.barrelmaker.obscura.kit.CaptureResult
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import dev.barrelmaker.obscura.kit.generateIdentity
 import dev.barrelmaker.obscura.kit.linking.HistorySync
-import dev.barrelmaker.obscura.kit.managers.FakeObscuraServer
+import dev.barrelmaker.obscura.kit.FakeObscuraServer
 import dev.barrelmaker.obscura.kit.sessionClient
 import dev.barrelmaker.obscura.kit.storeLocalDevice
 import dev.barrelmaker.obscura.kit.storedSession

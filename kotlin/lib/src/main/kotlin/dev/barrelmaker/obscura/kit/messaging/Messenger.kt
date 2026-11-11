@@ -4,7 +4,7 @@ import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.SubmissionStatus
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
 import dev.barrelmaker.obscura.kit.network.APIClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
