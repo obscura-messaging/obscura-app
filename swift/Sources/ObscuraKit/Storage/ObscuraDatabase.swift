@@ -4,7 +4,8 @@ import GRDB
 enum ObscuraDatabase {
     static let tables = [
         "friends", "friend_list_version", "device_identity", "devices",
-        "signal_local_identity", "signal_identities", "signal_prekeys", "signal_signed_prekeys", "signal_sessions",
+        "signal_local_identity", "signal_identities", "signal_prekeys", "signal_signed_prekeys", "signal_kyber_prekeys",
+        "signal_last_resort_key_uses", "signal_prekey_state", "signal_sessions",
         "processed_envelopes", "conversation_entries", "story_entries", "profile_entries", "erased_entries",
     ]
 
@@ -81,14 +82,44 @@ enum ObscuraDatabase {
                     user_id TEXT PRIMARY KEY,
                     key_data BLOB NOT NULL
                 );
+                -- A one-time key is stale once a newer batch replaces it on the server; stale keys still
+                -- decrypt messages in flight and are deleted later (see PersistentSignalStore).
                 CREATE TABLE signal_prekeys (
                     key_id INTEGER PRIMARY KEY,
-                    record BLOB NOT NULL
+                    record BLOB NOT NULL,
+                    stale_at INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE signal_signed_prekeys (
                     key_id INTEGER PRIMARY KEY,
+                    record BLOB NOT NULL
+                );
+                -- One-time and last-resort Kyber keys share one id space, as in libsignal's store.
+                CREATE TABLE signal_kyber_prekeys (
+                    key_id INTEGER PRIMARY KEY,
                     record BLOB NOT NULL,
-                    superseded_at INTEGER
+                    last_resort INTEGER NOT NULL,
+                    stale_at INTEGER NOT NULL DEFAULT 0
+                );
+                -- Each (last-resort Kyber key, signed pre-key, sender base key) a session started with; a
+                -- repeat is a replayed first message.
+                CREATE TABLE signal_last_resort_key_uses (
+                    kyber_id INTEGER NOT NULL,
+                    signed_id INTEGER NOT NULL,
+                    base_key BLOB NOT NULL,
+                    PRIMARY KEY (kyber_id, signed_id, base_key)
+                );
+                -- Which signed and last-resort keys this device has published, the next id of each kind,
+                -- and when it last rotated (both keys together) and synced, like Signal-Android's
+                -- PreKeyMetadataStore.
+                CREATE TABLE signal_prekey_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    next_signed_id INTEGER NOT NULL,
+                    next_one_time_id INTEGER NOT NULL,
+                    next_kyber_id INTEGER NOT NULL,
+                    active_signed_id INTEGER NOT NULL,
+                    active_last_resort_id INTEGER NOT NULL,
+                    rotated_at INTEGER NOT NULL,
+                    synced_at INTEGER NOT NULL
                 );
                 CREATE TABLE signal_sessions (
                     address TEXT PRIMARY KEY,

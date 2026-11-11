@@ -47,8 +47,7 @@ doctor-android: doctor ensure-node-modules
 doctor-ios: doctor
     @test "$(uname -s)" = "Darwin" || { echo "error: iOS builds require macOS" >&2; exit 1; }
     @command -v xcodebuild >/dev/null || { echo "error: Xcode command-line tools are required" >&2; exit 1; }
-    @command -v rustup >/dev/null || { echo "error: rustup is required" >&2; exit 1; }
-    @command -v protoc >/dev/null || { echo "error: protoc is required" >&2; exit 1; }
+    @command -v protoc >/dev/null || { echo "error: protoc is required (brew install protobuf)" >&2; exit 1; }
     @command -v pod >/dev/null || { echo "error: CocoaPods 1.17.0 is required" >&2; exit 1; }
     @echo "iOS prerequisites are ready."
 
@@ -118,23 +117,32 @@ kotlin-integration api="http://localhost:3000":
     @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
     cd kotlin && OBSCURA_TEST_API="{{ api }}" ./gradlew :lib:integrationTest
 
-# Fetch and build the pinned host libsignal FFI.
-[private]
-swift-bootstrap:
-    ./swift/scripts/bootstrap-libsignal.sh host
+# Generate the Swift protobuf bindings (needs protoc). Every Swift and iOS build runs this first.
+swift-proto:
+    ./swift/scripts/gen-proto.sh
 
-# Build the Swift package.
-swift-build: swift-bootstrap
-    cd swift && ./dev.sh build
+# The kit builds and tests for iOS only: libsignal's prebuilt core has no macOS slice.
+swift_xcodebuild := "xcodebuild -scheme ObscuraKit -derivedDataPath .build/DerivedData -skipPackagePluginValidation"
 
-# Run Swift unit tests.
-swift-unit: swift-bootstrap
-    cd swift && ./dev.sh test --filter UnitTests
+# Build the Swift package for the iOS simulator.
+swift-build: swift-proto
+    cd swift && {{ swift_xcodebuild }} -destination 'generic/platform=iOS Simulator' build
 
-# Run Swift server-dependent tests against an explicit local endpoint.
-swift-integration api="http://localhost:3000": swift-bootstrap
+# Run Swift unit tests on an iOS simulator, with the coverage gate. Narrow the
+# run without the gate, e.g.: just swift-unit UnitTests/ClientTests
+swift-unit filter="UnitTests": swift-proto
+    cd swift && rm -rf .build/DerivedData/Build/ProfileData && mkdir -p .build/reports && \
+        {{ swift_xcodebuild }} -destination "platform=iOS Simulator,id=$(scripts/simulator.sh)" \
+        -only-testing:{{ quote(filter) }} -enableCodeCoverage YES test 2>&1 | tee .build/reports/unit-tests.log
+    {{ if filter == "UnitTests" { "./swift/scripts/coverage.sh" } else { "echo 'Coverage is gated only for the whole suite.'" } }}
+
+# Run Swift server-dependent tests on an iOS simulator against an explicit local
+# endpoint. xcodebuild hands TEST_RUNNER_ variables to the tests without the prefix.
+swift-integration api="http://localhost:3000" filter="ScenarioTests": swift-proto
     @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
-    cd swift && OBSCURA_TEST_API="{{ api }}" ./dev.sh test --filter ScenarioTests
+    cd swift && mkdir -p .build/reports && TEST_RUNNER_OBSCURA_TEST_API={{ quote(api) }} \
+        {{ swift_xcodebuild }} -destination "platform=iOS Simulator,id=$(scripts/simulator.sh)" \
+        -only-testing:{{ quote(filter) }} test 2>&1 | tee .build/reports/integration-tests.log
 
 # Create or refresh the compile-only Firebase stub when no real config exists.
 android-config:
@@ -173,9 +181,7 @@ ios-clean:
 
 # Prepare all native iOS dependencies.
 [private]
-ios-prepare libsignal_target="ios-sim": ensure-node-modules
-    ./swift/scripts/bootstrap-libsignal.sh {{quote(libsignal_target)}}
-    ./swift/dev.sh prepare
+ios-prepare: ensure-node-modules swift-proto
     cd ios && pod install
 
 # Build the iOS app for a generic simulator (env: dev or prod). Pass an
@@ -185,7 +191,7 @@ ios-build architecture="" env="dev": (check-env env) ios-prepare
 
 # Archive the iOS device build for App Store Connect / TestFlight (env: dev or
 # prod). The version defaults to package.json's.
-ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="" env="dev": (check-env env) (ios-prepare "ios-device")
+ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="" env="dev": (check-env env) ios-prepare
     #!/usr/bin/env bash
     set -euo pipefail
     version={{quote(version)}}

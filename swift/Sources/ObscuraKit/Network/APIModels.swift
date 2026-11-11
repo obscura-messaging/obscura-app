@@ -8,21 +8,53 @@ struct AuthResponse: Decodable {
     let deviceId: String
 }
 
-struct SignedPreKeyUpload: Encodable {
+struct SignedPreKeyUpload: Codable, Equatable {
     let keyId: Int
     let publicKey: String
     let signature: String
 }
 
-struct PreKeyUpload: Encodable {
+struct PreKeyUpload: Codable, Equatable {
     let keyId: Int
     let publicKey: String
 }
 
-/// `POST /v1/keys`. The identity is the account's and cannot change there.
-struct PreKeysUpload: Encodable {
-    let signedPreKey: SignedPreKeyUpload
+typealias KyberPreKeyUpload = SignedPreKeyUpload
+
+/// `POST /v1/keys`. Each part present replaces what the server holds of that kind; absent parts, and
+/// empty one-time lists, are left as they are. The identity is the account's and cannot change there.
+struct PreKeysUpload: Encodable, Equatable {
+    let signedPreKey: SignedPreKeyUpload?
+    let lastResortKyberPreKey: KyberPreKeyUpload?
     let oneTimePreKeys: [PreKeyUpload]
+    let kyberPreKeys: [KyberPreKeyUpload]
+
+    private enum CodingKeys: String, CodingKey {
+        case signedPreKey, lastResortKyberPreKey, oneTimePreKeys, kyberPreKeys
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(signedPreKey, forKey: .signedPreKey)
+        try container.encodeIfPresent(lastResortKyberPreKey, forKey: .lastResortKyberPreKey)
+        if !oneTimePreKeys.isEmpty { try container.encode(oneTimePreKeys, forKey: .oneTimePreKeys) }
+        if !kyberPreKeys.isEmpty { try container.encode(kyberPreKeys, forKey: .kyberPreKeys) }
+    }
+}
+
+/// `GET /v1/keys`: how many one-time pre-keys of each kind the server still holds for this device.
+struct OneTimePreKeyCounts: Decodable, Equatable, Sendable {
+    let oneTime: Int
+    let kyber: Int
+
+    init(oneTime: Int, kyber: Int) {
+        self.oneTime = oneTime
+        self.kyber = kyber
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case oneTime = "oneTimePreKeyCount", kyber = "kyberPreKeyCount"
+    }
 }
 
 /// `POST /v1/users` and `POST /v1/users/reset`.
@@ -33,7 +65,9 @@ struct AccountProvisionRequest: Encodable {
     let identityKey: String
     let registrationId: Int
     let signedPreKey: SignedPreKeyUpload
+    let lastResortKyberPreKey: KyberPreKeyUpload
     let oneTimePreKeys: [PreKeyUpload]
+    let kyberPreKeys: [KyberPreKeyUpload]
 }
 
 /// `POST /v1/devices`.
@@ -43,7 +77,9 @@ struct CreateDeviceRequest: Encodable {
     let identityKey: String
     let registrationId: Int
     let signedPreKey: SignedPreKeyUpload
+    let lastResortKyberPreKey: KyberPreKeyUpload
     let oneTimePreKeys: [PreKeyUpload]
+    let kyberPreKeys: [KyberPreKeyUpload]
 }
 
 struct DeviceResponse: Decodable {
@@ -63,6 +99,8 @@ struct PreKeyBundleResponse: Decodable {
     let registrationId: Int
     let identityKey: String
     let signedPreKey: SignedPreKeyData
+    /// A one-time Kyber key while the device has any, otherwise its last-resort key.
+    let kyberPreKey: SignedPreKeyData
     let oneTimePreKey: PreKeyData?
 
     struct SignedPreKeyData: Decodable {

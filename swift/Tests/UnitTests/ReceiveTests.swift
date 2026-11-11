@@ -168,14 +168,14 @@ final class ReceiveTests: XCTestCase {
             let client = try makeClient(apiURL: FakeObscuraServer.baseURL, database: receiver.db)
             let data = try await encrypted(sender, to: receiver)
             let delivery = envelope(data, sender: sender)
-            let originalPreKeys = try receiver.store.preKeyCount()
+            let originalPreKeys = try receiver.store.oneTimePreKeyCount()
             try await receiver.db.write {
                 try $0.execute(sql: "CREATE TRIGGER fail_write BEFORE INSERT ON \(table) BEGIN SELECT RAISE(ABORT, 'disk failed'); END")
             }
             let acks = Locked(0)
             await client.receive(delivery) { _ in acks.withLock { $0 += 1 } }
             XCTAssertEqual(acks.withLock { $0 }, 0, table)
-            XCTAssertEqual(try receiver.store.preKeyCount(), originalPreKeys, "failed persistence must not consume the private OPK")
+            XCTAssertEqual(try receiver.store.oneTimePreKeyCount(), originalPreKeys, "failed persistence must not consume the private OPK")
             let sessionAfterFailure = try await client.messenger.hasSession(sender.deviceId)
             XCTAssertFalse(sessionAfterFailure, "failed persistence must not commit the new Signal session")
             let failedMessages = try await client.getMessages()
@@ -183,7 +183,7 @@ final class ReceiveTests: XCTestCase {
             try await receiver.db.write { try $0.execute(sql: "DROP TRIGGER fail_write") }
             await client.receive(delivery) { _ in acks.withLock { $0 += 1 } }
             XCTAssertEqual(acks.withLock { $0 }, 1, table)
-            XCTAssertEqual(try receiver.store.preKeyCount(), originalPreKeys - 1)
+            XCTAssertEqual(try receiver.store.oneTimePreKeyCount(), originalPreKeys - 1)
             let recovered = try await client.getMessages()
             XCTAssertEqual(recovered.map(\.id), ["entry"])
             await client.receive(delivery) { _ in acks.withLock { $0 += 1 } }

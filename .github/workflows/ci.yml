@@ -76,7 +76,6 @@ jobs:
               - *app
               - 'ios/**'
               - 'swift/**'
-              - 'scripts/ci-install-rust.sh'
 
   javascript:
     name: JavaScript
@@ -226,20 +225,21 @@ jobs:
       - name: Select Xcode
         uses: ./.github/actions/xcode
 
-      - name: Cache libsignal
-        id: libsignal
-        uses: actions/cache@v6.1.0
-        with:
-          path: swift/vendored/libsignal
-          key: libsignal-${{ hashFiles('swift/LIBSIGNAL_REF') }}-host-macos26
-
+      # The package's dependencies, including libsignal's prebuilt XCFramework,
+      # and protoc-gen-swift built at the pinned SwiftProtobuf version.
       - name: Cache SwiftPM
         uses: actions/cache@v6.1.0
         with:
-          path: swift/.build
-          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.xcode-version', 'swift/LIBSIGNAL_REF', 'swift/Package.swift', 'swift/Package.resolved') }}-${{ github.sha }}
+          path: |
+            swift/.build/DerivedData/SourcePackages
+            swift/.build/tools
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.xcode-version', 'swift/Package.swift', 'swift/Package.resolved') }}
           restore-keys: |
-            swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.xcode-version', 'swift/LIBSIGNAL_REF', 'swift/Package.swift', 'swift/Package.resolved') }}-
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-
+
+      # The protobuf bindings are generated, and the server build needs it too.
+      - name: Install protobuf
+        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
 
       - name: Resolve server
         id: server-ref
@@ -253,12 +253,8 @@ jobs:
           key: obscura-server-${{ steps.server-ref.outputs.sha }}-macos26
 
       - name: Install Rust
-        if: steps.libsignal.outputs.cache-hit != 'true' || steps.server-bin.outputs.cache-hit != 'true'
+        if: steps.server-bin.outputs.cache-hit != 'true'
         run: scripts/ci-install-rust.sh
-
-      - name: Install protobuf
-        if: steps.libsignal.outputs.cache-hit != 'true' || steps.server-bin.outputs.cache-hit != 'true'
-        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
 
       - name: Unit tests
         run: just swift-unit
@@ -325,16 +321,7 @@ jobs:
       - name: Select Xcode
         uses: ./.github/actions/xcode
 
-      - name: Install Rust
-        run: scripts/ci-install-rust.sh aarch64-apple-ios-sim
-
-      - name: Cache libsignal
-        id: libsignal
-        uses: actions/cache@v6.1.0
-        with:
-          path: swift/vendored/libsignal
-          key: libsignal-${{ hashFiles('swift/LIBSIGNAL_REF') }}-ios-sim-macos26
-
+      # The kit's protobuf bindings are generated before the build.
       - name: Install protobuf
         run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
 

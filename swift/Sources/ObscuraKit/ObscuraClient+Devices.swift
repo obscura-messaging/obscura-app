@@ -67,7 +67,7 @@ extension ObscuraClient {
     public func completeLink(_ request: LinkRequest) async throws {
         try await requireUnprovisionedDevice()
         let contents = try Self.open(try await awaitApproval(request), privateKey: request.privateKey, userId: request.userId)
-        let keys = try SignalKeys.generate(identity: contents.identity)
+        let keys = try PreKeys.generateProvisioningKeys(identity: contents.identity, nowMs: Int64(Self.nowMs()))
         let response = try await api.createDevice(keys.deviceRequest(name: request.deviceName, linkSessionId: request.sessionId))
         let session = try session(response, username: request.username)
         try await db.write { db in

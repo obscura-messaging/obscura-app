@@ -40,10 +40,14 @@ actor APIClient {
 
     static let maxRetries = 2
 
-    /// Seconds to wait before retrying a 429/503. The server floors sub-second waits to 0.
-    static func retryDelay(retryAfter: String?) -> UInt64 {
-        let seconds = retryAfter.flatMap { UInt64($0.trimmingCharacters(in: .whitespaces)) } ?? 1
-        return min(max(seconds, 1), 10)
+    static let maxRetryAfterSeconds: UInt64 = 10
+
+    /// Seconds to wait before retrying a 429/503, at least 1 since the server floors sub-second waits to 0;
+    /// nil when the server asks for longer than `maxRetryAfterSeconds` (such as the pre-key fetch limit's),
+    /// which is not worth holding a request open for.
+    static func retryDelay(retryAfter: String?) -> UInt64? {
+        let seconds = max(retryAfter.flatMap { UInt64($0.trimmingCharacters(in: .whitespaces)) } ?? 1, 1)
+        return seconds > maxRetryAfterSeconds ? nil : seconds
     }
 
     private func request(_ path: String, method: String = "GET", body: Data? = nil,
@@ -94,9 +98,9 @@ actor APIClient {
                 throw ObscuraError.protocolViolation("non-HTTP response for \(path)")
             }
             if (200..<300).contains(http.statusCode) { return (data, http.statusCode) }
-            if [429, 503].contains(http.statusCode), retries < Self.maxRetries {
+            if [429, 503].contains(http.statusCode), retries < Self.maxRetries,
+               let delay = Self.retryDelay(retryAfter: http.value(forHTTPHeaderField: "Retry-After")) {
                 retries += 1
-                let delay = Self.retryDelay(retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
                 try await Task.sleep(nanoseconds: delay * 1_000_000_000)
                 continue
             }
@@ -157,14 +161,19 @@ actor APIClient {
         try await call("v1/keys", method: "POST", body: keys)
     }
 
-    /// Consumes one one-time prekey on every device of `userId`.
+    /// How many one-time pre-keys of each kind the server holds for this device.
+    func fetchPreKeyCounts() async throws -> OneTimePreKeyCounts {
+        try await json("v1/keys")
+    }
+
+    /// Consumes a one-time EC and Kyber prekey on every device of `userId`, where available.
     func fetchPreKeyBundles(_ userId: String) async throws -> [PreKeyBundleResponse] {
         struct BundleList: Decodable { let bundles: [PreKeyBundleResponse] }
         let response: BundleList = try await json("v1/keys/\(userId)")
         return response.bundles
     }
 
-    /// Consumes one one-time prekey on that device only.
+    /// Consumes a one-time EC and Kyber prekey on that device only, where available.
     func fetchPreKeyBundle(_ userId: String, deviceId: String) async throws -> PreKeyBundleResponse {
         try await json("v1/keys/\(userId)/devices/\(deviceId)")
     }

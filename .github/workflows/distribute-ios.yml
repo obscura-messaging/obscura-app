@@ -56,15 +56,7 @@ jobs:
       - name: Select Xcode
         uses: ./.github/actions/xcode
 
-      - name: Install Rust
-        run: scripts/ci-install-rust.sh aarch64-apple-ios
-
-      - name: Cache libsignal
-        uses: actions/cache@v6.1.0
-        with:
-          path: swift/vendored/libsignal
-          key: libsignal-${{ hashFiles('swift/LIBSIGNAL_REF') }}-ios-device-macos26
-
+      # The kit's protobuf bindings are generated before the archive.
       - name: Install protobuf
         run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
 

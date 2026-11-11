@@ -63,8 +63,6 @@ enum TokenStatus: Equatable {
 
 public actor ObscuraClient {
     static let tokenExpiryMargin: TimeInterval = 60
-    static let preKeyMinimum = 20
-    static let preKeyReplenishCount: UInt32 = 50
 
     /// Model key of each newly persisted content message (`directMessage`, `pix`, `seen`, `story`, `profile`).
     /// Single consumer; theoldest keys are dropped when 100 are unread.
@@ -94,7 +92,14 @@ public actor ObscuraClient {
     var refreshTask: Task<TokenStatus, Error>?
     var refreshLoop: Task<Void, Never>?
     var refreshFailures = 0
-    var replenishTask: Task<Void, Never>?
+    /// Pre-key syncs run one at a time on this task, which the session's end cancels.
+    var preKeySyncTask: Task<Void, Never>?
+    /// Holds at most one request, so requests made while a sync runs collapse into one more sync after it.
+    var preKeySyncRequests: AsyncStream<Void>.Continuation?
+    /// How often a signed-in client checks its supply anyway: peers fetching bundles use keys up without messaging.
+    var preKeyCheckIntervalMs = PreKeys.checkIntervalMs
+    /// The least time between syncs, so a backlog of pre-key messages costs one or two checks rather than one each.
+    var preKeySyncSpacingMs = PreKeys.syncSpacingMs
 
     var socket: GatewaySocket?
     var receiveTask: Task<Void, Never>?
@@ -143,7 +148,7 @@ public actor ObscuraClient {
         refreshTask?.cancel()
         reconnectTask?.cancel()
         connectTask?.cancel()
-        replenishTask?.cancel()
+        preKeySyncTask?.cancel()
         receiveTask?.cancel()
         socket?.close()
         messageContinuation.finish()
@@ -191,7 +196,7 @@ public actor ObscuraClient {
     public func register(_ username: String, _ password: String) async throws {
         try Self.validateCredentials(username, password)
         try await requireUnprovisionedDevice()
-        let keys = try SignalKeys.generate()
+        let keys = try PreKeys.generateProvisioningKeys(nowMs: Int64(Self.nowMs()))
         let response = try await api.registerUser(keys.accountRequest(username: username, password: password, name: deviceName))
         try await installPrimary(try session(response, username: username), keys: keys)
     }
@@ -227,7 +232,7 @@ public actor ObscuraClient {
     /// data, and provisions this device as the new primary with a new identity.
     public func resetAccount(_ username: String, _ password: String) async throws {
         try Self.validateCredentials(username, password)
-        let keys = try SignalKeys.generate()
+        let keys = try PreKeys.generateProvisioningKeys(nowMs: Int64(Self.nowMs()))
         let response = try await api.resetAccount(keys.accountRequest(username: username, password: password, name: deviceName))
         let newSession = try session(response, username: username)
         try await signOut(revoking: false)
@@ -246,7 +251,7 @@ public actor ObscuraClient {
         guard try await directory.isPrimary() else { throw ObscuraError.notPrimary }
     }
 
-    private func installPrimary(_ session: Session, keys: SignalKeys) async throws {
+    private func installPrimary(_ session: Session, keys: ProvisioningKeys) async throws {
         try await db.write { db in
             try PersistentSignalStore.install(keys, in: db)
             try DeviceStore.setLocalDevice(session.deviceId, primaryDeviceId: session.deviceId, in: db)
@@ -354,8 +359,10 @@ public actor ObscuraClient {
         refreshTask = nil
         refreshLoop?.cancel()
         refreshLoop = nil
-        replenishTask?.cancel()
-        replenishTask = nil
+        preKeySyncTask?.cancel()
+        preKeySyncTask = nil
+        preKeySyncRequests?.finish()
+        preKeySyncRequests = nil
     }
 
     // MARK: - Token refresh

@@ -26,8 +26,8 @@ actor Messenger {
         try store.loadSession(for: Self.address(deviceUuid), context: NullContext())?.hasCurrentState ?? false
     }
 
-    /// Parses one fetch of a user's bundles. Every bundle must carry the same identity key and a signed
-    /// prekey that verifies against it, or the whole fetch is refused.
+    /// Parses one fetch of a user's bundles. Every bundle must carry the same identity key, and signed and
+    /// Kyber prekeys that verify against it, or the whole fetch is refused.
     static func verifiedBundles(_ responses: [PreKeyBundleResponse]) throws -> [(deviceId: String, bundle: PreKeyBundle)] {
         for response in responses {
             guard UUID(uuidString: response.deviceId) != nil else {
@@ -47,6 +47,10 @@ actor Messenger {
                                                                    signature: bundle.signedPreKeySignature) else {
                 throw ObscuraError.protocolViolation("signed prekey of device \(deviceId) does not verify")
             }
+            guard try bundle.identityKey.publicKey.verifySignature(message: bundle.kyberPreKeyPublic.serialize(),
+                                                                   signature: bundle.kyberPreKeySignature) else {
+                throw ObscuraError.protocolViolation("Kyber prekey of device \(deviceId) does not verify")
+            }
         }
         return parsed
     }
@@ -54,24 +58,36 @@ actor Messenger {
     private static func bundle(_ response: PreKeyBundleResponse) throws -> PreKeyBundle {
         guard let identityKey = Data(base64Encoded: response.identityKey),
               let signedPreKey = Data(base64Encoded: response.signedPreKey.publicKey),
-              let signature = Data(base64Encoded: response.signedPreKey.signature) else {
+              let signature = Data(base64Encoded: response.signedPreKey.signature),
+              let kyberPreKey = Data(base64Encoded: response.kyberPreKey.publicKey),
+              let kyberSignature = Data(base64Encoded: response.kyberPreKey.signature) else {
             throw ObscuraError.protocolViolation("invalid base64 in bundle for \(response.deviceId)")
         }
-        let identity = try IdentityKey(bytes: identityKey)
-        let signedPublic = try PublicKey(signedPreKey)
-        let registrationId = UInt32(response.registrationId)
-        let signedPreKeyId = UInt32(response.signedPreKey.keyId)
-        guard let oneTime = response.oneTimePreKey else {
+        guard let registrationId = UInt32(exactly: response.registrationId),
+              let signedPreKeyId = UInt32(exactly: response.signedPreKey.keyId),
+              let kyberPreKeyId = UInt32(exactly: response.kyberPreKey.keyId) else {
+            throw ObscuraError.protocolViolation("invalid key id in bundle for \(response.deviceId)")
+        }
+        do {
+            let identity = try IdentityKey(bytes: identityKey)
+            let signedPublic = try PublicKey(signedPreKey)
+            let kyberPublic = try KEMPublicKey(kyberPreKey)
+            guard let oneTime = response.oneTimePreKey else {
+                return try PreKeyBundle(
+                    registrationId: registrationId, deviceId: deviceSlot,
+                    signedPrekeyId: signedPreKeyId, signedPrekey: signedPublic, signedPrekeySignature: signature, identity: identity,
+                    kyberPrekeyId: kyberPreKeyId, kyberPrekey: kyberPublic, kyberPrekeySignature: kyberSignature)
+            }
+            guard let oneTimeKey = Data(base64Encoded: oneTime.publicKey), let oneTimeId = UInt32(exactly: oneTime.keyId) else {
+                throw ObscuraError.protocolViolation("invalid one-time prekey for \(response.deviceId)")
+            }
             return try PreKeyBundle(
-                registrationId: registrationId, deviceId: deviceSlot,
-                signedPrekeyId: signedPreKeyId, signedPrekey: signedPublic, signedPrekeySignature: signature, identity: identity)
+                registrationId: registrationId, deviceId: deviceSlot, prekeyId: oneTimeId, prekey: PublicKey(oneTimeKey),
+                signedPrekeyId: signedPreKeyId, signedPrekey: signedPublic, signedPrekeySignature: signature, identity: identity,
+                kyberPrekeyId: kyberPreKeyId, kyberPrekey: kyberPublic, kyberPrekeySignature: kyberSignature)
+        } catch let error as SignalError {
+            throw ObscuraError.protocolViolation("invalid key in bundle for \(response.deviceId): \(error)")
         }
-        guard let oneTimeKey = Data(base64Encoded: oneTime.publicKey) else {
-            throw ObscuraError.protocolViolation("invalid one-time prekey for \(response.deviceId)")
-        }
-        return try PreKeyBundle(
-            registrationId: registrationId, deviceId: deviceSlot, prekeyId: UInt32(oneTime.keyId), prekey: PublicKey(oneTimeKey),
-            signedPrekeyId: signedPreKeyId, signedPrekey: signedPublic, signedPrekeySignature: signature, identity: identity)
     }
 
     /// Verifies one fetch of `userId`'s bundles, lists their devices in the directory (identity trust
@@ -85,8 +101,8 @@ actor Messenger {
                 try DeviceStore.add(userId: userId, deviceId: deviceId, in: database)
             }
             if try !hasSession(deviceId) {
-                try processPreKeyBundle(bundle, for: Self.address(deviceId), sessionStore: store, identityStore: store,
-                                        context: NullContext())
+                try processPreKeyBundle(bundle, for: Self.address(deviceId), ourAddress: store.localAddress(),
+                                        sessionStore: store, identityStore: store, context: NullContext())
             }
         }
     }
@@ -96,7 +112,7 @@ actor Messenger {
         guard let deviceBytes = uuidBytes(deviceId) else {
             throw ObscuraError.protocolViolation("device id \(deviceId) is not a UUID")
         }
-        let ciphertext = try signalEncrypt(message: clientMessage, for: Self.address(deviceId),
+        let ciphertext = try signalEncrypt(message: clientMessage, for: Self.address(deviceId), localAddress: store.localAddress(),
                                            sessionStore: store, identityStore: store, context: NullContext())
         var encrypted = Obscura_Client_V1_EncryptedMessage()
         encrypted.type = ciphertext.messageType == .preKey ? .prekeyMessage : .encryptedMessage
@@ -168,14 +184,15 @@ actor Messenger {
     func decrypt(senderDeviceUuid: String, _ encrypted: Obscura_Client_V1_EncryptedMessage,
                  context: StoreContext = NullContext()) throws -> Data {
         let address = try Self.address(senderDeviceUuid)
+        let local = try store.localAddress(context: context)
         switch encrypted.type {
         case .prekeyMessage:
             return Data(try signalDecryptPreKey(
-                message: PreKeySignalMessage(bytes: encrypted.content), from: address,
+                message: PreKeySignalMessage(bytes: encrypted.content), from: address, localAddress: local,
                 sessionStore: store, identityStore: store, preKeyStore: store, signedPreKeyStore: store,
                 kyberPreKeyStore: store, context: context))
         case .encryptedMessage:
-            return Data(try signalDecrypt(message: SignalMessage(bytes: encrypted.content), from: address,
+            return Data(try signalDecrypt(message: SignalMessage(bytes: encrypted.content), from: address, to: local,
                                           sessionStore: store, identityStore: store, context: context))
         case .unspecified, .UNRECOGNIZED:
             throw ObscuraError.protocolViolation("encrypted message type \(encrypted.type.rawValue)")

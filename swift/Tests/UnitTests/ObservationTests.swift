@@ -137,7 +137,7 @@ final class ObservationTests: XCTestCase {
         noop.log("noop")
         let logger = RecordingLogger(noop)
         logger.ackFailed(envelopeId: "env1", reason: "closed")
-        logger.preKeyReplenishFailed(reason: "500")
+        logger.preKeySyncFailed(reason: "500")
         logger.decryptFailed(sourceUserId: "u1", reason: "bad mac")
         logger.tokenRefreshFailed(attempt: 2, reason: "timeout")
         logger.identityChanged(userId: "u2")
@@ -146,7 +146,7 @@ final class ObservationTests: XCTestCase {
         let logLines = logger.snapshot()
         XCTAssertEqual(logLines.count, 7)
         XCTAssertTrue(logLines.contains("ack failed for env1: closed"))
-        XCTAssertTrue(logLines.contains("prekey replenish failed: 500"))
+        XCTAssertTrue(logLines.contains("prekey sync failed: 500"))
     }
 
     // MARK: - Typing

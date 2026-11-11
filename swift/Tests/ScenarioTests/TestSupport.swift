@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import LibSignalClient
 import XCTest
 @testable import ObscuraKit
 
@@ -149,5 +150,16 @@ extension ObscuraClient {
     /// Closes the socket underneath the client, as a network drop would.
     func dropSocket() {
         socket?.close()
+    }
+}
+
+extension PersistentSignalStore {
+    func findSignedPreKey(_ id: UInt32) throws -> SignedPreKeyRecord? {
+        try db.read { try Data.fetchOne($0, sql: "SELECT record FROM signal_signed_prekeys WHERE key_id = ?", arguments: [id]) }
+            .map { try SignedPreKeyRecord(bytes: $0) }
+    }
+
+    func savePreKeyState(_ state: PreKeyState) throws {
+        try db.write { try PersistentSignalStore.savePreKeyState(state, in: $0) }
     }
 }

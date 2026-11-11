@@ -5,7 +5,7 @@ public protocol ObscuraLogger: Sendable {
     func decryptFailed(sourceUserId: String, reason: String)
     func ackFailed(envelopeId: String, reason: String)
     func tokenRefreshFailed(attempt: Int, reason: String)
-    func preKeyReplenishFailed(reason: String)
+    func preKeySyncFailed(reason: String)
     func identityChanged(userId: String)
     func sessionEstablishFailed(userId: String, reason: String)
     func databaseError(store: String, operation: String, reason: String)
@@ -17,7 +17,7 @@ public struct NoOpLogger: ObscuraLogger {
     public func decryptFailed(sourceUserId: String, reason: String) {}
     public func ackFailed(envelopeId: String, reason: String) {}
     public func tokenRefreshFailed(attempt: Int, reason: String) {}
-    public func preKeyReplenishFailed(reason: String) {}
+    public func preKeySyncFailed(reason: String) {}
     public func identityChanged(userId: String) {}
     public func sessionEstablishFailed(userId: String, reason: String) {}
     public func databaseError(store: String, operation: String, reason: String) {}
@@ -64,9 +64,9 @@ final class RecordingLogger: ObscuraLogger {
         host.tokenRefreshFailed(attempt: attempt, reason: reason)
     }
 
-    func preKeyReplenishFailed(reason: String) {
-        record("prekey replenish failed: \(reason)")
-        host.preKeyReplenishFailed(reason: reason)
+    func preKeySyncFailed(reason: String) {
+        record("prekey sync failed: \(reason)")
+        host.preKeySyncFailed(reason: reason)
     }
 
     func identityChanged(userId: String) {
