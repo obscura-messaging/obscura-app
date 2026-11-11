@@ -32,7 +32,6 @@ final class ConnectionTests: ScenarioTestCase {
 
     func testADroppedSocketReconnectsAndNothingIsLost() async throws {
         let (alice, bob) = try await TestUser.friends()
-        XCTFail("TEMPORARY: checking the kit log prints under a failure")
         try await alice.send("before-drop", to: [bob])
         _ = try await bob.waitForEntry("before-drop")
         var states = bob.client.observeConnectionState().makeAsyncIterator()
