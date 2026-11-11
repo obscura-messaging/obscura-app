@@ -21,11 +21,11 @@ enum ConformanceVectors {
         file: StaticString = #filePath,
         line: UInt = #line
     ) throws -> [String: Any] {
-        let url = repositoryRoot.appendingPathComponent("protocol/conformance/\(name)")
+        let url = repositoryRoot.appendingPathComponent("client-protocol/conformance/\(name)")
         guard let data = try? Data(contentsOf: url) else {
             XCTFail(
                 "conformance vector '\(name)' not found at \(url.path). " +
-                "Is protocol/conformance present in the repository checkout?",
+                "Is client-protocol/conformance present in the repository checkout?",
                 file: file, line: line
             )
             throw NSError(domain: "conformance", code: 1)

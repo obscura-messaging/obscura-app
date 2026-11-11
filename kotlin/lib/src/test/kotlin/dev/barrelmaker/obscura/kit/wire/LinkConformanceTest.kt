@@ -21,7 +21,7 @@ import org.signal.libsignal.protocol.ecc.ECPublicKey
 import org.signal.libsignal.protocol.ecc.ECKeyPair
 import org.signal.libsignal.protocol.ecc.ECPrivateKey
 
-/** `protocol/conformance/link.json`: every check its README lists. */
+/** `client-protocol/conformance/link.json`: every check its README lists. */
 class LinkConformanceTest {
     private val vectors = loadVectors("link.json")
 

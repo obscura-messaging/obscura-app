@@ -69,4 +69,4 @@ kotlin/build/
 kotlin/lib/build/
 swift/.build/
 swift/.swiftpm/
-protocol/**/__pycache__/
+client-protocol/**/__pycache__/
