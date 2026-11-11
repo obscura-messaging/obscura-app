@@ -1,14 +1,17 @@
 # Kit contract
 
-The Kotlin and Swift kits implement this contract. Platform READMEs cover
-toolchains and language-specific signatures, not different behavior.
+The Kotlin and Swift kits implement this contract. It is the one Markdown file
+that states **what**, not only why: with two implementations, neither kit's code
+can be the authority for the other, so the behaviour both must share lives
+here. Signatures belong to each kit's code; this file covers only behaviour a
+peer, the server or the other kit can observe.
 
 | Layer | Defined by |
 |---|---|
 | Transport | [`obscura.proto`](https://github.com/obscura-messaging/obscura-proto/blob/main/obscura/v1/obscura.proto), [`TRANSPORT.md`](https://github.com/obscura-messaging/obscura-proto/blob/main/TRANSPORT.md) |
 | End-to-end client content | [`client.proto`](../protocol/obscura/client/v1/client.proto) |
-| Kit behavior and API | this document |
-| Application models | [`DOMAIN_CONTRACT.md`](https://github.com/obscura-messaging/obscura-app/blob/main/docs/DOMAIN_CONTRACT.md) |
+| Kit behaviour | this document |
+| Application models | [`DOMAIN_CONTRACT.md`](DOMAIN_CONTRACT.md) |
 
 ## Kit boundary
 
@@ -30,13 +33,9 @@ STARTED/STOPPED; unspecified states are ignored. The device-link envelope
 derivation and link code encoding are checked against
 [`link.json`](../protocol/conformance/link.json).
 
-Takeover and device announcements do not exist.
-
 ## Construction and persistence
 
-Every client requires a host-provided `SessionStorage`. There is no default
-no-op store or UserDefaults token store. Swift also requires a logger.
-In-memory construction helpers and stores are internal test infrastructure.
+Every client requires a host-provided `SessionStorage`.
 
 `SessionStorage` saves, loads, or clears one string-valued blob containing
 exactly `token`, `refreshToken`, `expiresAt`, `userId`, `deviceId`, and `username`.
@@ -167,11 +166,12 @@ drop or server close reconnects with 1 s doubling to a 30 s cap, refreshing
 credentials before each attempt. Exactly one component owns reconnect.
 Keepalive pings run every 30 s; a failed ping is a drop.
 
-Every REST operation retries 429/503 at most twice. `Retry-After` seconds
-are clamped to 1..10; absent or unparsable values mean 1 s. In particular,
-the server's sub-second `Retry-After: 0` must not cause an immediate retry.
-Other non-2xx responses throw with their status and body. There are no
-unconditional request-pacing sleeps.
+Every REST operation retries 429/503 at most twice, waiting `Retry-After`
+seconds with a floor of 1 s; absent or unparsable values mean 1 s, so the
+server's sub-second `Retry-After: 0` never causes an immediate retry. A wait
+longer than 10 s (such as the bundle-fetch limit's) is not worth holding a
+request open for, so it throws instead. Other non-2xx responses throw with
+their status and body.
 
 ## Observation
 
@@ -267,15 +267,6 @@ delivery alone does not authorize an application write.
 
 ## Content store, outbox, and expiry
 
-The kit exposes typed content operations:
-
-- `getMessages()`, `sendMessage(peerUserId, content)`, `sendPix(...)`, `markSeen(entryId)`
-- `getStories()`, `postStory(...)`
-- `sendCapture(...)`: one upload sent as a pix to each recipient and
-  optionally posted as a story, reporting who it could not reach
-- `getProfiles()`, `updateProfile(displayName, bio)`
-- `flushOutbox()`, `sweepExpired()`
-
 1:1 messages (`DirectMessage`, `PixMessage`) and `SeenReceipt` target the
 accepted friend `peerUserId` plus self-sync. Stories (`StoryPost`) and profile
 updates (`ProfileUpdate`) target all accepted friends plus self-sync. When a
@@ -313,13 +304,9 @@ There is no Swift push-drain API without an implemented iOS push host.
 
 ## Errors
 
-Both kits use these deliberate error codes:
-
-`NOT_AUTHENTICATED`, `INVALID_ARGUMENT`, `INVALID_FRIEND_CODE`,
-`HTTP_ERROR`, `CONNECTION_FAILED`, `SEND_FAILED`, `PROTOCOL_VIOLATION`,
-`STORAGE_ERROR`, `NOT_PRIMARY`, `LINK_FAILED`.
-
-HTTP errors retain status/body; other classified errors retain useful
-details. Underlying database, filesystem and cryptographic failures
+Both kits use the same deliberate error codes: the `ObscuraErrorCode` union in
+[`ObscuraModule.ts`](../src/native/ObscuraModule.ts), which `exports.test.ts`
+checks against both kits. HTTP errors retain status/body; other classified
+errors retain useful details. Underlying database, filesystem and cryptographic failures
 propagate rather than becoming success or silent defaults. Bridges preserve
 kit codes and use per-method codes for unclassified platform failures.

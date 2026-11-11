@@ -1,5 +1,5 @@
 /**
- * Dumb Tier-2 `ObscuraBridge` stub for testing `ObscuraModule.ts` and `src/state/`.
+ * A dumb `ObscuraBridge` stub for testing `ObscuraModule.ts` and `src/state/`.
  * Holds plain arrays and state fields, records calls, and emits events on demand.
  */
 

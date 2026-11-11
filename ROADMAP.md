@@ -17,6 +17,8 @@
 - Android push: silent FCM wakes, generic local notifications, and a chat-list
   destination on tap.
 - In-app debug log on the Profile tab.
+- Device linking: the primary approves a new device by QR code and sends it
+  the account identity, friends and message history.
 
 ## Gaps
 
@@ -33,5 +35,5 @@
 
 ## Not planned
 
-Device linking or history/key transfer, AR lenses, drawing on photos, video calls, maps or location, saved memories,
+AR lenses, drawing on photos, video calls, maps or location, saved memories,
 Bitmoji, snap score, chat wallpapers.
