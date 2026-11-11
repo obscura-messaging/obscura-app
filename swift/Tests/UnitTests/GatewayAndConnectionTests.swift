@@ -311,18 +311,25 @@ final class GatewayAndConnectionTests: XCTestCase {
         try await client.connect()
         _ = try await gw.waitForConnection()
 
+        // Await transitions rather than sampling the state: reconnecting can last only as long as the
+        // 1 s backoff, so a poll on a slow simulator can miss it entirely.
+        let states = client.observeConnectionState() // subscribes now, while still connected
+        let transitions = Task {
+            var seen: [ConnectionState] = []
+            for await state in states.dropFirst() {
+                seen.append(state)
+                if state == .connected { break }
+            }
+            return seen
+        }
+        let timeout = Task {
+            try await Task.sleep(nanoseconds: 15_000_000_000)
+            transitions.cancel()
+        }
+        defer { timeout.cancel() }
         gw.sendClose()
-        for _ in 0..<40 {
-            if client.connectionState == .reconnecting { break }
-            try await Task.sleep(nanoseconds: 25_000_000)
-        }
-        XCTAssertEqual(client.connectionState, .reconnecting)
-        // The first retry waits 1 s, then fetches a ticket and opens a socket; allow for a slow simulator.
-        for _ in 0..<200 {
-            if client.connectionState == .connected { break }
-            try await Task.sleep(nanoseconds: 25_000_000)
-        }
-        XCTAssertEqual(client.connectionState, .connected)
+        let seen = await transitions.value
+        XCTAssertEqual(seen, [.reconnecting, .connected])
         await client.disconnect()
 
         let linkClient = try makeClient(apiURL: "http://127.0.0.1:\(gw.port)")

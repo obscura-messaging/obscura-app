@@ -2,8 +2,8 @@ package dev.barrelmaker.obscura.kit.messaging
 
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.wire.UuidCodec
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageResponse
+import obscura.v1.Obscura.SendMessageRequest
+import obscura.v1.Obscura.SendMessageResponse
 
 enum class SubmissionStatus { ACCEPTED, REJECTED, UNKNOWN }
 

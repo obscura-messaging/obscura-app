@@ -11,8 +11,8 @@ import dev.barrelmaker.obscura.kit.network.APIClient
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageResponse
+import obscura.v1.Obscura.SendMessageRequest
+import obscura.v1.Obscura.SendMessageResponse
 import java.net.InetSocketAddress
 import java.util.UUID
 import dev.barrelmaker.obscura.kit.SELF_DEVICE_ID

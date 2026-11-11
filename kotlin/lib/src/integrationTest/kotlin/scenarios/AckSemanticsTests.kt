@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.signal.libsignal.protocol.SessionCipher
 import org.signal.libsignal.protocol.message.CiphertextMessage
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
+import obscura.v1.Obscura.SendMessageRequest
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
