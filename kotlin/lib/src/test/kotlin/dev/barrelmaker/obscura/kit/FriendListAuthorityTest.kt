@@ -17,7 +17,7 @@ import obscura.client.v1.Client.FriendStatus as WireFriendStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
+import obscura.v1.Obscura.SendMessageRequest
 import java.util.Collections
 
 /** The primary owns the friend list; linked devices follow its FriendListSync. */

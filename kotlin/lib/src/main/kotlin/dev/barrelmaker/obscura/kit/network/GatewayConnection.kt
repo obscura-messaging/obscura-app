@@ -19,9 +19,9 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
-import xyz.obscura.server.contracts.ObscuraProtocol.AckMessage
-import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
-import xyz.obscura.server.contracts.ObscuraProtocol.WebSocketFrame
+import obscura.v1.Obscura.AckMessage
+import obscura.v1.Obscura.Envelope
+import obscura.v1.Obscura.WebSocketFrame
 import java.util.concurrent.TimeUnit
 
 /**
