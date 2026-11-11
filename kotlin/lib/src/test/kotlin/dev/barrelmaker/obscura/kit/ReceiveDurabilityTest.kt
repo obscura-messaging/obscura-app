@@ -103,7 +103,7 @@ class ReceiveDurabilityTest {
         c.receive(envelope) { acks++ }
         assertEquals(2, acks)
         assertEquals(1, c.getMessages().size)
-        assertEquals("directMessage", c.messageReceived.tryReceive().getOrNull())
+        assertEquals(EntryModel.DIRECT_MESSAGE, c.messageReceived.tryReceive().getOrNull())
         assertNull(c.messageReceived.tryReceive().getOrNull())
         c.auth.end()
         driver.close()

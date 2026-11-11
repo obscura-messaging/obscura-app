@@ -12,12 +12,14 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.ConnectionState
+import dev.barrelmaker.obscura.kit.EntryModel
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraConfig
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.ObscuraLogger
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +29,6 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
-import java.util.Locale
 
 /** Owns the live client, OS lifecycle and notifications. The kit owns session persistence. */
 object ObscuraSession {
@@ -40,7 +41,7 @@ object ObscuraSession {
         fun onConnectionChanged(state: ConnectionState)
         fun onAuthStateChanged(state: AuthState)
         fun onFriendsChanged()
-        fun onMessageReceived(model: String)
+        fun onMessageReceived(model: EntryModel)
         fun onPushToken(token: String)
         fun onAppStateChanged(state: AppState)
     }
@@ -258,14 +259,10 @@ object ObscuraSession {
         }
     }
 
-    private fun notificationText(model: String): String? = when (model) {
-        "pix" -> "New pix"
-        "directMessage" -> "New message"
-        "story", "profile", "seen" -> null
-        else -> {
-            Log.w(TAG, "Unknown notification model: $model")
-            "New message"
-        }
+    private fun notificationText(model: EntryModel): String? = when (model) {
+        EntryModel.PIX -> "New pix"
+        EntryModel.DIRECT_MESSAGE -> "New message"
+        EntryModel.STORY, EntryModel.PROFILE, EntryModel.SEEN -> null
     }
 
     suspend fun onPushWake(timeoutMs: Long = 25_000L) {

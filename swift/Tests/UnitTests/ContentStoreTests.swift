@@ -20,7 +20,7 @@ final class ContentStoreTests: XCTestCase {
         ConversationItem(
             id: id,
             peerUserId: peer,
-            kind: "message",
+            kind: .message,
             authorUserId: author,
             sentAt: sentAt,
             viewedAt: nil,
@@ -81,7 +81,7 @@ final class ContentStoreTests: XCTestCase {
         let awkward = "opaque\0bytes?\u{1}\u{7F}\u{FFFF}\u{FEFF}\u{200D}👩‍👩‍👧\r\n\\%_'\""
         let source = try makeStore()
         let msg = ConversationItem(
-            id: "id\0\(awkward)", peerUserId: "peer\0x", kind: "message", authorUserId: "user\0x",
+            id: "id\0\(awkward)", peerUserId: "peer\0x", kind: .message, authorUserId: "user\0x",
             sentAt: 7, viewedAt: nil, content: awkward, attachment: nil,
             caption: nil, captionMeta: nil, displayDuration: 0
         )
@@ -104,15 +104,15 @@ final class ContentStoreTests: XCTestCase {
         let store = try makeStore()
         let t0: UInt64 = 1_000_000
         try await store.insertConversationItem(ConversationItem(
-            id: "pix_seen", peerUserId: "peer", kind: "pix", authorUserId: "peer",
+            id: "pix_seen", peerUserId: "peer", kind: .pix, authorUserId: "peer",
             sentAt: t0, viewedAt: nil, content: "",
-            attachment: MediaAttachment(id: "att_pix", contentKey: Data([1]), nonce: Data([2]), mediaType: "photo"),
+            attachment: MediaAttachment(id: "att_pix", contentKey: Data([1]), nonce: Data([2]), mediaType: .photo),
             caption: "hi", captionMeta: nil, displayDuration: 5
         ))
         try await store.insertConversationItem(message("dm_unseen", peer: "peer", author: "peer", sentAt: t0))
         try await store.insertStoryItem(StoryItem(
             id: "story_1", authorUserId: "peer", sentAt: t0, content: "s",
-            attachment: MediaAttachment(id: "att_story", contentKey: Data([1]), nonce: Data([2]), mediaType: "photo"),
+            attachment: MediaAttachment(id: "att_story", contentKey: Data([1]), nonce: Data([2]), mediaType: .photo),
             captionMeta: nil
         ))
 
@@ -127,7 +127,7 @@ final class ContentStoreTests: XCTestCase {
         // At 15m after seen: pix_seen expires and leaves a tombstone.
         let atSeenExpiry = try await store.sweepExpired(now: viewedAt + ContentStore.expireAfterViewMs)
         XCTAssertEqual(atSeenExpiry.purgedMediaRefs, ["att_pix"])
-        XCTAssertEqual(atSeenExpiry.touchedModels, ["pix"])
+        XCTAssertEqual(atSeenExpiry.touchedModels, [.pix])
         let remainingMessages = try await store.messages()
         XCTAssertEqual(remainingMessages.map(\.id), ["dm_unseen"])
 
@@ -138,13 +138,13 @@ final class ContentStoreTests: XCTestCase {
         // At 24h after sent: story_1 expires.
         let atStoryExpiry = try await store.sweepExpired(now: t0 + ContentStore.storyMaxAgeMs)
         XCTAssertEqual(atStoryExpiry.purgedMediaRefs, ["att_story"])
-        XCTAssertEqual(atStoryExpiry.touchedModels, ["story"])
+        XCTAssertEqual(atStoryExpiry.touchedModels, [.story])
         let liveStories = try await store.stories(now: t0 + ContentStore.storyMaxAgeMs)
         XCTAssertTrue(liveStories.isEmpty)
 
         // At 30d after sent: dm_unseen expires.
         let atMaxAge = try await store.sweepExpired(now: t0 + ContentStore.maxEphemeralAgeMs)
-        XCTAssertEqual(atMaxAge.touchedModels, ["directMessage"])
+        XCTAssertEqual(atMaxAge.touchedModels, [.directMessage])
         let afterMaxAge = try await store.messages()
         XCTAssertTrue(afterMaxAge.isEmpty)
 
@@ -182,9 +182,9 @@ final class ContentStoreTests: XCTestCase {
 
     func testSnapshotExportAndImportRoundTripsAllTables() async throws {
         let source = try makeStore()
-        let att = MediaAttachment(id: "att_1", contentKey: Data([1, 2, 3]), nonce: Data([4, 5, 6]), mediaType: "video")
+        let att = MediaAttachment(id: "att_1", contentKey: Data([1, 2, 3]), nonce: Data([4, 5, 6]), mediaType: .video)
         try await source.insertConversationItem(ConversationItem(
-            id: "pix_1", peerUserId: "peer_1", kind: "pix", authorUserId: "peer_1",
+            id: "pix_1", peerUserId: "peer_1", kind: .pix, authorUserId: "peer_1",
             sentAt: 1_000, viewedAt: 1_500, content: "", attachment: att,
             caption: "hello pix", captionMeta: "{\"y\":0.5}", displayDuration: 8
         ))
@@ -292,11 +292,11 @@ final class ContentStoreTests: XCTestCase {
         let importedMessages = try await target.messages()
         XCTAssertEqual(importedMessages.map(\.id), ["msg_default", "pix_default_media"])
         let pixDefault = try await target.message(id: "pix_default_media")
-        XCTAssertEqual(pixDefault?.attachment?.mediaType, "photo")
+        XCTAssertEqual(pixDefault?.attachment?.mediaType, .photo)
 
         let importedStories = try await target.allStories()
         XCTAssertEqual(importedStories.map(\.id), ["story_default_media"])
-        XCTAssertEqual(importedStories.first?.attachment?.mediaType, "photo")
+        XCTAssertEqual(importedStories.first?.attachment?.mediaType, .photo)
 
         let importedProfiles = try await target.profiles()
         XCTAssertTrue(importedProfiles.isEmpty)

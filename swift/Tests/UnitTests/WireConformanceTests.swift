@@ -53,6 +53,19 @@ final class WireConformanceTests: XCTestCase {
             XCTAssertEqual(WireCodec.encodeTypingState(appState), wireState, "encode \(app)")
         }
 
+        for m in (v["mediaTypes"] as? [[String: Any]] ?? []) {
+            let wire = m["wire"] as? String ?? "", app = m["app"] as? String ?? ""
+            let decoded = MediaType(wire: wire)
+            XCTAssertEqual(decoded.rawValue, app, "decode \"\(wire)\"")
+            if wire == app { XCTAssertEqual(decoded.rawValue, wire, "encode \(app)") }
+        }
+
+        for m in (v["conversationKinds"] as? [[String: Any]] ?? []) {
+            let wire = m["wire"] as? String ?? "", app = m["app"] as? String ?? ""
+            XCTAssertEqual(ConversationKind(rawValue: wire)?.rawValue, app, "decode \(wire)")
+            XCTAssertEqual(ConversationKind(rawValue: app)?.rawValue, wire, "encode \(app)")
+        }
+
         for rt in (v["roundTrip"] as? [[String: Any]] ?? []) {
             let name = rt["name"] as? String ?? "?"
             if let dm = rt["directMessage"] as? [String: Any] {

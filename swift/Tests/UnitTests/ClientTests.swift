@@ -89,7 +89,7 @@ final class ClientTests: XCTestCase {
 
     func testANewStoryIsStoredAndWakesWithItsModelKeyButARedeliveryDoesNot() async throws {
         let wakes = Task {
-            var values: [String] = []
+            var values: [EntryModel] = []
             for await value in client.messageReceived { values.append(value) }
             return values
         }
@@ -111,7 +111,7 @@ final class ClientTests: XCTestCase {
         XCTAssertLessThanOrEqual(stories[0].sentAt, UInt64(Date().timeIntervalSince1970 * 1000) + 60_000)
         wakes.cancel()
         let woken = await wakes.value
-        XCTAssertEqual(woken, ["story"])
+        XCTAssertEqual(woken, [.story])
     }
 
     func testSendMessageToNonFriendQueuesInOutboxAndFlushesWhenAccepted() async throws {
@@ -150,8 +150,8 @@ final class ClientTests: XCTestCase {
 
         let messages = try await client.getMessages()
         let pix = try XCTUnwrap(messages.first { $0.id == "pix_1" })
-        XCTAssertEqual(pix.kind, "pix")
-        XCTAssertEqual(pix.attachment, MediaAttachment(id: "att_1", contentKey: key, nonce: nonce, mediaType: "photo"))
+        XCTAssertEqual(pix.kind, .pix)
+        XCTAssertEqual(pix.attachment, MediaAttachment(id: "att_1", contentKey: key, nonce: nonce, mediaType: .photo))
         XCTAssertEqual(pix.caption, "look")
         XCTAssertEqual(pix.displayDuration, 7)
         XCTAssertNil(pix.viewedAt)
@@ -256,7 +256,7 @@ final class ClientTests: XCTestCase {
         do {
             _ = try await client.sendPix(
                 peerUserId: bob.userId,
-                attachment: MediaAttachment(id: "att_queued", contentKey: Data([1, 2, 3]), nonce: Data([4, 5, 6]), mediaType: ""),
+                attachment: MediaAttachment(id: "att_queued", contentKey: Data([1, 2, 3]), nonce: Data([4, 5, 6]), mediaType: MediaType(wire: "")),
                 caption: "queued cap", captionMeta: "{\"y\":0.3}", displayDuration: 6
             )
             XCTFail("expected sendPix to non-friend to fail")
@@ -272,7 +272,7 @@ final class ClientTests: XCTestCase {
         XCTAssertTrue(dmId.hasPrefix("dm_"))
         let pixId = try await client.sendPix(
             peerUserId: bob.userId,
-            attachment: MediaAttachment(id: "att_direct", contentKey: Data([7, 8]), nonce: Data([9, 10]), mediaType: "video"),
+            attachment: MediaAttachment(id: "att_direct", contentKey: Data([7, 8]), nonce: Data([9, 10]), mediaType: .video),
             caption: "", captionMeta: nil, displayDuration: -1
         )
         XCTAssertTrue(pixId.hasPrefix("pix_"))
@@ -339,11 +339,11 @@ final class ClientTests: XCTestCase {
 
         // Invalid recipients fail before anything is uploaded.
         await assertThrows(.invalidArgument("peerUserId must not be blank")) {
-            _ = try await self.client.sendCapture(filePath: file.path, mediaType: "photo", caption: "", captionMeta: nil,
+            _ = try await self.client.sendCapture(filePath: file.path, mediaType: .photo, caption: "", captionMeta: nil,
                                                   displayDuration: 5, peerUserIds: [" "], toStory: false)
         }
         await assertThrows(.invalidArgument("cannot message yourself")) {
-            _ = try await self.client.sendCapture(filePath: file.path, mediaType: "photo", caption: "", captionMeta: nil,
+            _ = try await self.client.sendCapture(filePath: file.path, mediaType: .photo, caption: "", captionMeta: nil,
                                                   displayDuration: 5, peerUserIds: [self.phone.userId], toStory: false)
         }
         XCTAssertEqual(server.attachmentCount(), 0)
@@ -351,7 +351,7 @@ final class ClientTests: XCTestCase {
         // A failed upload throws and stores nothing.
         server.failAttachmentUpload(status: 500)
         do {
-            _ = try await client.sendCapture(filePath: file.path, mediaType: "photo", caption: "", captionMeta: nil,
+            _ = try await client.sendCapture(filePath: file.path, mediaType: .photo, caption: "", captionMeta: nil,
                                              displayDuration: 5, peerUserIds: [bob.userId], toStory: true)
             XCTFail("expected the upload to fail")
         } catch {}
@@ -360,13 +360,13 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(afterFailure.count, 0)
 
         // Nothing to send: only the upload happens.
-        let empty = try await client.sendCapture(filePath: file.path, mediaType: "photo", caption: "", captionMeta: nil,
+        let empty = try await client.sendCapture(filePath: file.path, mediaType: .photo, caption: "", captionMeta: nil,
                                                  displayDuration: 5, peerUserIds: [], toStory: false)
         XCTAssertEqual(empty, CaptureResult(undeliveredPeerUserIds: [], storyUndelivered: false))
         XCTAssertEqual(server.attachmentCount(), 1)
 
         // The friend gets the pix; only the stranger is reported and queued. Both share one upload.
-        let mixed = try await client.sendCapture(filePath: file.path, mediaType: "photo", caption: "", captionMeta: nil,
+        let mixed = try await client.sendCapture(filePath: file.path, mediaType: .photo, caption: "", captionMeta: nil,
                                                  displayDuration: 5, peerUserIds: [bob.userId, ghost], toStory: false)
         XCTAssertEqual(mixed, CaptureResult(undeliveredPeerUserIds: [ghost], storyUndelivered: false))
         let sent = try await client.getMessages()
@@ -407,12 +407,12 @@ final class ClientTests: XCTestCase {
 
         // A non-friend cannot be reached: the pix is stored for the outbox and reported, the story still posts.
         let result = try await customClient.sendCapture(
-            filePath: inputFile.path, mediaType: "photo", caption: "caption", captionMeta: nil,
+            filePath: inputFile.path, mediaType: .photo, caption: "caption", captionMeta: nil,
             displayDuration: 5, peerUserIds: [bob.userId], toStory: true
         )
         XCTAssertEqual(result, CaptureResult(undeliveredPeerUserIds: [bob.userId], storyUndelivered: false))
         let undeliveredPix = try await customClient.getMessages()
-        XCTAssertEqual(undeliveredPix.map(\.kind), ["pix"])
+        XCTAssertEqual(undeliveredPix.map(\.kind), [.pix])
         let queued = try await customClient.content.undeliveredMessages()
         XCTAssertEqual(queued.map(\.id), undeliveredPix.map(\.id))
         let stories = try await customClient.getStories()
@@ -464,14 +464,14 @@ final class ClientTests: XCTestCase {
 
         let uploaded = try await customClient.uploadAttachment(Data("cached-pix".utf8))
         try await customClient.content.insertConversationItem(ConversationItem(
-            id: "exp_pix", peerUserId: bob.userId, kind: "pix", authorUserId: bob.userId,
+            id: "exp_pix", peerUserId: bob.userId, kind: .pix, authorUserId: bob.userId,
             sentAt: 100, viewedAt: 100, content: "",
-            attachment: uploaded.media("photo"),
+            attachment: uploaded.media(.photo),
             caption: nil, captionMeta: nil, displayDuration: 5
         ))
         _ = try await customClient.downloadAttachmentToCache(entryId: "exp_pix")
         let touched = try await customClient.sweepExpired(now: 100 + ContentStore.expireAfterViewMs + 1)
-        XCTAssertEqual(touched, ["pix"])
+        XCTAssertEqual(touched, [.pix])
         XCTAssertNil(AttachmentCrypto.readCached(cacheDir: cacheDir, id: uploaded.id))
 
         try await customClient.registerPushToken("apns-token-xyz")
@@ -645,7 +645,7 @@ final class ClientTests: XCTestCase {
 
         let stories = try await client.getStories(now: 4_000)
         XCTAssertEqual(stories.map(\.id), ["story_att"])
-        XCTAssertEqual(stories.first?.attachment?.mediaType, "photo")
+        XCTAssertEqual(stories.first?.attachment?.mediaType, .photo)
         let profiles = try await client.getProfiles()
         XCTAssertEqual(profiles.first { $0.userId == bob.userId }?.displayName, "Bob Name")
     }

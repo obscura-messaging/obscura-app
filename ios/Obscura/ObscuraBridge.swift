@@ -38,7 +38,7 @@ final class ObscuraBridge: RCTEventEmitter {
             self?.emit(.appStateChanged, ["state": active ? "active" : "background"])
         }
         ObscuraSession.shared.onMessageReceived = { [weak self] model in
-            self?.emit(.messageReceived, ["model": model])
+            self?.emit(.messageReceived, ["model": model.rawValue])
         }
         // Re-subscribe when the live client is swapped (login/register/restore).
         ObscuraSession.shared.onClientReplaced = { [weak self] client in
@@ -532,7 +532,7 @@ extension ObscuraBridge {
         Task {
             do {
                 let touched = try await client.sweepExpired()
-                resolve(Array(touched))
+                resolve(touched.map(\.rawValue))
             } catch {
                 rejectKit(reject, "SWEEP_EXPIRED_ERROR", error)
             }
@@ -542,12 +542,12 @@ extension ObscuraBridge {
     static func attachmentDict(_ att: MediaAttachment) -> [String: Any] {
         [
             "id": att.id,
-            "mediaType": att.mediaType,
+            "mediaType": att.mediaType.rawValue,
         ]
     }
 
     static func conversationItemDict(_ item: ConversationItem) -> [String: Any] {
-        if item.kind == "pix", let att = item.attachment {
+        if item.kind == .pix, let att = item.attachment {
             return [
                 "id": item.id,
                 "peerUserId": item.peerUserId,
@@ -677,7 +677,7 @@ extension ObscuraBridge {
                      resolver resolve: @escaping RCTPromiseResolveBlock,
                      rejecter reject: @escaping RCTPromiseRejectBlock) {
         let path = capture["path"] as? String ?? ""
-        let mediaType = capture["mediaType"] as? String ?? "photo"
+        let mediaType = MediaType(wire: capture["mediaType"] as? String)
         let caption = capture["caption"] as? String ?? ""
         let captionMeta = capture["captionMeta"] as? String
         let displayDuration = (capture["displayDuration"] as? NSNumber)?.intValue ?? 0

@@ -8,7 +8,7 @@ final class MessagingTests: XCTestCase {
         let id = try await alice.client.sendMessage(peerUserId: bob.userId, content: "hello bob")
 
         let row = try await bob.waitForEntry(id)
-        XCTAssertEqual(row.kind, "message")
+        XCTAssertEqual(row.kind, .message)
         XCTAssertEqual(row.content, "hello bob")
         XCTAssertEqual(row.authorUserId, alice.userId)
         XCTAssertEqual(row.peerUserId, alice.userId)
@@ -26,7 +26,7 @@ final class MessagingTests: XCTestCase {
 
         let first = await wakes.next()
         let second = await wakes.next()
-        XCTAssertEqual([first, second], ["directMessage", "story"])
+        XCTAssertEqual([first, second], [.directMessage, .story])
     }
 
     func testEntriesQueuedWhileOfflineArriveOnConnect() async throws {
@@ -80,7 +80,7 @@ final class MessagingTests: XCTestCase {
 
         let uploaded = try await alice.client.uploadAttachment(image)
         let storyId = try await alice.client.postStory(
-            content: "caption", attachment: uploaded.media("photo"), captionMeta: nil
+            content: "caption", attachment: uploaded.media(.photo), captionMeta: nil
         )
 
         let story = try await bob.waitForStory(storyId)

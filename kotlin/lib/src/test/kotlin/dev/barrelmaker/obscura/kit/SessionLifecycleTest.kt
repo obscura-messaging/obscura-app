@@ -189,7 +189,7 @@ class SessionLifecycleTest {
         assertEquals(emptyList<String>(), c.observeTyping("ctx").first())
         c.content.putConversation(
             ConversationItem(
-                "e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), "kept",
+                "e", SELF_USER_ID, ConversationKind.MESSAGE, SELF_USER_ID, 1, null, expiresAt(1, null), "kept",
             ),
         )
         val wipeError = runCatching { c.wipeDevice() }.exceptionOrNull()
@@ -264,7 +264,7 @@ class SessionLifecycleTest {
         val secret = "DEVICE-WIPE-SECRET-83a10"
         c.content.putConversation(
             ConversationItem(
-                "e", SELF_USER_ID, "message", SELF_USER_ID, 1, null, expiresAt(1, null), secret,
+                "e", SELF_USER_ID, ConversationKind.MESSAGE, SELF_USER_ID, 1, null, expiresAt(1, null), secret,
             ),
         )
         fun onDisk() = listOf(file, java.io.File("${file.absolutePath}-wal")).filter { it.exists() }
