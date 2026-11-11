@@ -1,7 +1,7 @@
 import XCTest
 @testable import ObscuraKit
 
-final class MessagingTests: XCTestCase {
+final class MessagingTests: ScenarioTestCase {
     func testADirectMessageArrivesAndStoresLocallyOnBothSides() async throws {
         let (alice, bob) = try await TestUser.friends()
 

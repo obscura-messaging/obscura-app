@@ -2,7 +2,7 @@ import XCTest
 @testable import ObscuraKit
 
 /// One account on a primary and linked devices, against a real server.
-final class MultiDeviceTests: XCTestCase {
+final class MultiDeviceTests: ScenarioTestCase {
     func testLinkedDevicesReceiveEveryMessageAndSyncTheirOwnWrites() async throws {
         let alice = try await TestUser.register()
         let laptop = try await TestUser.link(to: alice, name: "laptop")

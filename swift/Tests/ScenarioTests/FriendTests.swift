@@ -1,7 +1,7 @@
 import XCTest
 @testable import ObscuraKit
 
-final class FriendTests: XCTestCase {
+final class FriendTests: ScenarioTestCase {
     func testAFriendCodeHandshakeAcceptsBothSidesWithTheirUsernames() async throws {
         let alice = try await TestUser.register()
         let bob = try await TestUser.register()

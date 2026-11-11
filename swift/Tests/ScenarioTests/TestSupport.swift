@@ -21,7 +21,54 @@ final class MemorySessionStorage: SessionStorage, @unchecked Sendable {
     func clear() { lock.withLock { stored = nil } }
 }
 
-typealias SilentLogger = NoOpLogger
+/// The kit's log for the running test, printed only if the test fails.
+///
+/// XCTest's "caught error" for a failed async test is unreliable: it often names whatever threw last
+/// on any thread, such as a cancelled `Task.sleep` in a client shutting down, not the real cause. The
+/// kit logs the real cause (e.g. `gateway connect failed: http(status: 500 …)`), so keep it.
+final class KitLog: ObscuraLogger, @unchecked Sendable {
+    static let shared = KitLog()
+
+    private let lock = NSLock()
+    private var lines: [String] = []
+    private let clock = ISO8601DateFormatter()
+
+    init() {
+        clock.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    }
+
+    func reset() { lock.withLock { lines.removeAll() } }
+
+    func dump() -> String { lock.withLock { lines.joined(separator: "\n") } }
+
+    private func record(_ line: String) {
+        lock.withLock { lines.append("\(clock.string(from: Date())) \(line)") }
+    }
+
+    func log(_ message: String) { record(message) }
+    func decryptFailed(sourceUserId: String, reason: String) { record("decrypt failed from \(sourceUserId): \(reason)") }
+    func ackFailed(envelopeId: String, reason: String) { record("ack failed for \(envelopeId): \(reason)") }
+    func tokenRefreshFailed(attempt: Int, reason: String) { record("token refresh failed (attempt \(attempt)): \(reason)") }
+    func preKeySyncFailed(reason: String) { record("prekey sync failed: \(reason)") }
+    func identityChanged(userId: String) { record("identity changed for \(userId)") }
+    func sessionEstablishFailed(userId: String, reason: String) { record("session establish failed for \(userId): \(reason)") }
+    func databaseError(store: String, operation: String, reason: String) { record("db error in \(store).\(operation): \(reason)") }
+}
+
+/// Base for scenario tests: collects the kit's log per test and prints it under a failure.
+class ScenarioTestCase: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        KitLog.shared.reset()
+    }
+
+    override func tearDown() {
+        if let run = testRun, !run.hasSucceeded {
+            print("--- kit log for \(name) ---\n\(KitLog.shared.dump())\n--- end kit log ---")
+        }
+        super.tearDown()
+    }
+}
 
 struct Timeout: Error {
     let what: String
@@ -45,7 +92,7 @@ func makeClient(directory: String? = nil, storage: MemorySessionStorage = Memory
         try ObscuraDatabase.open(path: ($0 as NSString).appendingPathComponent("obscura.sqlite"), key: Data(repeating: 7, count: 32))
     } ?? ObscuraDatabase.inMemory()
     return try ObscuraClient(apiURL: TestServer.apiURL, database: db, deviceName: deviceName, sessionStorage: storage,
-                             logger: SilentLogger())
+                             logger: KitLog.shared)
 }
 
 func temporaryDirectory() throws -> String {
