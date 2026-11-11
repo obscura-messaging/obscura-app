@@ -166,7 +166,7 @@ final class MultiDeviceTests: XCTestCase {
             attachment: nil, captionMeta: nil
         )
         let msg = ConversationItem(
-            id: "m1", peerUserId: "some-peer-user", kind: "message", authorUserId: "some-peer-user",
+            id: "m1", peerUserId: "some-peer-user", kind: .message, authorUserId: "some-peer-user",
             sentAt: now, viewedAt: nil, content: "opaque", attachment: nil,
             caption: nil, captionMeta: nil, displayDuration: 0
         )

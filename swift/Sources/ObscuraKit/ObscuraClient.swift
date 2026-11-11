@@ -66,7 +66,7 @@ public actor ObscuraClient {
 
     /// Model key of each newly persisted content message (`directMessage`, `pix`, `seen`, `story`, `profile`).
     /// Single consumer; theoldest keys are dropped when 100 are unread.
-    public nonisolated let messageReceived: AsyncStream<String>
+    public nonisolated let messageReceived: AsyncStream<EntryModel>
     public nonisolated let attachmentCacheDir: URL?
 
     nonisolated let api: APIClient
@@ -82,7 +82,7 @@ public actor ObscuraClient {
     nonisolated let typing = TypingTracker()
     nonisolated let auth = StateStream(AuthState.loggedOut)
     nonisolated let connection = StateStream(ConnectionState.disconnected)
-    nonisolated let messageContinuation: AsyncStream<String>.Continuation
+    nonisolated let messageContinuation: AsyncStream<EntryModel>.Continuation
 
     var session: Session?
     var sender: MessageSender?

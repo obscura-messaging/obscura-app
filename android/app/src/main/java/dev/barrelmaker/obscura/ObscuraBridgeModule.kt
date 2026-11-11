@@ -7,10 +7,13 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
 import dev.barrelmaker.obscura.kit.AuthState
 import dev.barrelmaker.obscura.kit.ConnectionState
 import dev.barrelmaker.obscura.kit.ConversationItem
+import dev.barrelmaker.obscura.kit.ConversationKind
 import dev.barrelmaker.obscura.kit.DeviceInfo
+import dev.barrelmaker.obscura.kit.EntryModel
 import dev.barrelmaker.obscura.kit.LinkRequest
 import dev.barrelmaker.obscura.kit.LoginScenario
 import dev.barrelmaker.obscura.kit.MediaAttachment
+import dev.barrelmaker.obscura.kit.MediaType
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.ProfileItem
@@ -121,8 +124,8 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
             }
         }
         override fun onFriendsChanged() = emit(BridgeEvent.FRIENDS_CHANGED)
-        override fun onMessageReceived(model: String) =
-            emit(BridgeEvent.MESSAGE_RECEIVED) { putString("model", model) }
+        override fun onMessageReceived(model: EntryModel) =
+            emit(BridgeEvent.MESSAGE_RECEIVED) { putString("model", model.value) }
         override fun onPushToken(token: String) = emit(BridgeEvent.PUSH_TOKEN_RECEIVED) { putString("token", token) }
         override fun onAppStateChanged(state: ObscuraSession.AppState) = emit(BridgeEvent.APP_STATE_CHANGED) {
             putString("state", when (state) {
@@ -553,7 +556,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
                 } else emptyList()
                 val result = requireClient().sendCapture(
                     file = java.io.File(string("path") ?: ""),
-                    mediaType = string("mediaType") ?: "photo",
+                    mediaType = MediaType.of(string("mediaType")),
                     caption = string("caption") ?: "",
                     captionMeta = string("captionMeta"),
                     displayDuration = if (capture.hasKey("displayDuration")) capture.getDouble("displayDuration").toInt() else 0,
@@ -901,7 +904,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
             try {
                 val touched = requireClient().sweepExpired()
                 val arr = Arguments.createArray()
-                for (model in touched) arr.pushString(model)
+                for (model in touched) arr.pushString(model.value)
                 promise.resolve(arr)
             } catch (e: Exception) {
                 promise.rejectKit("SWEEP_EXPIRED_ERROR", e)
@@ -912,19 +915,19 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     private fun attachmentToMap(att: MediaAttachment): WritableMap =
         Arguments.createMap().apply {
             putString("id", att.id)
-            putString("mediaType", att.mediaType)
+            putString("mediaType", att.mediaType.value)
         }
 
     private fun messageToMap(m: ConversationItem): WritableMap =
         Arguments.createMap().apply {
             putString("id", m.id)
             putString("peerUserId", m.peerUserId)
-            putString("kind", m.kind)
+            putString("kind", m.kind.value)
             putString("authorUserId", m.authorUserId)
             putDouble("sentAt", m.sentAt.toDouble())
             val viewedAt = m.viewedAt
             if (viewedAt != null) putDouble("viewedAt", viewedAt.toDouble()) else putNull("viewedAt")
-            if (m.kind == "pix") {
+            if (m.kind == ConversationKind.PIX) {
                 val att = m.attachment
                 if (att != null) putMap("attachment", attachmentToMap(att)) else putNull("attachment")
                 putString("caption", m.caption)

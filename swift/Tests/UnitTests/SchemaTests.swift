@@ -38,7 +38,7 @@ final class SchemaTests: XCTestCase {
             try db.execute(sql: "INSERT INTO erased_entries (id, erased_at) VALUES (?, ?)", arguments: ["dead".storedText, 1])
         }
         try await content.insertConversationItem(ConversationItem(
-            id: "1", peerUserId: "peer", kind: "message", authorUserId: "peer",
+            id: "1", peerUserId: "peer", kind: .message, authorUserId: "peer",
             sentAt: 1, viewedAt: nil, content: "x", attachment: nil,
             caption: nil, captionMeta: nil, displayDuration: 0
         ))

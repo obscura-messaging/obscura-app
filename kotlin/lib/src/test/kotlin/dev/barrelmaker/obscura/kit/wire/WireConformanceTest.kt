@@ -1,6 +1,8 @@
 package dev.barrelmaker.obscura.kit.wire
 
 import com.google.protobuf.ByteString
+import dev.barrelmaker.obscura.kit.ConversationKind
+import dev.barrelmaker.obscura.kit.MediaType
 import dev.barrelmaker.obscura.kit.TypingState
 import obscura.client.v1.Client
 import org.json.JSONObject
@@ -30,6 +32,23 @@ class WireConformanceTest {
                 val appState = TypingState.valueOf(app.uppercase())
                 assertEquals(appState, WireCodec.decodeTypingState(wireState), "decode $wire")
                 assertEquals(wireState, WireCodec.encodeTypingState(appState), "encode $app")
+            })
+        }
+
+        forEach(v.getJSONArray("mediaTypes")) { c ->
+            val wire = c.getString("wire"); val app = c.getString("app")
+            tests.add(dyn("mediaType \"$wire\" -> \"$app\"") {
+                val decoded = MediaType.of(wire)
+                assertEquals(app, decoded.value, "decode \"$wire\"")
+                if (wire == app) assertEquals(wire, decoded.value, "encode $app")
+            })
+        }
+
+        forEach(v.getJSONArray("conversationKinds")) { c ->
+            val wire = c.getString("wire"); val app = c.getString("app")
+            tests.add(dyn("conversationKind $wire <-> \"$app\"") {
+                assertEquals(app, ConversationKind.of(wire).value, "decode $wire")
+                assertEquals(wire, ConversationKind.of(app).value, "encode $app")
             })
         }
 

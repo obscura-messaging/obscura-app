@@ -4,7 +4,7 @@ import LibSignalClient
 
 enum PersistedContent: Sendable, Equatable {
     case handled
-    case inboxed(modelKey: String?)
+    case inboxed(modelKey: EntryModel?)
     /// The primary's friend list changed: its other devices get the new list.
     case friendsChanged
     /// Needs a network reply or in-memory state, outside the transaction.
@@ -138,7 +138,7 @@ extension ObscuraClient {
             )
             let inserted = try ContentStore.insertConversationItem(item, undelivered: false, in: db)
             try ContentStore.recordEnvelope(envelopeId, in: db)
-            return .inboxed(modelKey: inserted ? "directMessage" : nil)
+            return .inboxed(modelKey: inserted ? .directMessage : nil)
         case .pix(let pix)?:
             guard !pix.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   let peer = peerUserId(senderUserId: senderUserId, claimedPeerUserId: pix.peerUserID, selfUserId: selfUserId),
@@ -158,7 +158,7 @@ extension ObscuraClient {
             )
             let inserted = try ContentStore.insertConversationItem(item, undelivered: false, in: db)
             try ContentStore.recordEnvelope(envelopeId, in: db)
-            return .inboxed(modelKey: inserted ? "pix" : nil)
+            return .inboxed(modelKey: inserted ? .pix : nil)
         case .seenReceipt(let sr)?:
             guard !sr.entryID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   let peer = peerUserId(senderUserId: senderUserId, claimedPeerUserId: sr.peerUserID, selfUserId: selfUserId) else {
@@ -172,7 +172,7 @@ extension ObscuraClient {
                 in: db
             )
             try ContentStore.recordEnvelope(envelopeId, in: db)
-            return .inboxed(modelKey: updated ? "seen" : nil)
+            return .inboxed(modelKey: updated ? .seen : nil)
         case .story(let st)?:
             guard !st.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return .ignored("story with blank id")
@@ -187,7 +187,7 @@ extension ObscuraClient {
             )
             let inserted = try ContentStore.insertStoryItem(item, undelivered: false, in: db)
             try ContentStore.recordEnvelope(envelopeId, in: db)
-            return .inboxed(modelKey: inserted ? "story" : nil)
+            return .inboxed(modelKey: inserted ? .story : nil)
         case .profile(let pr)?:
             let item = ProfileItem(
                 userId: senderUserId,
@@ -198,7 +198,7 @@ extension ObscuraClient {
             )
             let updated = try ContentStore.upsertProfile(item, undelivered: false, in: db)
             try ContentStore.recordEnvelope(envelopeId, in: db)
-            return .inboxed(modelKey: updated ? "profile" : nil)
+            return .inboxed(modelKey: updated ? .profile : nil)
         case nil:
             return .ignored("unknown client message arm")
         case .friendRequest(let request)?:

@@ -51,7 +51,7 @@ extension ObscuraClient {
     /// pix that `flushOutbox` retries; only a session lost mid-send leaves one unstored.
     public func sendCapture(
         filePath: String,
-        mediaType: String,
+        mediaType: MediaType,
         caption: String,
         captionMeta: String?,
         displayDuration: Int,
@@ -263,7 +263,7 @@ extension ObscuraClient {
 
     public func sweepExpired(
         now: UInt64 = UInt64(Date().timeIntervalSince1970 * 1000)
-    ) async throws -> Set<String> {
+    ) async throws -> Set<EntryModel> {
         let outcome = try await content.sweepExpired(now: now)
         if let cacheDir = attachmentCacheDir {
             for id in outcome.purgedMediaRefs {
