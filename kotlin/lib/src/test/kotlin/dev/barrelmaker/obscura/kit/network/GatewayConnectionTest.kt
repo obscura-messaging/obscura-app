@@ -153,8 +153,8 @@ class GatewayConnectionTest {
 
     @Test
     fun `empty, unexpected ack, and textual frames are logged and reconnect rather than silently dropped`() = runBlocking {
-        val unexpectedAck = xyz.obscura.server.contracts.ObscuraProtocol.WebSocketFrame.newBuilder()
-            .setAck(xyz.obscura.server.contracts.ObscuraProtocol.AckMessage.getDefaultInstance())
+        val unexpectedAck = obscura.v1.Obscura.WebSocketFrame.newBuilder()
+            .setAck(obscura.v1.Obscura.AckMessage.getDefaultInstance())
             .build()
             .toByteArray()
             .toByteString()
@@ -177,11 +177,11 @@ class GatewayConnectionTest {
 
     @Test
     fun `envelope batch frames are delivered, ack sends while connected, and disconnect drains the channel`() = runBlocking {
-        val env = xyz.obscura.server.contracts.ObscuraProtocol.Envelope.newBuilder()
+        val env = obscura.v1.Obscura.Envelope.newBuilder()
             .setId(com.google.protobuf.ByteString.copyFromUtf8("env-1"))
             .build()
-        val batchFrame = xyz.obscura.server.contracts.ObscuraProtocol.WebSocketFrame.newBuilder()
-            .setEnvelopeBatch(xyz.obscura.server.contracts.ObscuraProtocol.EnvelopeBatch.newBuilder().addEnvelopes(env))
+        val batchFrame = obscura.v1.Obscura.WebSocketFrame.newBuilder()
+            .setEnvelopeBatch(obscura.v1.Obscura.EnvelopeBatch.newBuilder().addEnvelopes(env))
             .build()
             .toByteArray()
             .toByteString()

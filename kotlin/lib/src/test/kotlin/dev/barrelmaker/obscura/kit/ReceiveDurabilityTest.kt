@@ -17,7 +17,7 @@ import obscura.client.v1.Client.DirectMessage
 import org.json.JSONArray
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
-import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
+import obscura.v1.Obscura.Envelope
 import java.util.UUID
 
 class ReceiveDurabilityTest {

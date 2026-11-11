@@ -24,9 +24,9 @@ import org.signal.libsignal.protocol.message.PreKeySignalMessage
 import org.signal.libsignal.protocol.state.KyberPreKeyRecord
 import org.signal.libsignal.protocol.state.PreKeyRecord
 import org.signal.libsignal.protocol.state.SignedPreKeyRecord
-import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageResponse
+import obscura.v1.Obscura.Envelope
+import obscura.v1.Obscura.SendMessageRequest
+import obscura.v1.Obscura.SendMessageResponse
 
 /**
  * An in-process stand-in for the bundle and message endpoints, with the real server's semantics.

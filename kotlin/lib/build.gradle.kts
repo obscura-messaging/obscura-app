@@ -195,9 +195,8 @@ kover {
                     "dev.barrelmaker.obscura.kit.SignalSession",
                     "dev.barrelmaker.obscura.kit.SignalSignedPreKey",
                     "dev.barrelmaker.obscura.kit.SignalLocalIdentity",
-                    "obscura.*",                             // protobuf-generated (obscura.v2.*)
+                    "obscura.*",                             // protobuf-generated (obscura.v1, obscura.client.v1)
                     "client.*",                              // protobuf-generated
-                    "xyz.obscura.server.contracts.*",        // protobuf-generated (server contract types)
                     "scenarios.*"                            // integration test classes
                 )
             }
