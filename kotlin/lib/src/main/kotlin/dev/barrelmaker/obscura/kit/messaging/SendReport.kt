@@ -1,11 +1,20 @@
 package dev.barrelmaker.obscura.kit.messaging
 
 import dev.barrelmaker.obscura.kit.ObscuraError
-import dev.barrelmaker.obscura.kit.SubmissionResult
-import dev.barrelmaker.obscura.kit.SubmissionStatus
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
 import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
 import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageResponse
+
+enum class SubmissionStatus { ACCEPTED, REJECTED, UNKNOWN }
+
+data class SubmissionResult(
+    val userId: String,
+    val deviceId: String?,
+    val status: SubmissionStatus,
+    val error: String? = null,
+)
+
+data class SendReport(val recipients: List<SubmissionResult>, val selfSync: List<SubmissionResult>)
 
 /** One submission and the recipient user it addresses. */
 internal data class UserSubmission(val userId: String, val submission: SendMessageRequest.Submission)

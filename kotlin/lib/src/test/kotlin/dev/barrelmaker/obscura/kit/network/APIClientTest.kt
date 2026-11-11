@@ -76,18 +76,18 @@ class APIClientTest {
         assertEquals(1, server.requestCount)
     }
 
-    private fun sessionApi(vararg outcomes: dev.barrelmaker.obscura.kit.managers.TokenStatus): Pair<APIClient, () -> Int> {
+    private fun sessionApi(vararg outcomes: dev.barrelmaker.obscura.kit.auth.TokenStatus): Pair<APIClient, () -> Int> {
         var refreshes = 0
         var token = "old"
         val api = APIClient(server.url("/").toString().trimEnd('/'), refresh = {
-            outcomes[refreshes++].also { if (it == dev.barrelmaker.obscura.kit.managers.TokenStatus.FRESH) token = "new" }
+            outcomes[refreshes++].also { if (it == dev.barrelmaker.obscura.kit.auth.TokenStatus.FRESH) token = "new" }
         }) { token }
         return api to { refreshes }
     }
 
     @Test
     fun `a 401 on the session is refreshed and the request retried once with the new token`() = runBlocking {
-        val (api, refreshes) = sessionApi(dev.barrelmaker.obscura.kit.managers.TokenStatus.FRESH)
+        val (api, refreshes) = sessionApi(dev.barrelmaker.obscura.kit.auth.TokenStatus.FRESH)
         server.enqueue(status(401))
         server.enqueue(status(200, body = """{"ticket":"t"}"""))
 
@@ -99,7 +99,7 @@ class APIClientTest {
 
     @Test
     fun `a second 401 after a refresh is thrown, not refreshed again`() = runBlocking {
-        val (api, refreshes) = sessionApi(dev.barrelmaker.obscura.kit.managers.TokenStatus.FRESH)
+        val (api, refreshes) = sessionApi(dev.barrelmaker.obscura.kit.auth.TokenStatus.FRESH)
         server.enqueue(status(401))
         server.enqueue(status(401, body = "still"))
 
@@ -111,7 +111,7 @@ class APIClientTest {
 
     @Test
     fun `a rejected refresh after a 401 is NOT_AUTHENTICATED`() = runBlocking {
-        val (api, _) = sessionApi(dev.barrelmaker.obscura.kit.managers.TokenStatus.REJECTED)
+        val (api, _) = sessionApi(dev.barrelmaker.obscura.kit.auth.TokenStatus.REJECTED)
         server.enqueue(status(401))
 
         assertTrue(runCatching { api.registerPushToken("p") }.exceptionOrNull() is ObscuraError.NotAuthenticated)
@@ -120,7 +120,7 @@ class APIClientTest {
 
     @Test
     fun `an unavailable refresh leaves the 401 as an HTTP error`() = runBlocking {
-        val (api, _) = sessionApi(dev.barrelmaker.obscura.kit.managers.TokenStatus.UNAVAILABLE)
+        val (api, _) = sessionApi(dev.barrelmaker.obscura.kit.auth.TokenStatus.UNAVAILABLE)
         server.enqueue(status(401))
 
         assertEquals(401, (runCatching { api.fetchGatewayTicket() }.exceptionOrNull() as ObscuraError.Http).status)

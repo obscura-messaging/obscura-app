@@ -2,27 +2,28 @@ package scenarios
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.barrelmaker.obscura.kit.AuthState
+import dev.barrelmaker.obscura.kit.EntryModel
 import dev.barrelmaker.obscura.kit.LoginScenario
 import dev.barrelmaker.obscura.kit.ObscuraClient
-import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.ObscuraConfig
+import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.SubmissionStatus
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
+import dev.barrelmaker.obscura.kit.auth.AuthManager
+import dev.barrelmaker.obscura.kit.crypto.PreKeys
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
-import dev.barrelmaker.obscura.kit.managers.AuthManager
-import dev.barrelmaker.obscura.kit.managers.PreKeys
 import dev.barrelmaker.obscura.kit.messaging.Messenger
 import dev.barrelmaker.obscura.kit.messaging.parsePeerBundles
 import dev.barrelmaker.obscura.kit.network.PreKeyCounts
 import dev.barrelmaker.obscura.kit.network.PreKeyUpload
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
+import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import obscura.client.v1.Client.ClientMessage
 import obscura.client.v1.Client.DirectMessage
-import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
-import java.util.UUID
 
 /** Contracts from the real server's auth, key, device and message services. */
 class ServerContractTests {
@@ -207,7 +208,7 @@ class ServerContractTests {
             assertEquals(AuthState.LOGGED_OUT, first.authState.value)
             assertEquals(LoginScenario.EXISTING_DEVICE, first.login(firstName, TEST_PASSWORD))
             first.logout()
-            val resetKeys = dev.barrelmaker.obscura.kit.managers.PreKeys.generateProvisioningKeys(
+            val resetKeys = dev.barrelmaker.obscura.kit.crypto.PreKeys.generateProvisioningKeys(
                 org.signal.libsignal.protocol.IdentityKeyPair.generate()
             )
             first.api.resetAccount(firstName, TEST_PASSWORD, "replacement", resetKeys.toDeviceKeys())
@@ -285,7 +286,7 @@ class ServerContractTests {
             val recovered = bob.awaitContent("recover after storage failure")
             assertEquals(alice.userId, recovered.authorUserId)
             assertEquals(1, bob.getMessages().size)
-            assertEquals("directMessage", bob.messageReceived.tryReceive().getOrNull())
+            assertEquals(EntryModel.DIRECT_MESSAGE, bob.messageReceived.tryReceive().getOrNull())
             assertNull(bob.messageReceived.tryReceive().getOrNull())
             bob.processPendingMessages(2_000)
             bob.disconnect()

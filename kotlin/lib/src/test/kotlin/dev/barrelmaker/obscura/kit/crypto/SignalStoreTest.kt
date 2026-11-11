@@ -279,8 +279,8 @@ class SignalStoreTest {
 
     @Test
     fun `clear deletes Kyber prekeys and pre-key bookkeeping`() {
-        dev.barrelmaker.obscura.kit.managers.PreKeys.install(
-            store, dev.barrelmaker.obscura.kit.managers.PreKeys.generateProvisioningKeys(org.signal.libsignal.protocol.IdentityKeyPair.generate()),
+        dev.barrelmaker.obscura.kit.crypto.PreKeys.install(
+            store, dev.barrelmaker.obscura.kit.crypto.PreKeys.generateProvisioningKeys(org.signal.libsignal.protocol.IdentityKeyPair.generate()),
         )
         store.clear()
         assertEquals(emptyList<KyberPreKeyRecord>(), store.loadKyberPreKeys())

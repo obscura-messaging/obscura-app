@@ -1,4 +1,4 @@
-package dev.barrelmaker.obscura.kit.persistence
+package dev.barrelmaker.obscura.kit
 
 /** Platform storage for the session blob. [save] replaces the whole blob. */
 interface SessionStorage {

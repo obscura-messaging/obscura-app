@@ -3,7 +3,7 @@ package scenarios
 import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraLogger
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
 import dev.barrelmaker.obscura.kit.messaging.Messenger
 import kotlinx.coroutines.runBlocking
 import obscura.client.v1.Client.ClientMessage

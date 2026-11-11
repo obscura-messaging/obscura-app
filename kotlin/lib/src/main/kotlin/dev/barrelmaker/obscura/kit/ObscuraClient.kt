@@ -6,18 +6,17 @@ import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.crypto.AttachmentCrypto
 import dev.barrelmaker.obscura.kit.crypto.LinkCrypto
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import dev.barrelmaker.obscura.kit.linking.HistorySync
-import dev.barrelmaker.obscura.kit.managers.AuthManager
-import dev.barrelmaker.obscura.kit.managers.Credentials
-import dev.barrelmaker.obscura.kit.managers.MessageSender
-import dev.barrelmaker.obscura.kit.managers.PreKeys
-import dev.barrelmaker.obscura.kit.managers.TokenStatus
+import dev.barrelmaker.obscura.kit.auth.AuthManager
+import dev.barrelmaker.obscura.kit.auth.Credentials
+import dev.barrelmaker.obscura.kit.messaging.MessageSender
+import dev.barrelmaker.obscura.kit.crypto.PreKeys
+import dev.barrelmaker.obscura.kit.auth.TokenStatus
 import dev.barrelmaker.obscura.kit.messaging.Messenger
 import dev.barrelmaker.obscura.kit.network.APIClient
 import dev.barrelmaker.obscura.kit.network.GatewayConnection
-import dev.barrelmaker.obscura.kit.persistence.SessionStorage
 import dev.barrelmaker.obscura.kit.stores.ContentStore
 import dev.barrelmaker.obscura.kit.stores.ConversationItem
 import dev.barrelmaker.obscura.kit.stores.DeviceStore
@@ -146,10 +145,10 @@ class ObscuraClient(
     /** Payload-free; emits on collection and on every friend change. Call [getFriends] for the rows. */
     val friendsChanged: Flow<Unit> = friends.changes
 
-    private val newEntries = Channel<String>(MESSAGE_RECEIVED_CAPACITY, BufferOverflow.DROP_OLDEST)
+    private val newEntries = Channel<EntryModel>(MESSAGE_RECEIVED_CAPACITY, BufferOverflow.DROP_OLDEST)
 
     /** The model key of each newly inboxed APP_ENTRY row. One consumer. The inbox is the delivery path. */
-    val messageReceived: ReceiveChannel<String> = newEntries
+    val messageReceived: ReceiveChannel<EntryModel> = newEntries
 
     private val debugLog = ConcurrentLinkedDeque<String>()
 
@@ -517,7 +516,7 @@ class ObscuraClient(
     /** A decrypted message after its durable writes, and the network work that follows them. */
     private class Stored(
         val message: ClientMessage,
-        val wokeModel: String? = null,
+        val wokeModel: EntryModel? = null,
         val friendFollowUp: FriendFollowUp = FriendFollowUp.NONE,
     )
 
@@ -608,7 +607,7 @@ class ObscuraClient(
                             content = dm.content,
                         ),
                     )
-                    Stored(message, wokeModel = "directMessage")
+                    Stored(message, wokeModel = EntryModel.DIRECT_MESSAGE)
                 }
             }
             ClientMessage.PayloadCase.PIX -> {
@@ -633,7 +632,7 @@ class ObscuraClient(
                             displayDuration = pix.displayDurationSecs,
                         ),
                     )
-                    Stored(message, wokeModel = "pix")
+                    Stored(message, wokeModel = EntryModel.PIX)
                 }
             }
             ClientMessage.PayloadCase.SEEN_RECEIPT -> {
@@ -647,7 +646,7 @@ class ObscuraClient(
                     if (row != null && row.peerUserId == peer && row.authorUserId != senderUserId && row.viewedAt == null) {
                         val viewedAt = minOf(sr.viewedAt.coerceAtLeast(0L), sentAt)
                         content.markConversationViewedInTransaction(sr.entryId, viewedAt, expiresAt(row.sentAt, viewedAt))
-                        Stored(message, wokeModel = "seen")
+                        Stored(message, wokeModel = EntryModel.SEEN)
                     } else {
                         Stored(message)
                     }
@@ -672,7 +671,7 @@ class ObscuraClient(
                             captionMeta = st.captionMeta.ifEmpty { null },
                         ),
                     )
-                    Stored(message, wokeModel = "story")
+                    Stored(message, wokeModel = EntryModel.STORY)
                 }
             }
             ClientMessage.PayloadCase.PROFILE -> {
@@ -686,7 +685,7 @@ class ObscuraClient(
                         bio = pr.bio,
                     ),
                 )
-                Stored(message, wokeModel = if (updated) "profile" else null)
+                Stored(message, wokeModel = if (updated) EntryModel.PROFILE else null)
             }
             else -> Stored(message)
         }
@@ -839,7 +838,7 @@ class ObscuraClient(
         val report = sendToPeersAndSelf(self.userId, peers, item.toClientMessage())
         if (peers.isEmpty() || report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
             this.content.setConversationUndelivered(id, true)
-            throw sendFailed("directMessage", report)
+            throw sendFailed(EntryModel.DIRECT_MESSAGE, report)
         }
         return id
     }
@@ -852,7 +851,7 @@ class ObscuraClient(
      */
     suspend fun sendCapture(
         file: File,
-        mediaType: String,
+        mediaType: MediaType,
         caption: String,
         captionMeta: String?,
         displayDuration: Int,
@@ -909,7 +908,7 @@ class ObscuraClient(
         val report = sendToPeersAndSelf(self.userId, peers, item.toClientMessage())
         if (peers.isEmpty() || report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
             content.setConversationUndelivered(id, true)
-            throw sendFailed("pix", report)
+            throw sendFailed(EntryModel.PIX, report)
         }
         return id
     }
@@ -953,7 +952,7 @@ class ObscuraClient(
         val report = sendToPeersAndSelf(self.userId, peers, item.toClientMessage())
         if (peers.isNotEmpty() && report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
             this.content.setStoryUndelivered(id, true)
-            throw sendFailed("story", report)
+            throw sendFailed(EntryModel.STORY, report)
         }
         return id
     }
@@ -976,7 +975,7 @@ class ObscuraClient(
         val report = sendToPeersAndSelf(self.userId, peers, item.toClientMessage())
         if (peers.isNotEmpty() && report.recipients.none { it.status == SubmissionStatus.ACCEPTED }) {
             content.setProfileUndelivered(self.userId, sentAt, true)
-            throw sendFailed("profile", report)
+            throw sendFailed(EntryModel.PROFILE, report)
         }
     }
 
@@ -1012,7 +1011,7 @@ class ObscuraClient(
         return delivered
     }
 
-    suspend fun sweepExpired(now: Long = clock()): Set<String> {
+    suspend fun sweepExpired(now: Long = clock()): Set<EntryModel> {
         val outcome = content.sweepExpired(now)
         attachmentCacheDir?.let { dir ->
             for (mediaRef in outcome.purgedMediaRefs) {
@@ -1032,9 +1031,9 @@ class ObscuraClient(
         return SendReport(recipients, selfSync)
     }
 
-    private fun sendFailed(model: String, report: SendReport): ObscuraError.SendFailed {
+    private fun sendFailed(model: EntryModel, report: SendReport): ObscuraError.SendFailed {
         val reasons = report.recipients.joinToString("; ") { it.error ?: it.status.name.lowercase() }
-        return ObscuraError.SendFailed(if (reasons.isEmpty()) "$model reached none of its recipients" else "$model reached none of its recipients: $reasons")
+        return ObscuraError.SendFailed(if (reasons.isEmpty()) "${model.value} reached none of its recipients" else "${model.value} reached none of its recipients: $reasons")
     }
 
     private fun generateEntryId(prefix: String, now: Long): String {

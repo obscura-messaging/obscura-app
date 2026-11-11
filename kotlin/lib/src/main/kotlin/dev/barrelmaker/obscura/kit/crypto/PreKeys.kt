@@ -1,7 +1,6 @@
-package dev.barrelmaker.obscura.kit.managers
+package dev.barrelmaker.obscura.kit.crypto
 
 import dev.barrelmaker.obscura.kit.SignalPreKeyState
-import dev.barrelmaker.obscura.kit.crypto.SignalStore
 import dev.barrelmaker.obscura.kit.crypto.toBase64
 import dev.barrelmaker.obscura.kit.network.DeviceKeys
 import dev.barrelmaker.obscura.kit.network.KyberPreKeyJson

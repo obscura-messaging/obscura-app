@@ -1,10 +1,13 @@
-package dev.barrelmaker.obscura.kit.managers
+package dev.barrelmaker.obscura.kit.messaging
 
+import dev.barrelmaker.obscura.kit.FakeDevice
+import dev.barrelmaker.obscura.kit.FakeObscuraServer
+import dev.barrelmaker.obscura.kit.Received
 import dev.barrelmaker.obscura.kit.SubmissionResult
-import dev.barrelmaker.obscura.kit.SubmissionStatus.ACCEPTED
-import dev.barrelmaker.obscura.kit.SubmissionStatus.REJECTED
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
-import dev.barrelmaker.obscura.kit.messaging.Messenger
+import dev.barrelmaker.obscura.kit.messaging.SubmissionStatus.ACCEPTED
+import dev.barrelmaker.obscura.kit.messaging.SubmissionStatus.REJECTED
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
+import java.util.UUID
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
@@ -19,7 +22,6 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.signal.libsignal.protocol.IdentityKeyPair
-import java.util.UUID
 
 /**
  * The send path against real Signal peers on an in-process server with complete delivery. Every

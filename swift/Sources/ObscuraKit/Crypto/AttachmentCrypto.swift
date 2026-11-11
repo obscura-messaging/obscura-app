@@ -6,7 +6,7 @@ public struct AttachmentUpload: Sendable, Equatable {
     public let contentKey: Data
     public let nonce: Data
 
-    public func media(_ mediaType: String) -> MediaAttachment {
+    public func media(_ mediaType: MediaType) -> MediaAttachment {
         MediaAttachment(id: id, contentKey: contentKey, nonce: nonce, mediaType: mediaType)
     }
 }

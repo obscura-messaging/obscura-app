@@ -5,7 +5,7 @@ import com.sun.net.httpserver.HttpServer
 import dev.barrelmaker.obscura.kit.SubmissionStatus
 import dev.barrelmaker.obscura.kit.bundle
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
 import dev.barrelmaker.obscura.kit.newInMemoryDatabase
 import dev.barrelmaker.obscura.kit.network.APIClient
 import kotlinx.coroutines.runBlocking
@@ -17,7 +17,7 @@ import java.net.InetSocketAddress
 import java.util.UUID
 import dev.barrelmaker.obscura.kit.SELF_DEVICE_ID
 
-class SubmissionResultsTest {
+class SendReportTest {
     private fun submission() = SendMessageRequest.Submission.newBuilder()
         .setDeviceId(UuidCodec.uuidToBytes(UUID.randomUUID()))
         .setMessage(ByteString.copyFromUtf8("encrypted"))
@@ -119,10 +119,10 @@ class SubmissionResultsTest {
 
         val storeDb = newInMemoryDatabase()
         val store = SignalStore(storeDb)
-        val keys = dev.barrelmaker.obscura.kit.managers.PreKeys.generateProvisioningKeys(
+        val keys = dev.barrelmaker.obscura.kit.crypto.PreKeys.generateProvisioningKeys(
             org.signal.libsignal.protocol.IdentityKeyPair.generate(),
         )
-        dev.barrelmaker.obscura.kit.managers.PreKeys.install(store, keys)
+        dev.barrelmaker.obscura.kit.crypto.PreKeys.install(store, keys)
         // A device out of one-time keys is still reachable through its signed and Kyber keys.
         val noOtp = parsePeerBundle(keys.bundle(userId).put("oneTimePreKey", org.json.JSONObject.NULL))
         assertNull(noOtp.bundle.preKey)

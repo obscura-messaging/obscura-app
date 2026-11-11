@@ -83,7 +83,7 @@ final class ReceiveTests: XCTestCase {
         let delivery = envelope(data, sender: sender)
         let ackCount = Locked(0)
         let wakes = Task {
-            var values: [String] = []
+            var values: [EntryModel] = []
             for await value in client.messageReceived { values.append(value) }
             return values
         }
@@ -103,7 +103,7 @@ final class ReceiveTests: XCTestCase {
         XCTAssertEqual(ackCount.withLock { $0 }, 2)
         wakes.cancel()
         let received = await wakes.value
-        XCTAssertEqual(received, ["directMessage"])
+        XCTAssertEqual(received, [.directMessage])
     }
 
     func testARedeliveryOfAMessageAlreadyProcessedIsAckedWithoutADecryptFailure() async throws {

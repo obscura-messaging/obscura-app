@@ -2,10 +2,9 @@ package dev.barrelmaker.obscura.kit
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
-import dev.barrelmaker.obscura.kit.managers.ProvisioningKeys
+import dev.barrelmaker.obscura.kit.crypto.ProvisioningKeys
 import org.json.JSONObject
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
-import dev.barrelmaker.obscura.kit.persistence.SessionStorage
 import dev.barrelmaker.obscura.kit.stores.LocalDevice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

@@ -173,7 +173,7 @@ class ReceivePathTest {
         assertEquals("first", stored.content)
         assertEquals(peer, stored.authorUserId)
         assertEquals(peer, stored.peerUserId)
-        assertEquals("directMessage", c.messageReceived.tryReceive().getOrNull())
+        assertEquals(EntryModel.DIRECT_MESSAGE, c.messageReceived.tryReceive().getOrNull())
         assertNull(c.messageReceived.tryReceive().getOrNull())
     }
 
@@ -203,7 +203,7 @@ class ReceivePathTest {
         val key = ByteArray(32) { 7 }
         val nonce = ByteArray(12) { 8 }
         c.receive(pixMessage("pix_1", contentKey = key, nonce = nonce, timestamp = 1_000L), envelopeId = "e1")
-        assertEquals("pix", c.messageReceived.tryReceive().getOrNull())
+        assertEquals(EntryModel.PIX, c.messageReceived.tryReceive().getOrNull())
 
         // Duplicate pix id in a new envelope and invalid pix payloads are ignored
         c.receive(pixMessage("pix_1", contentKey = key, nonce = nonce, timestamp = 1_000L), envelopeId = "e1_dup")
@@ -219,10 +219,10 @@ class ReceivePathTest {
         assertNull(c.messageReceived.tryReceive().getOrNull())
 
         val beforeSeen = c.getMessages().single()
-        val expectedAtt = MediaAttachment("att_1", key, nonce, "photo")
+        val expectedAtt = MediaAttachment("att_1", key, nonce, MediaType.PHOTO)
         assertTrue(expectedAtt.equals(expectedAtt))
         assertEquals(expectedAtt, beforeSeen.attachment)
-        assertEquals("pix", beforeSeen.kind)
+        assertEquals(ConversationKind.PIX, beforeSeen.kind)
         assertNull(beforeSeen.viewedAt)
         assertEquals(1_000L + MAX_EPHEMERAL_AGE_MS, beforeSeen.expiresAt)
 
@@ -240,7 +240,7 @@ class ReceivePathTest {
             envelopeId = "e3",
             sender = SELF_USER_ID,
         )
-        assertEquals("seen", c.messageReceived.tryReceive().getOrNull())
+        assertEquals(EntryModel.SEEN, c.messageReceived.tryReceive().getOrNull())
         val afterSeen = c.getMessages().single()
         assertEquals(2_000L, afterSeen.viewedAt)
         assertEquals(2_000L + EXPIRE_AFTER_VIEW_MS, afterSeen.expiresAt)
@@ -258,7 +258,7 @@ class ReceivePathTest {
         val bare = c.getMessages().first { it.id == "pix_bare" }
         assertNull(bare.caption)
         assertNull(bare.captionMeta)
-        assertEquals("photo", bare.attachment?.mediaType)
+        assertEquals(MediaType.PHOTO, bare.attachment?.mediaType)
     }
 
     @Test
@@ -269,7 +269,7 @@ class ReceivePathTest {
         assertNull(c.messageReceived.tryReceive().getOrNull())
 
         c.receive(storyPost("st_1", "hello story", mediaRef = "att_s", timestamp = now), envelopeId = "e1")
-        assertEquals("story", c.messageReceived.tryReceive().getOrNull())
+        assertEquals(EntryModel.STORY, c.messageReceived.tryReceive().getOrNull())
         // Duplicate story id in a new envelope is ignored
         c.receive(storyPost("st_1", "dup story", timestamp = now), envelopeId = "e1_dup")
         assertNull(c.messageReceived.tryReceive().getOrNull())
@@ -281,12 +281,12 @@ class ReceivePathTest {
                 .build(),
             envelopeId = "e1_text",
         )
-        assertEquals("story", c.messageReceived.tryReceive().getOrNull())
+        assertEquals(EntryModel.STORY, c.messageReceived.tryReceive().getOrNull())
         assertEquals(2, c.getStories(now = now + 1_000L).size)
         assertTrue(c.getStories(now = now + STORY_MAX_AGE_MS + 1L).isEmpty())
 
         c.receive(profileUpdate("Alice 1", "bio 1", timestamp = 1_000L), envelopeId = "e2", device = "dev_b")
-        assertEquals("profile", c.messageReceived.tryReceive().getOrNull())
+        assertEquals(EntryModel.PROFILE, c.messageReceived.tryReceive().getOrNull())
         // Older timestamp loses
         c.receive(profileUpdate("Stale", "old", timestamp = 900L), envelopeId = "e3", device = "dev_z")
         assertNull(c.messageReceived.tryReceive().getOrNull())
@@ -295,7 +295,7 @@ class ReceivePathTest {
         assertNull(c.messageReceived.tryReceive().getOrNull())
         // Same timestamp, lexicographically greater device wins
         c.receive(profileUpdate("Alice 2", "bio 2", timestamp = 1_000L), envelopeId = "e5", device = "dev_c")
-        assertEquals("profile", c.messageReceived.tryReceive().getOrNull())
+        assertEquals(EntryModel.PROFILE, c.messageReceived.tryReceive().getOrNull())
 
         val profile = c.getProfiles().single()
         assertEquals("Alice 2", profile.displayName)
@@ -334,7 +334,7 @@ class ReceivePathTest {
 
         val keys = generateSequence { c.messageReceived.tryReceive().getOrNull() }.toList()
         assertEquals(100, keys.size)
-        assertEquals((1..100).map { if (it % 2 == 0) "directMessage" else "story" }, keys)
+        assertEquals((1..100).map { if (it % 2 == 0) EntryModel.DIRECT_MESSAGE else EntryModel.STORY }, keys)
     }
 
     // ── Friends ───────────────────────────────────────────────

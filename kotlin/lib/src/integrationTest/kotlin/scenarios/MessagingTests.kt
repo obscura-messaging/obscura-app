@@ -1,5 +1,8 @@
 package scenarios
 
+import dev.barrelmaker.obscura.kit.ConversationKind
+import dev.barrelmaker.obscura.kit.EntryModel
+import dev.barrelmaker.obscura.kit.MediaType
 import dev.barrelmaker.obscura.kit.crypto.fromBase64
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -23,11 +26,11 @@ class MessagingTests {
         val id = alice.sendMessage(bob.userId!!, "hello bob")
 
         val row = bob.awaitRow { it.id == id }
-        assertEquals("message", row.kind)
+        assertEquals(ConversationKind.MESSAGE, row.kind)
         assertEquals(alice.userId, row.authorUserId)
         assertEquals(alice.userId, row.peerUserId)
         assertEquals("hello bob", row.content)
-        assertEquals("directMessage", withTimeout(5_000) { bob.messageReceived.receive() })
+        assertEquals(EntryModel.DIRECT_MESSAGE, withTimeout(5_000) { bob.messageReceived.receive() })
 
         sendAndVerify(bob, alice, "reply")
         assertEquals(2, bob.getMessages().size)
@@ -85,7 +88,7 @@ class MessagingTests {
         val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte()) + ByteArray(250)
 
         val attachment = alice.uploadAttachment(jpeg)
-        alice.postStory("vacation", attachment.media("photo"), null)
+        alice.postStory("vacation", attachment.media(MediaType.PHOTO), null)
 
         eventually { bob.getStories().isNotEmpty() }
         val story = bob.getStories().single()
