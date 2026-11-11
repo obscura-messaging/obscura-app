@@ -142,7 +142,7 @@ swift-integration api="http://localhost:3000" filter="ScenarioTests": swift-prot
     @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
     cd swift && mkdir -p .build/reports && TEST_RUNNER_OBSCURA_TEST_API={{ quote(api) }} \
         {{ swift_xcodebuild }} -destination "platform=iOS Simulator,id=$(scripts/simulator.sh)" \
-        -only-testing:{{ quote(filter) }} test 2>&1 | tee .build/reports/integration-tests.log
+        -only-testing:{{ quote(filter) }} -test-iterations 6 -run-tests-until-failure test 2>&1 | tee .build/reports/integration-tests.log
 
 # Create or refresh the compile-only Firebase stub when no real config exists.
 android-config:

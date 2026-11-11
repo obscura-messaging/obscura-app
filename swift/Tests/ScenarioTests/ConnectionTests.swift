@@ -2,6 +2,17 @@ import XCTest
 @testable import ObscuraKit
 
 final class ConnectionTests: XCTestCase {
+    // DIAGNOSTIC (not for merge): test boundaries on the same clock as the kit's log.
+    override func setUp() {
+        super.setUp()
+        trace("TEST START \(name)")
+    }
+
+    override func tearDown() {
+        trace("TEST END \(name) failures=\(testRun?.failureCount ?? -1)")
+        super.tearDown()
+    }
+
     func testAFailedConnectReturnsToDisconnectedWithoutRetrying() async throws {
         let client = try ObscuraClient(apiURL: "http://127.0.0.1:1", database: ObscuraDatabase.inMemory(),
                                        deviceName: "d", sessionStorage: MemorySessionStorage(), logger: SilentLogger())

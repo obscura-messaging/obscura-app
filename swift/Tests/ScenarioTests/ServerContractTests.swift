@@ -3,6 +3,17 @@ import XCTest
 @testable import ObscuraKit
 
 final class ServerContractTests: XCTestCase {
+    // DIAGNOSTIC (not for merge): test boundaries on the same clock as the kit's log.
+    override func setUp() {
+        super.setUp()
+        trace("TEST START \(name)")
+    }
+
+    override func tearDown() {
+        trace("TEST END \(name) failures=\(testRun?.failureCount ?? -1)")
+        super.tearDown()
+    }
+
     func testLocalFriendRequestAndAcceptWritesRecoverAfterDecryptFailure() async throws {
         let alice = try await TestUser.register()
         let bob = try await TestUser.register()

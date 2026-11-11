@@ -3,6 +3,17 @@ import XCTest
 
 /// One account on a primary and linked devices, against a real server.
 final class MultiDeviceTests: XCTestCase {
+    // DIAGNOSTIC (not for merge): test boundaries on the same clock as the kit's log.
+    override func setUp() {
+        super.setUp()
+        trace("TEST START \(name)")
+    }
+
+    override func tearDown() {
+        trace("TEST END \(name) failures=\(testRun?.failureCount ?? -1)")
+        super.tearDown()
+    }
+
     func testLinkedDevicesReceiveEveryMessageAndSyncTheirOwnWrites() async throws {
         let alice = try await TestUser.register()
         let laptop = try await TestUser.link(to: alice, name: "laptop")
