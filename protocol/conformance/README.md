@@ -12,6 +12,8 @@ Checked against each kit's `WireCodec` (`WireConformanceTest.kt`,
 |---|---|
 | `messageTypes` | `ClientMessage.payload` arm ↔ app-facing kind |
 | `typingStates` | `TypingSignal.state` ↔ app-facing state |
+| `mediaTypes` | `AttachmentPointer.media_type` → media type; a peer's text is free-form, so a blank or unknown value reads as `photo`. Encoding a known type gives back its `wire` |
+| `conversationKinds` | `StoredMessageRecord.kind` ↔ conversation kind |
 | `roundTrip` | `AppEntry` encode/decode preserves values (JSON compared by value, not bytes) |
 
 ## `link.json`

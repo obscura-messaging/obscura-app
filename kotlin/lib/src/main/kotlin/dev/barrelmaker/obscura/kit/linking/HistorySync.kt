@@ -3,6 +3,7 @@ package dev.barrelmaker.obscura.kit.linking
 import com.google.protobuf.ByteString
 import com.google.protobuf.InvalidProtocolBufferException
 import dev.barrelmaker.obscura.kit.AttachmentUpload
+import dev.barrelmaker.obscura.kit.ConversationKind
 import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.stores.ContentStore
 import dev.barrelmaker.obscura.kit.stores.ConversationItem
@@ -58,7 +59,7 @@ internal object HistorySync {
         val messages = snapshot.messagesList.mapNotNull { m ->
             if (m.id.isBlank() || m.peerUserId.isBlank() || m.authorUserId.isBlank()) return@mapNotNull null
             val viewedAt = m.viewedAt.takeIf { it > 0L }
-            if (m.kind == "pix") {
+            if (m.kind == ConversationKind.PIX.value) {
                 val att = if (m.hasAttachment()) MediaAttachment.fromProto(m.attachment) else null
                 att?.let {
                     ConversationItem.pix(

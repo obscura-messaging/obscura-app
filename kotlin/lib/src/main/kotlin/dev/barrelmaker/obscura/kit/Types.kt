@@ -2,6 +2,39 @@ package dev.barrelmaker.obscura.kit
 
 enum class TypingState { STARTED, STOPPED }
 
+/**
+ * The media in a pix or story. Peers send it as free text on the wire, so anything unrecognized
+ * reads as a photo, as the app shows it.
+ */
+enum class MediaType(val value: String) {
+    PHOTO("photo"),
+    VIDEO("video");
+
+    companion object {
+        fun of(value: String?): MediaType = entries.firstOrNull { it.value == value } ?: PHOTO
+    }
+}
+
+/** A conversation entry is a text message or a pix; [value] is how it is stored and synced. */
+enum class ConversationKind(val value: String) {
+    MESSAGE("message"),
+    PIX("pix");
+
+    companion object {
+        fun of(value: String): ConversationKind =
+            entries.firstOrNull { it.value == value } ?: throw IllegalArgumentException("Invalid conversation item kind: $value")
+    }
+}
+
+/** The content model an entry belongs to, so the host can refresh just that slice. */
+enum class EntryModel(val value: String) {
+    DIRECT_MESSAGE("directMessage"),
+    PIX("pix"),
+    SEEN("seen"),
+    STORY("story"),
+    PROFILE("profile"),
+}
+
 enum class AuthState { LOGGED_OUT, AUTHENTICATED }
 
 enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING }
@@ -47,7 +80,7 @@ class AttachmentUpload(val id: String, val contentKey: ByteArray, val nonce: Byt
         return result
     }
 
-    fun media(mediaType: String): MediaAttachment = MediaAttachment(id, contentKey, nonce, mediaType)
+    fun media(mediaType: MediaType): MediaAttachment = MediaAttachment(id, contentKey, nonce, mediaType)
 }
 
 /** What `sendCapture` reached nobody with. */

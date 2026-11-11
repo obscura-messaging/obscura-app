@@ -172,7 +172,7 @@ class SessionTest {
         c.route(friendRequest(), "019f025a-0000-7de6-84b6-000000000002", "dev", "env-1")
         c.route(ClientMessage.getDefaultInstance(), "019f025a-0000-7de6-84b6-000000000002", "dev", "env-2")
         c.content.putConversation(
-            ConversationItem("e", "019f025a-0000-7de6-84b6-000000000002", "message", SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
+            ConversationItem("e", "019f025a-0000-7de6-84b6-000000000002", ConversationKind.MESSAGE, SELF_USER_ID, 1, null, expiresAt(1, null), "hi"),
         )
 
         c.wipeDevice()

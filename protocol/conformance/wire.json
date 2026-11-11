@@ -1,7 +1,7 @@
 {
   "version": 1,
   "kind": "wire",
-  "description": "Client wire mapping + round-trip conformance. Pins every ClientMessage payload arm and TypingState mappings; see docs/KIT_API.md.",
+  "description": "Client wire mapping + round-trip conformance. Pins every ClientMessage payload arm, TypingState, media type and conversation kind mapping; see docs/KIT_API.md.",
   "messageTypes": [
     { "wire": "friend_request", "app": "FRIEND_REQUEST" },
     { "wire": "friend_accept", "app": "FRIEND_ACCEPT" },
@@ -16,6 +16,16 @@
   "typingStates": [
     { "wire": "TYPING_STATE_STARTED", "app": "started" },
     { "wire": "TYPING_STATE_STOPPED", "app": "stopped" }
+  ],
+  "mediaTypes": [
+    { "wire": "photo", "app": "photo" },
+    { "wire": "video", "app": "video" },
+    { "wire": "", "app": "photo" },
+    { "wire": "image/jpeg", "app": "photo" }
+  ],
+  "conversationKinds": [
+    { "wire": "message", "app": "message" },
+    { "wire": "pix", "app": "pix" }
   ],
   "roundTrip": [
     {

@@ -1,17 +1,37 @@
 import Foundation
 import GRDB
 
+/// The media in a pix or story. Peers send it as free text on the wire, so anything unrecognized
+/// reads as a photo, as the app shows it.
+public enum MediaType: String, Sendable {
+    case photo, video
+
+    public init(wire: String?) {
+        self = wire.flatMap(MediaType.init(rawValue:)) ?? .photo
+    }
+}
+
+/// A conversation entry is a text message or a pix; the raw value is how it is stored and synced.
+public enum ConversationKind: String, Sendable {
+    case message, pix
+}
+
+/// The content model an entry belongs to, so the host can refresh just that slice.
+public enum EntryModel: String, Sendable {
+    case directMessage, pix, seen, story, profile
+}
+
 public struct MediaAttachment: Sendable, Equatable {
     public let id: String
     public let contentKey: Data
     public let nonce: Data
-    public let mediaType: String
+    public let mediaType: MediaType
 
-    public init(id: String, contentKey: Data, nonce: Data, mediaType: String = "photo") {
+    public init(id: String, contentKey: Data, nonce: Data, mediaType: MediaType = .photo) {
         self.id = id
         self.contentKey = contentKey
         self.nonce = nonce
-        self.mediaType = mediaType.isEmpty ? "photo" : mediaType
+        self.mediaType = mediaType
     }
 
     init?(proto: Obscura_Client_V1_AttachmentPointer) {
@@ -24,7 +44,7 @@ public struct MediaAttachment: Sendable, Equatable {
             id: proto.id,
             contentKey: proto.contentKey,
             nonce: proto.nonce,
-            mediaType: proto.mediaType
+            mediaType: MediaType(wire: proto.mediaType)
         )
     }
 
@@ -33,7 +53,7 @@ public struct MediaAttachment: Sendable, Equatable {
         pointer.id = id
         pointer.contentKey = contentKey
         pointer.nonce = nonce
-        pointer.mediaType = mediaType
+        pointer.mediaType = mediaType.rawValue
         return pointer
     }
 }
@@ -41,7 +61,7 @@ public struct MediaAttachment: Sendable, Equatable {
 public struct ConversationItem: Sendable, Equatable {
     public let id: String
     public let peerUserId: String
-    public let kind: String
+    public let kind: ConversationKind
     public let authorUserId: String
     public let sentAt: UInt64
     public let viewedAt: UInt64?
@@ -54,7 +74,7 @@ public struct ConversationItem: Sendable, Equatable {
     public init(
         id: String,
         peerUserId: String,
-        kind: String,
+        kind: ConversationKind,
         authorUserId: String,
         sentAt: UInt64,
         viewedAt: UInt64?,
@@ -64,8 +84,7 @@ public struct ConversationItem: Sendable, Equatable {
         captionMeta: String? = nil,
         displayDuration: Int = 0
     ) {
-        precondition(kind == "message" || kind == "pix", "invalid conversation item kind: \(kind)")
-        if kind == "pix" {
+        if kind == .pix {
             precondition(attachment != nil, "pix requires an attachment")
         } else {
             precondition(
@@ -97,7 +116,7 @@ public struct ConversationItem: Sendable, Equatable {
         ConversationItem(
             id: id,
             peerUserId: peerUserId,
-            kind: "message",
+            kind: .message,
             authorUserId: authorUserId,
             sentAt: sentAt,
             viewedAt: viewedAt,
@@ -119,7 +138,7 @@ public struct ConversationItem: Sendable, Equatable {
         ConversationItem(
             id: id,
             peerUserId: peerUserId,
-            kind: "pix",
+            kind: .pix,
             authorUserId: authorUserId,
             sentAt: sentAt,
             viewedAt: viewedAt,
@@ -153,7 +172,7 @@ public struct ConversationItem: Sendable, Equatable {
         var record = Obscura_Client_V1_StoredMessageRecord()
         record.id = id
         record.peerUserID = peerUserId
-        record.kind = kind
+        record.kind = kind.rawValue
         record.authorUserID = authorUserId
         record.sentAt = sentAt
         record.viewedAt = viewedAt ?? 0
@@ -349,7 +368,7 @@ actor ContentStore {
         """, arguments: [
             item.id.storedText,
             item.peerUserId.storedText,
-            item.kind,
+            item.kind.rawValue,
             item.authorUserId.storedText,
             Int64(clamping: item.sentAt),
             item.viewedAt.map { Int64(clamping: $0) },
@@ -358,7 +377,7 @@ actor ContentStore {
             item.attachment?.id.storedText,
             item.attachment?.contentKey,
             item.attachment?.nonce,
-            item.attachment?.mediaType.storedText,
+            item.attachment?.mediaType.rawValue.storedText,
             item.caption?.storedText,
             item.captionMeta?.storedText,
             item.displayDuration,
@@ -477,7 +496,7 @@ actor ContentStore {
             item.attachment?.id.storedText,
             item.attachment?.contentKey,
             item.attachment?.nonce,
-            item.attachment?.mediaType.storedText,
+            item.attachment?.mediaType.rawValue.storedText,
             item.captionMeta?.storedText,
             undelivered ? 1 : 0,
         ])
@@ -556,14 +575,14 @@ actor ContentStore {
 
     // MARK: - Expiry sweep
 
-    func sweepExpired(now: UInt64) async throws -> (purgedMediaRefs: [String], touchedModels: [String]) {
+    func sweepExpired(now: UInt64) async throws -> (purgedMediaRefs: [String], touchedModels: [EntryModel]) {
         let nowClamped = Int64(clamping: now)
-        let result: (purgedMediaRefs: [String], touchedModels: [String], deletedAny: Bool) = try await db.write { db in
+        let result: (purgedMediaRefs: [String], touchedModels: [EntryModel], deletedAny: Bool) = try await db.write { db in
             try db.execute(sql: "PRAGMA secure_delete = ON")
             var purgedMediaRefs: [String] = []
-            var touchedSet: Set<String> = []
-            var touchedModels: [String] = []
-            func markTouched(_ model: String) {
+            var touchedSet: Set<EntryModel> = []
+            var touchedModels: [EntryModel] = []
+            func markTouched(_ model: EntryModel) {
                 if touchedSet.insert(model).inserted {
                     touchedModels.append(model)
                 }
@@ -580,7 +599,7 @@ actor ContentStore {
                 if let mediaRef = try row.optionalText("media_ref"), !mediaRef.isEmpty {
                     purgedMediaRefs.append(mediaRef)
                 }
-                markTouched(kind == "pix" ? "pix" : "directMessage")
+                markTouched(kind == ConversationKind.pix.rawValue ? .pix : .directMessage)
                 try db.execute(
                     sql: "INSERT OR REPLACE INTO erased_entries (id, erased_at) VALUES (?, ?)",
                     arguments: [id.storedText, nowClamped]
@@ -600,7 +619,7 @@ actor ContentStore {
                 if let mediaRef = try row.optionalText("media_ref"), !mediaRef.isEmpty {
                     purgedMediaRefs.append(mediaRef)
                 }
-                markTouched("story")
+                markTouched(.story)
                 try db.execute(
                     sql: "INSERT OR REPLACE INTO erased_entries (id, erased_at) VALUES (?, ?)",
                     arguments: [id.storedText, nowClamped]
@@ -644,10 +663,9 @@ actor ContentStore {
                 guard !record.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       !record.peerUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       !record.authorUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-                let kind = record.kind.isEmpty ? "message" : record.kind
                 let viewedAt = record.viewedAt > 0 ? record.viewedAt : nil
                 let item: ConversationItem
-                if kind == "pix" {
+                if record.kind == ConversationKind.pix.rawValue {
                     guard record.hasAttachment, let attachment = MediaAttachment(proto: record.attachment) else { continue }
                     item = .pix(
                         id: record.id,
@@ -723,14 +741,17 @@ actor ContentStore {
               let nonce = row["nonce"] as Data?, !nonce.isEmpty else {
             return nil
         }
-        let mediaType = try row.optionalText("media_type") ?? "photo"
+        let mediaType = MediaType(wire: try row.optionalText("media_type"))
         return MediaAttachment(id: id, contentKey: contentKey, nonce: nonce, mediaType: mediaType)
     }
 
     private static func conversationItem(_ row: Row) throws -> ConversationItem {
         let viewedRaw: Int64? = row["viewed_at"]
-        let kind: String = row["kind"]
-        let isPix = kind == "pix"
+        let rawKind: String = row["kind"]
+        guard let kind = ConversationKind(rawValue: rawKind) else {
+            throw ObscuraError.storageFailed("invalid conversation item kind: \(rawKind)")
+        }
+        let isPix = kind == .pix
         return ConversationItem(
             id: try row.text("id"),
             peerUserId: try row.text("peer_user_id"),
