@@ -1,4 +1,4 @@
-[submodule "proto"]
-	path = proto
+[submodule "server-proto"]
+	path = server-proto
 	url = https://github.com/obscura-messaging/obscura-proto.git
 	branch = main

@@ -38,8 +38,8 @@ sourceSets {
             // Transport is shared with the server through the root submodule.
             // Client content belongs to this repository and is shared only by
             // the Kotlin and Swift implementations.
-            srcDir("../../proto/obscura/v1")
-            srcDir("../../protocol/obscura/client/v1")
+            srcDir("../../server-proto/obscura/v1")
+            srcDir("../../client-protocol/obscura/client/v1")
         }
     }
     create("integrationTest") {

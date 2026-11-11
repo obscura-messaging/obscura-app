@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 import LibSignalClient
 
-/// The device-link envelope and code, pinned by `protocol/conformance/link.json`.
+/// The device-link envelope and code, pinned by `client-protocol/conformance/link.json`.
 enum LinkCrypto {
     private static let info = Data("Obscura link v1".utf8)
 
