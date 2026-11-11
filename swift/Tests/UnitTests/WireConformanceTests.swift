@@ -4,7 +4,7 @@ import SwiftProtobuf
 @testable import ObscuraKit
 
 /// Vector-driven client-wire conformance, consuming the shared
-/// `../protocol/conformance/wire.json`. Both platforms run the
+/// `../client-protocol/conformance/wire.json`. Both platforms run the
 /// same file.
 ///
 /// Pins the signal enum <-> app-facing-form mapping via the production

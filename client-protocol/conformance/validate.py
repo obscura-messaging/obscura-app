@@ -8,7 +8,7 @@ suite verifies that its codec satisfies the vectors.
 Runs with only the Python stdlib. Collects every violation, then exits non-zero
 so an author sees all problems at once.
 
-    python3 protocol/conformance/validate.py
+    python3 client-protocol/conformance/validate.py
 """
 
 from __future__ import annotations

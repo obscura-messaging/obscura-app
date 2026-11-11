@@ -3,7 +3,7 @@
 // The client-to-client payload carried inside the server transport's encrypted
 // bytes. The server never parses this layer.
 //
-// Behavioral contract: docs/KIT_API.md and protocol/conformance/.
+// Behavioral contract: docs/KIT_API.md and client-protocol/conformance/.
 
 syntax = "proto3";
 package obscura.client.v1;
@@ -124,7 +124,7 @@ message LinkCode {
   string device_name = 3;
 }
 
-// Body of PUT /v1/link-sessions/{id}. Derivation: protocol/conformance/link.json.
+// Body of PUT /v1/link-sessions/{id}. Derivation: client-protocol/conformance/link.json.
 message LinkEnvelope {
   // libsignal serialized public key: 0x05 || 32-byte X25519 key (33 bytes).
   bytes ephemeral_public_key = 1;

@@ -4,7 +4,7 @@ import dev.barrelmaker.obscura.kit.TypingState
 import dev.barrelmaker.obscura.kit.stores.Friend
 import obscura.client.v1.Client
 
-/** Payload arm, typing state and friend records <-> app-facing forms. Pinned by `protocol/conformance/wire.json`. */
+/** Payload arm, typing state and friend records <-> app-facing forms. Pinned by `client-protocol/conformance/wire.json`. */
 internal object WireCodec {
     /** The inbox `kind`: the arm's upper-snake name, `UNKNOWN` for an unset or unknown arm. */
     fun kind(case: Client.ClientMessage.PayloadCase): String =

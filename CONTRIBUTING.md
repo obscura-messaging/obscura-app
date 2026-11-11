@@ -96,7 +96,7 @@ xcrun devicectl device install app --device <DEVICE_ID> \
 | `iOS` | `just ios-build arm64` | iOS PRs |
 
 A PR runs a native job only when the job's inputs change: its platform
-directory, `proto/`, `protocol/`, the `justfile`, its workflow, or (for app
+directory, `server-proto/`, `client-protocol/`, the `justfile`, its workflow, or (for app
 builds) the JavaScript toolchain files. A change under `src/` alone runs only
 `JavaScript`, which typechecks the code the native builds would bundle. Pushes
 to `main` run every job, because a release needs a fully green `main` commit.

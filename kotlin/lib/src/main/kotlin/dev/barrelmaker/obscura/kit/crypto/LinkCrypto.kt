@@ -13,7 +13,7 @@ import org.signal.libsignal.protocol.kdf.HKDF
 import java.security.GeneralSecurityException
 import java.util.Base64
 
-/** The device-link envelope and code. Pinned by `protocol/conformance/link.json`. */
+/** The device-link envelope and code. Pinned by `client-protocol/conformance/link.json`. */
 internal object LinkCrypto {
     private val INFO = "Obscura link v1".toByteArray()
     private const val KEY_SIZE = 32

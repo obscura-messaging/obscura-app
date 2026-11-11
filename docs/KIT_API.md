@@ -9,7 +9,7 @@ peer, the server or the other kit can observe.
 | Layer | Defined by |
 |---|---|
 | Transport | [`obscura.proto`](https://github.com/obscura-messaging/obscura-proto/blob/main/obscura/v1/obscura.proto), [`TRANSPORT.md`](https://github.com/obscura-messaging/obscura-proto/blob/main/TRANSPORT.md) |
-| End-to-end client content | [`client.proto`](../protocol/obscura/client/v1/client.proto) |
+| End-to-end client content | [`client.proto`](../client-protocol/obscura/client/v1/client.proto) |
 | Kit behaviour | this document |
 | Application models | [`DOMAIN_CONTRACT.md`](DOMAIN_CONTRACT.md) |
 
@@ -28,10 +28,10 @@ notifications.
 `client.proto`.** Kits do not post OS notifications.
 
 Wire mappings live in each kit's `WireCodec` and are checked against
-[`wire.json`](../protocol/conformance/wire.json). Typing maps only
+[`wire.json`](../client-protocol/conformance/wire.json). Typing maps only
 STARTED/STOPPED; unspecified states are ignored. The device-link envelope
 derivation and link code encoding are checked against
-[`link.json`](../protocol/conformance/link.json).
+[`link.json`](../client-protocol/conformance/link.json).
 
 ## Construction and persistence
 

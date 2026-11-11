@@ -3,7 +3,7 @@ import LibSignalClient
 import XCTest
 @testable import ObscuraKit
 
-/// Vector-driven device-link conformance, consuming the shared `../protocol/conformance/link.json`.
+/// Vector-driven device-link conformance, consuming the shared `../client-protocol/conformance/link.json`.
 /// Both platforms run the same file; every check the conformance README lists for it is asserted.
 final class LinkConformanceTests: XCTestCase {
     private let statusByWire: [String: Obscura_Client_V1_FriendStatus] = [
