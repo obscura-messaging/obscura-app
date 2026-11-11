@@ -291,7 +291,7 @@ jobs:
 
       # The full log, since a failure early in a long suite falls outside the tail above.
       - name: Server log artifact
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: swift-server-log
