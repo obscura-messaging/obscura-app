@@ -63,7 +63,8 @@ class ScenarioTestCase: XCTestCase {
     }
 
     override func tearDown() {
-        if let run = testRun, !run.hasSucceeded {
+        // Not `hasSucceeded`: the run has not stopped yet, so it is still false for a passing test.
+        if let run = testRun, run.totalFailureCount > 0 {
             print("--- kit log for \(name) ---\n\(KitLog.shared.dump())\n--- end kit log ---")
         }
         super.tearDown()
