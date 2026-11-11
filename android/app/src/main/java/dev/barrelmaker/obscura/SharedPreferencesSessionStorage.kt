@@ -2,7 +2,7 @@ package dev.barrelmaker.obscura
 
 import android.content.SharedPreferences
 import android.util.Log
-import dev.barrelmaker.obscura.kit.persistence.SessionStorage
+import dev.barrelmaker.obscura.kit.SessionStorage
 import org.json.JSONObject
 
 /**

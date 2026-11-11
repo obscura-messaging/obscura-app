@@ -1,12 +1,10 @@
 package dev.barrelmaker.obscura.kit
 
 import com.google.protobuf.ByteString
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
-import dev.barrelmaker.obscura.kit.managers.FakeObscuraServer
-import dev.barrelmaker.obscura.kit.managers.PreKeys
-import dev.barrelmaker.obscura.kit.managers.TokenStatus
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
+import dev.barrelmaker.obscura.kit.crypto.PreKeys
+import dev.barrelmaker.obscura.kit.auth.TokenStatus
 import dev.barrelmaker.obscura.kit.messaging.parsePeerBundles
-import dev.barrelmaker.obscura.kit.persistence.SessionStorage
 import dev.barrelmaker.obscura.kit.stores.pragma
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -383,7 +381,7 @@ class SessionLifecycleTest {
         MockResponse.Builder().body("""{"oneTimePreKeyCount":$oneTime,"kyberPreKeyCount":$kyber}""").build()
 
     /** A client provisioned at [provisionedAt] whose clock reads [now]. */
-    private suspend fun provisionedClient(provisionedAt: Long, now: Long): Pair<ObscuraClient, dev.barrelmaker.obscura.kit.managers.ProvisioningKeys> {
+    private suspend fun provisionedClient(provisionedAt: Long, now: Long): Pair<ObscuraClient, dev.barrelmaker.obscura.kit.crypto.ProvisioningKeys> {
         val c = sessionClient(url, storedSession(), clock = { now })
         val keys = PreKeys.generateProvisioningKeys(IdentityKeyPair.generate(), provisionedAt)
         PreKeys.install(c.signalStore, keys)
@@ -610,8 +608,8 @@ class SessionLifecycleTest {
         val mgrScope = kotlinx.coroutines.CoroutineScope(
             kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.test.StandardTestDispatcher(testScheduler),
         )
-        lateinit var mgr: dev.barrelmaker.obscura.kit.managers.AuthManager
-        mgr = dev.barrelmaker.obscura.kit.managers.AuthManager(
+        lateinit var mgr: dev.barrelmaker.obscura.kit.auth.AuthManager
+        mgr = dev.barrelmaker.obscura.kit.auth.AuthManager(
             api = api,
             signalStore = signalStore,
             devices = devices,

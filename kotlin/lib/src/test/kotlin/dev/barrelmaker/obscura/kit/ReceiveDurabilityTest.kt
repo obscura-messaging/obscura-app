@@ -3,9 +3,9 @@ package dev.barrelmaker.obscura.kit
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
-import dev.barrelmaker.obscura.kit.managers.PreKeys
+import dev.barrelmaker.obscura.kit.crypto.PreKeys
 import dev.barrelmaker.obscura.kit.messaging.Messenger
 import dev.barrelmaker.obscura.kit.messaging.parsePeerBundles
 import dev.barrelmaker.obscura.kit.network.APIClient

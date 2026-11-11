@@ -32,17 +32,6 @@ class LinkRequest internal constructor(
     internal val deviceName: String,
 )
 
-enum class SubmissionStatus { ACCEPTED, REJECTED, UNKNOWN }
-
-data class SubmissionResult(
-    val userId: String,
-    val deviceId: String?,
-    val status: SubmissionStatus,
-    val error: String? = null,
-)
-
-data class SendReport(val recipients: List<SubmissionResult>, val selfSync: List<SubmissionResult>)
-
 /** An uploaded attachment: its server id and the key material that decrypts it. */
 class AttachmentUpload(val id: String, val contentKey: ByteArray, val nonce: ByteArray) {
     override fun equals(other: Any?): Boolean =
@@ -64,6 +53,9 @@ class AttachmentUpload(val id: String, val contentKey: ByteArray, val nonce: Byt
 /** What `sendCapture` reached nobody with. */
 data class CaptureResult(val undeliveredPeerUserIds: List<String>, val storyUndelivered: Boolean)
 
+typealias SubmissionStatus = dev.barrelmaker.obscura.kit.messaging.SubmissionStatus
+typealias SubmissionResult = dev.barrelmaker.obscura.kit.messaging.SubmissionResult
+typealias SendReport = dev.barrelmaker.obscura.kit.messaging.SendReport
 typealias MediaAttachment = dev.barrelmaker.obscura.kit.stores.MediaAttachment
 typealias ConversationItem = dev.barrelmaker.obscura.kit.stores.ConversationItem
 typealias StoryItem = dev.barrelmaker.obscura.kit.stores.StoryItem

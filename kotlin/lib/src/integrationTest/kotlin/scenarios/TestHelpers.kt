@@ -7,7 +7,7 @@ import dev.barrelmaker.obscura.kit.NoOpLogger
 import dev.barrelmaker.obscura.kit.ObscuraClient
 import dev.barrelmaker.obscura.kit.ObscuraConfig
 import dev.barrelmaker.obscura.kit.ObscuraLogger
-import dev.barrelmaker.obscura.kit.persistence.SessionStorage
+import dev.barrelmaker.obscura.kit.SessionStorage
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope

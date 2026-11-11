@@ -1,15 +1,20 @@
-package dev.barrelmaker.obscura.kit.managers
+package dev.barrelmaker.obscura.kit
 
 import com.google.protobuf.ByteString
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import dev.barrelmaker.obscura.kit.crypto.PreKeys
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
-import dev.barrelmaker.obscura.kit.crypto.UuidCodec
 import dev.barrelmaker.obscura.kit.crypto.toBase64
+import dev.barrelmaker.obscura.kit.messaging.MessageSender
 import dev.barrelmaker.obscura.kit.messaging.Messenger
 import dev.barrelmaker.obscura.kit.network.APIClient
 import dev.barrelmaker.obscura.kit.newInMemoryDatabase
 import dev.barrelmaker.obscura.kit.stores.DeviceStore
+import dev.barrelmaker.obscura.kit.wire.UuidCodec
+import java.net.InetSocketAddress
+import java.util.Collections
+import java.util.UUID
 import obscura.client.v1.Client.ClientMessage
 import obscura.client.v1.Client.EncryptedMessage
 import org.json.JSONArray
@@ -22,9 +27,6 @@ import org.signal.libsignal.protocol.state.SignedPreKeyRecord
 import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
 import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
 import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageResponse
-import java.net.InetSocketAddress
-import java.util.Collections
-import java.util.UUID
 
 /**
  * An in-process stand-in for the bundle and message endpoints, with the real server's semantics.

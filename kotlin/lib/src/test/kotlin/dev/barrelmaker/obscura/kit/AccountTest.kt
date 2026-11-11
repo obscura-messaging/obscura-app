@@ -440,7 +440,7 @@ class AccountTest {
         unprovisioned.auth.publishAuthenticated()
         assertEquals(AuthState.LOGGED_OUT, unprovisioned.authState.value)
         account.provisionUserId = "019f025a-0000-7de6-84b6-000000000999"
-        val keys = dev.barrelmaker.obscura.kit.managers.PreKeys.generateProvisioningKeys(
+        val keys = dev.barrelmaker.obscura.kit.crypto.PreKeys.generateProvisioningKeys(
             org.signal.libsignal.protocol.IdentityKeyPair.generate(),
         )
         val err = runCatching {

@@ -1,8 +1,7 @@
-package dev.barrelmaker.obscura.kit.managers
+package dev.barrelmaker.obscura.kit.crypto
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.barrelmaker.obscura.kit.bundle
-import dev.barrelmaker.obscura.kit.crypto.SignalStore
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import dev.barrelmaker.obscura.kit.generateIdentity
 import dev.barrelmaker.obscura.kit.messaging.parsePeerBundle

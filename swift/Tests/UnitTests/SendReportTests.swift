@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import ObscuraKit
 
-final class SubmissionResultsTests: XCTestCase {
+final class SendReportTests: XCTestCase {
     private func submission(_ value: UInt8) -> Obscura_V1_SendMessageRequest.Submission {
         var submission = Obscura_V1_SendMessageRequest.Submission()
         submission.deviceID = Data(repeating: value, count: 16)

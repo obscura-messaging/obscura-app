@@ -1,4 +1,4 @@
-package dev.barrelmaker.obscura.kit.crypto
+package dev.barrelmaker.obscura.kit.wire
 
 import com.google.protobuf.ByteString
 import org.junit.jupiter.api.Assertions.assertEquals

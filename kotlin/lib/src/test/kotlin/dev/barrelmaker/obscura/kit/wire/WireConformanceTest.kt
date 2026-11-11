@@ -2,7 +2,6 @@ package dev.barrelmaker.obscura.kit.wire
 
 import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.TypingState
-import dev.barrelmaker.obscura.kit.wire.WireCodec
 import obscura.client.v1.Client
 import org.json.JSONObject
 import org.junit.jupiter.api.Assertions.assertEquals
