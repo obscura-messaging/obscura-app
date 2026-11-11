@@ -17,7 +17,7 @@ import java.net.InetSocketAddress
 import java.util.UUID
 import dev.barrelmaker.obscura.kit.SELF_DEVICE_ID
 
-class SubmissionResultsTest {
+class SendReportTest {
     private fun submission() = SendMessageRequest.Submission.newBuilder()
         .setDeviceId(UuidCodec.uuidToBytes(UUID.randomUUID()))
         .setMessage(ByteString.copyFromUtf8("encrypted"))
