@@ -19,7 +19,7 @@ class PushTests {
 
         alice.sendMessage(bob.userId!!, "a1")
         alice.sendMessage(bob.userId!!, "a2")
-        alice.postStory("b1", null, null, null, null, null)
+        alice.postStory("b1", null, null)
 
         assertEquals(3, bob.processPendingMessages(timeoutMs = 10_000))
         assertEquals(ConnectionState.CONNECTED, bob.connectionState.value)

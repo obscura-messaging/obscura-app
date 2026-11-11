@@ -318,6 +318,13 @@ internal class ContentStore(
         getConversationInTransaction(id)
     }
 
+    /** The attachment of the pix or story [entryId], if it has one. */
+    suspend fun getAttachment(entryId: String): MediaAttachment? = withContext(dispatcher) {
+        queries.selectAttachment(entryId).executeAsList().firstNotNullOfOrNull {
+            toAttachment(it.media_ref, it.content_key, it.nonce, it.media_type)
+        }
+    }
+
     fun markConversationViewedInTransaction(id: String, viewedAt: Long, expiresAt: Long) {
         queries.updateMessageViewed(viewedAt = viewedAt, expiresAt = expiresAt, id = id)
     }

@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import {
   Obscura, onObscuraEvent,
-  type Friend, type ConnectionState, type ObscuraEvent,
+  type Friend, type ConnectionState, type ObscuraEvent, type EntryModel,
   type ConversationItem, type StoryItem, type ProfileItem,
 } from '../native/ObscuraModule';
 import { primaryOnly } from './devices';
@@ -167,7 +167,7 @@ export const refreshProfiles: () => Promise<void> = coalesce(async () => {
   }
 });
 
-async function refreshSlicesForModels(models: Iterable<string>): Promise<void> {
+async function refreshSlicesForModels(models: Iterable<EntryModel>): Promise<void> {
   let needMessages = false;
   let needStories = false;
   let needProfiles = false;

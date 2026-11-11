@@ -374,6 +374,21 @@ actor ContentStore {
         }
     }
 
+    /// The attachment of the pix or story `entryId`, if it has one.
+    func attachment(entryId: String) async throws -> MediaAttachment? {
+        try await db.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT media_ref, content_key, nonce, media_type FROM conversation_entries WHERE id = ?
+                    UNION ALL
+                    SELECT media_ref, content_key, nonce, media_type FROM story_entries WHERE id = ?
+                    """,
+                arguments: [entryId.storedText, entryId.storedText]
+            ).lazy.compactMap { try? Self.mediaAttachment($0) }.first
+        }
+    }
+
     func markSeenLocal(entryId: String, selfUserId: String, viewedAt: UInt64) async throws -> ConversationItem? {
         try await db.write { db in
             guard let row = try Self.message(id: entryId, in: db),

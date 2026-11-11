@@ -22,9 +22,7 @@ final class MessagingTests: XCTestCase {
         var wakes = bob.client.messageReceived.makeAsyncIterator()
 
         _ = try await alice.client.sendMessage(peerUserId: bob.userId, content: "one")
-        _ = try await alice.client.postStory(
-            content: "two", mediaRef: nil, contentKey: nil, nonce: nil, mediaType: nil, captionMeta: nil
-        )
+        _ = try await alice.client.postStory(content: "two", attachment: nil, captionMeta: nil)
 
         let first = await wakes.next()
         let second = await wakes.next()
@@ -82,12 +80,7 @@ final class MessagingTests: XCTestCase {
 
         let uploaded = try await alice.client.uploadAttachment(image)
         let storyId = try await alice.client.postStory(
-            content: "caption",
-            mediaRef: uploaded.id,
-            contentKey: uploaded.contentKey.base64EncodedString(),
-            nonce: uploaded.nonce.base64EncodedString(),
-            mediaType: "photo",
-            captionMeta: nil
+            content: "caption", attachment: uploaded.media("photo"), captionMeta: nil
         )
 
         let story = try await bob.waitForStory(storyId)

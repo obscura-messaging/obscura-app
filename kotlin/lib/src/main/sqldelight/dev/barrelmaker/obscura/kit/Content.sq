@@ -65,6 +65,11 @@ SELECT * FROM ConversationEntry ORDER BY sent_at ASC, id ASC;
 selectMessageById:
 SELECT * FROM ConversationEntry WHERE id = ?;
 
+selectAttachment:
+SELECT media_ref, content_key, nonce, media_type FROM ConversationEntry WHERE id = :id
+UNION ALL
+SELECT media_ref, content_key, nonce, media_type FROM StoryEntry WHERE id = :id;
+
 existsMessage:
 SELECT EXISTS(SELECT 1 FROM ConversationEntry WHERE id = ?);
 

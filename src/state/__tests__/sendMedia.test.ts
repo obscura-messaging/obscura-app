@@ -24,7 +24,7 @@ describe('sendCapture', () => {
   it('uploads once, sends a pix per recipient and a story, then deletes the capture', async () => {
     expect(await sendCapture(CAPTURE, [BOB, CAROL], true)).toEqual([]);
 
-    expect(bridge.__calls.filter((c) => c === 'uploadAttachment')).toHaveLength(1);
+    expect(bridge.__calls.filter((c) => c === 'sendCapture')).toHaveLength(1);
     expect(await Obscura.getMessages()).toEqual([
       expect.objectContaining({
         kind: 'pix',
@@ -72,13 +72,20 @@ describe('sendCapture', () => {
     expect(bridge.__calls).toContain('deleteFile');
   });
 
+  it('rejects and keeps the capture when the upload fails', async () => {
+    bridge.__failNext('sendCapture', 'HTTP_ERROR');
+
+    await expect(sendCapture(CAPTURE, [BOB], true)).rejects.toMatchObject({ code: 'HTTP_ERROR' });
+    expect(bridge.deletedFiles).not.toContain(CAPTURE.path);
+  });
+
   it('does not resize a video', async () => {
     await sendCapture({ ...CAPTURE, mediaType: 'video' }, [BOB], false);
 
     expect(bridge.__calls).not.toContain('resizeImage');
   });
 
-  it('serializes CaptionMeta at the bridge boundary and caches downloaded attachment URIs by id', async () => {
+  it('serializes CaptionMeta at the bridge boundary and caches downloaded attachment URIs by entry id', async () => {
     const meta = { style: 'bar' as const, y: 0.5 };
     await sendCapture({ ...CAPTURE, captionMeta: meta }, [BOB], true);
 
@@ -90,10 +97,11 @@ describe('sendCapture', () => {
     const cache = new Map<string, string>();
     bridge.__calls.length = 0;
     const [uri1, uri2] = await Promise.all([
-      loadAttachmentUri(msg.attachment, cache),
-      loadAttachmentUri(msg.attachment, cache),
+      loadAttachmentUri(msg.id, cache),
+      loadAttachmentUri(msg.id, cache),
     ]);
-    const uri3 = await loadAttachmentUri(msg.attachment, cache);
+    const uri3 = await loadAttachmentUri(msg.id, cache);
+    expect(uri1).toBe(`file:///fake/cache/${msg.id}`);
     expect(uri1).toBe(uri2);
     expect(uri1).toBe(uri3);
     expect(bridge.__calls.filter((c) => c === 'downloadAttachment')).toHaveLength(1);
@@ -104,7 +112,7 @@ describe('sendCapture', () => {
     bridge.__failNext('deleteFile', 'STORAGE_ERROR');
 
     expect(await sendCapture(CAPTURE, [BOB], false)).toEqual([]);
-    expect(bridge.__calls).toContain('uploadAttachment');
+    expect(bridge.__calls).toContain('sendCapture');
 
     const testPath = await createTestCapture();
     expect(testPath).toBe('/fake/test.jpg');

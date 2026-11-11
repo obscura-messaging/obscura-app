@@ -8,7 +8,7 @@ import dev.barrelmaker.obscura.kit.ObscuraError
 import dev.barrelmaker.obscura.kit.SELF_DEVICE_ID
 import dev.barrelmaker.obscura.kit.SELF_USER_ID
 import dev.barrelmaker.obscura.kit.authenticatedClient
-import dev.barrelmaker.obscura.kit.crypto.toBase64
+import dev.barrelmaker.obscura.kit.CaptureResult
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import dev.barrelmaker.obscura.kit.generateIdentity
 import dev.barrelmaker.obscura.kit.linking.HistorySync
@@ -388,7 +388,7 @@ class ContentStoreTest {
                 assertTrue(c.getMessages().single().undelivered)
 
                 // When there are no accepted friends, postStory and updateProfile succeed locally and flushOutbox marks them delivered
-                val stNoPeers = c.postStory("solo story", null, null, null, null, null)
+                val stNoPeers = c.postStory("solo story", null, null)
                 c.content.setStoryUndelivered(stNoPeers, true)
                 c.updateProfile("Solo", "Bio")
                 c.content.setProfileUndelivered(SELF_USER_ID, c.getProfiles().single().updatedAt, true)
@@ -396,26 +396,25 @@ class ContentStoreTest {
 
                 // Become accepted friend, but server is still failing (allowSend = false)
                 c.db.friendQueries.insert(peer, "bob", FriendStatus.ACCEPTED.value)
-                val keyB64 = ByteArray(32) { 1 }.toBase64()
-                val nonceB64 = ByteArray(12) { 2 }.toBase64()
+                fun att(id: String) = MediaAttachment(id, ByteArray(32) { 1 }, ByteArray(12) { 2 }, "photo")
                 assertTrue(
                     runCatching {
-                        c.sendPix(peer, "att_1", keyB64, nonceB64, "photo", "", """{"y":0.5}""", 5)
+                        c.sendPix(peer, att("att_1"), "", """{"y":0.5}""", 5)
                     }.exceptionOrNull() is ObscuraError.SendFailed,
                 )
                 assertTrue(
                     runCatching {
-                        c.sendPix(peer, "att_1b", keyB64, nonceB64, "photo", "caption", "", 5)
+                        c.sendPix(peer, att("att_1b"), "caption", "", 5)
                     }.exceptionOrNull() is ObscuraError.SendFailed,
                 )
                 assertTrue(
                     runCatching {
-                        c.postStory("story 1", "att_2", keyB64, nonceB64, null, """{"y":0.2}""")
+                        c.postStory("story 1", att("att_2"), """{"y":0.2}""")
                     }.exceptionOrNull() is ObscuraError.SendFailed,
                 )
                 assertTrue(
                     runCatching {
-                        c.postStory("story text only", null, null, null, null, "")
+                        c.postStory("story text only", null, "")
                     }.exceptionOrNull() is ObscuraError.SendFailed,
                 )
                 assertTrue(runCatching { c.updateProfile("Alice", "Bio") }.exceptionOrNull() is ObscuraError.SendFailed)
@@ -441,8 +440,8 @@ class ContentStoreTest {
                 assertTrue(c.content.getUndeliveredProfiles().isEmpty())
 
                 // Direct sendPix, postStory, updateProfile, and sendTyping when server accepts
-                c.sendPix(peer, "att_ok", keyB64, nonceB64, "", "hi", null, 5)
-                c.postStory("story ok", "att_st_ok", keyB64, nonceB64, "photo", null)
+                c.sendPix(peer, att("att_ok"), "hi", null, 5)
+                c.postStory("story ok", att("att_st_ok"), null)
                 c.updateProfile("Alice 3", "Bio 3")
                 c.sendTyping(peer, dev.barrelmaker.obscura.kit.TypingState.STARTED)
                 // Second sendTyping within 2s is throttled
@@ -468,53 +467,21 @@ class ContentStoreTest {
     }
 
     @Test
-    fun `invalid arguments to sendMessage sendPix postStory and markSeen fail before network`() = runBlocking {
+    fun `invalid arguments to sendMessage sendPix markSeen and downloadAttachmentToCache fail before network`() = runBlocking {
         val c = authenticatedClient()
-        val validB64 = ByteArray(16) { 1 }.toBase64()
+        val att = MediaAttachment("att", ByteArray(16) { 1 }, ByteArray(16) { 1 }, "photo")
         assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.sendMessage(" ", "hi") } }
         assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.sendMessage(SELF_USER_ID, "hi") } }
-        assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.sendPix(" ", "att", validB64, validB64, "photo", "", null, 5) }
-        }
-        assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.sendPix(SELF_USER_ID, "att", validB64, validB64, "photo", "", null, 5) }
-        }
-        assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.sendPix(peer, "", validB64, validB64, "photo", "", null, 5) }
-        }
-        assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.sendPix(peer, "att", " ", validB64, "photo", "", null, 5) }
-        }
-        assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.sendPix(peer, "att", validB64, " ", "photo", "", null, 5) }
-        }
-        assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.sendPix(peer, "att", "not-base64!", validB64, "photo", "", null, 5) }
-        }
-        assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.sendPix(peer, "att", validB64, "not-base64!", "photo", "", null, 5) }
-        }
-        assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.postStory("text", "att", null, validB64, "photo", null) }
-        }
-        assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.postStory("text", "att", "not-base64!", validB64, "photo", null) }
-        }
-        assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.postStory("text", "att", validB64, null, "photo", null) }
-        }
-        assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.postStory("text", "att", validB64, "not-base64!", "photo", null) }
-        }
+        assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.sendPix(" ", att, "", null, 5) } }
+        assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.sendPix(SELF_USER_ID, att, "", null, 5) } }
         assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.markSeen(" ") } }
-        assertThrows(ObscuraError.InvalidArgument::class.java) {
-            runBlocking { c.downloadAttachmentToCache("att", validB64, validB64) }
-        }
+        // No cache directory configured.
+        assertThrows(ObscuraError.InvalidArgument::class.java) { runBlocking { c.downloadAttachmentToCache("pix_1") } }
         Unit
     }
 
     @Test
-    fun `uploadAttachmentFile downloadAttachmentToCache and sweepExpired cache purge work end to end`() = runBlocking {
+    fun `sendCapture downloadAttachmentToCache and sweepExpired cache purge work end to end`() = runBlocking {
         val dir = File("build/test-databases/cache-${UUID.randomUUID()}").also { it.mkdirs() }
         val cacheDir = File(dir, "attachments")
         val srcFile = File(dir, "input.jpg").apply { writeBytes("image-bytes".toByteArray()) }
@@ -551,31 +518,26 @@ class ContentStoreTest {
             }
             assertTrue(c.auth.restore())
 
-            val uploaded = c.uploadAttachmentFile(srcFile)
+            // A non-friend cannot be reached: the pix is stored for the outbox and reported, the story still posts.
+            val result = c.sendCapture(srcFile, "photo", "caption", null, 5, listOf(peer), toStory = true)
+            assertEquals(CaptureResult(listOf(peer), storyUndelivered = false), result)
+            assertTrue(c.getMessages().single().undelivered)
+            val story = c.getStories().single()
+            val uploaded = story.attachment!!
             assertEquals("att_cached_1", uploaded.id)
+            assertEquals("caption", story.content)
 
             assertThrows(ObscuraError.InvalidArgument::class.java) {
-                runBlocking { c.downloadAttachmentToCache("uncached", "not-base64!", uploaded.nonce.toBase64()) }
-            }
-            assertThrows(ObscuraError.InvalidArgument::class.java) {
-                runBlocking { c.downloadAttachmentToCache("uncached", uploaded.contentKey.toBase64(), "not-base64!") }
+                runBlocking { c.downloadAttachmentToCache("no_such_entry") }
             }
 
-            val downloaded1 = c.downloadAttachmentToCache(
-                uploaded.id,
-                uploaded.contentKey.toBase64(),
-                uploaded.nonce.toBase64(),
-            )
+            val downloaded1 = c.downloadAttachmentToCache(story.id)
             assertTrue(downloaded1.exists())
             assertArrayEquals("image-bytes".toByteArray(), downloaded1.readBytes())
 
             // Second call hits cache even when server attachment is removed
             attachments.clear()
-            val downloaded2 = c.downloadAttachmentToCache(
-                uploaded.id,
-                uploaded.contentKey.toBase64(),
-                uploaded.nonce.toBase64(),
-            )
+            val downloaded2 = c.downloadAttachmentToCache(story.id)
             assertEquals(downloaded1.absolutePath, downloaded2.absolutePath)
 
             // Store an expired pix referencing uploaded.id and sweep via ObscuraClient
