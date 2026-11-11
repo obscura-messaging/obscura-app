@@ -1,39 +1,38 @@
-import type { CaptionMeta } from '../domain/caption';
+import { serializeCaptionMeta, type CaptionMeta } from '../domain/caption';
 import type { MediaAttachment, MediaType } from '../domain/viewer';
-import { Obscura, type AttachmentRef, type Friend } from '../native/ObscuraModule';
+import { Obscura, type Friend } from '../native/ObscuraModule';
 import { fileUri } from '../utils/files';
 import { logError } from '../utils/log';
 import { refreshMessages, refreshStories } from './store';
 
-export type { AttachmentRef, MediaAttachment, MediaType };
+export type { MediaAttachment, MediaType };
 
 const inFlightByCache = new WeakMap<Map<string, string>, Map<string, Promise<string>>>();
 
 /**
- * Decrypt an attachment to the native cache and remember its `file://` URI by `id`. Concurrent
- * requests against the same `cache` share one in-flight download.
+ * Decrypt the attachment of a pix or story entry to the native cache and remember its `file://`
+ * URI by entry id. Concurrent requests against the same `cache` share one in-flight download.
  */
-export async function loadAttachmentUri(att: AttachmentRef, cache: Map<string, string>): Promise<string> {
-  const cached = cache.get(att.id);
+export async function loadAttachmentUri(entryId: string, cache: Map<string, string>): Promise<string> {
+  const cached = cache.get(entryId);
   if (cached) return cached;
   let inFlight = inFlightByCache.get(cache);
   if (!inFlight) {
     inFlight = new Map();
     inFlightByCache.set(cache, inFlight);
   }
-  const existing = inFlight.get(att.id);
+  const existing = inFlight.get(entryId);
   if (existing) return existing;
   const promise = (async () => {
     try {
-      const path = await Obscura.downloadAttachment(att.id, att.contentKey, att.nonce);
-      const uri = fileUri(path);
-      cache.set(att.id, uri);
+      const uri = fileUri(await Obscura.downloadAttachment(entryId));
+      cache.set(entryId, uri);
       return uri;
     } finally {
-      inFlight.delete(att.id);
+      inFlight.delete(entryId);
     }
   })();
-  inFlight.set(att.id, promise);
+  inFlight.set(entryId, promise);
   return promise;
 }
 
@@ -72,49 +71,26 @@ export async function sendCapture(capture: Capture, recipients: readonly Friend[
   const resized = mediaType === 'photo'
     ? await Obscura.resizeImage(path, PHOTO_MAX_DIMENSION, PHOTO_QUALITY).catch((e) => { logError('resize', e); return null; })
     : null;
-  const attachment = await Obscura.uploadAttachment(resized?.path ?? path);
-  const meta = captionMeta ?? null;
-
-  const undelivered: string[] = [];
-  for (const friend of recipients) {
-    try {
-      await Obscura.sendPix(
-        friend.userId,
-        attachment.id,
-        attachment.contentKey,
-        attachment.nonce,
-        mediaType,
-        caption,
-        meta,
-        displayDuration,
-      );
-    } catch (e) {
-      undelivered.push(friend.username);
-      logError('send.pix:' + friend.username, e);
-    }
-  }
-  if (recipients.length > 0) {
-    await refreshMessages();
-  }
-  if (toStory) {
-    try {
-      await Obscura.postStory(
-        caption,
-        attachment.id,
-        attachment.contentKey,
-        attachment.nonce,
-        mediaType,
-        meta,
-      );
-    } catch (e) {
-      undelivered.push('My story');
-      logError('send.story', e);
-    }
-    await refreshStories();
-  }
+  const result = await Obscura.sendCapture({
+    path: resized?.path ?? path,
+    mediaType,
+    caption,
+    captionMeta: captionMeta ? serializeCaptionMeta(captionMeta) : null,
+    displayDuration,
+    recipientUserIds: recipients.map((f) => f.userId),
+    toStory,
+  });
+  await Promise.all([
+    recipients.length > 0 ? refreshMessages() : Promise.resolve(),
+    toStory ? refreshStories() : Promise.resolve(),
+  ]);
 
   for (const temp of new Set([path, resized?.path ?? path])) {
     Obscura.deleteFile(temp).catch((e) => logError('cleanup', e));
   }
-  return undelivered;
+  const undelivered = new Set(result.undeliveredUserIds);
+  return [
+    ...recipients.filter((f) => undelivered.has(f.userId)).map((f) => f.username),
+    ...(result.storyUndelivered ? ['My story'] : []),
+  ];
 }

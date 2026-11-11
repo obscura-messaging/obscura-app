@@ -1,7 +1,6 @@
 package dev.barrelmaker.obscura
 
 import android.content.Context
-import android.util.Base64
 import android.util.Log
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
@@ -539,32 +538,43 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     // ─── Attachments (path-based) ───────────────────────────────────────────
-    // Bytes never cross the bridge. JS hands us a file path; the kit encrypts and
-    // uploads. On download, we decrypt to a deterministic cache path and return
-    // that path so JS can use it directly as a `file://` URI.
+    // Bytes and key material never cross the bridge. JS hands us a file path; the kit encrypts,
+    // uploads and keeps the keys. On download, JS names the entry and gets back a decrypted
+    // cache path it can use directly as a `file://` URI.
 
     @ReactMethod
-    fun uploadAttachment(filePath: String, promise: Promise) {
+    fun sendCapture(capture: ReadableMap, promise: Promise) {
         scope.launch {
             try {
-                val ref = requireClient().uploadAttachmentFile(java.io.File(filePath))
+                // Absent keys fall back like the iOS bridge does.
+                fun string(key: String) = if (capture.hasKey(key) && !capture.isNull(key)) capture.getString(key) else null
+                val recipients = if (capture.hasKey("recipientUserIds")) {
+                    capture.getArray("recipientUserIds")?.toArrayList()?.map { it as String }.orEmpty()
+                } else emptyList()
+                val result = requireClient().sendCapture(
+                    file = java.io.File(string("path") ?: ""),
+                    mediaType = string("mediaType") ?: "photo",
+                    caption = string("caption") ?: "",
+                    captionMeta = string("captionMeta"),
+                    displayDuration = if (capture.hasKey("displayDuration")) capture.getDouble("displayDuration").toInt() else 0,
+                    peerUserIds = recipients,
+                    toStory = capture.hasKey("toStory") && capture.getBoolean("toStory"),
+                )
                 promise.resolve(Arguments.createMap().apply {
-                    putString("id", ref.id)
-                    putString("contentKey", Base64.encodeToString(ref.contentKey, Base64.NO_WRAP))
-                    putString("nonce", Base64.encodeToString(ref.nonce, Base64.NO_WRAP))
+                    putArray("undeliveredUserIds", Arguments.fromList(result.undeliveredPeerUserIds))
+                    putBoolean("storyUndelivered", result.storyUndelivered)
                 })
             } catch (e: Exception) {
-                promise.rejectKit("UPLOAD_ERROR", e)
+                promise.rejectKit("SEND_CAPTURE_ERROR", e)
             }
         }
     }
 
     @ReactMethod
-    fun downloadAttachment(id: String, contentKey: String, nonce: String, promise: Promise) {
+    fun downloadAttachment(entryId: String, promise: Promise) {
         scope.launch {
             try {
-                val dest = requireClient().downloadAttachmentToCache(id, contentKey, nonce)
-                promise.resolve(dest.absolutePath)
+                promise.resolve(requireClient().downloadAttachmentToCache(entryId).absolutePath)
             } catch (t: Throwable) {
                 promise.rejectKit("DOWNLOAD_ERROR", t)
             }
@@ -825,37 +835,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun sendPix(
-        peerUserId: String,
-        mediaRef: String,
-        contentKey: String,
-        nonce: String,
-        mediaType: String,
-        caption: String,
-        captionMeta: String?,
-        displayDuration: Double,
-        promise: Promise,
-    ) {
-        scope.launch {
-            try {
-                val id = requireClient().sendPix(
-                    peerUserId = peerUserId,
-                    mediaRef = mediaRef,
-                    contentKey = contentKey,
-                    nonce = nonce,
-                    mediaType = mediaType,
-                    caption = caption,
-                    captionMeta = captionMeta,
-                    displayDuration = displayDuration.toInt(),
-                )
-                promise.resolve(id)
-            } catch (e: Exception) {
-                promise.rejectKit("SEND_PIX_ERROR", e)
-            }
-        }
-    }
-
-    @ReactMethod
     fun markSeen(entryId: String, promise: Promise) {
         scope.launch {
             try {
@@ -876,33 +855,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
                 promise.resolve(arr)
             } catch (e: Exception) {
                 promise.rejectKit("GET_STORIES_ERROR", e)
-            }
-        }
-    }
-
-    @ReactMethod
-    fun postStory(
-        content: String,
-        mediaRef: String?,
-        contentKey: String?,
-        nonce: String?,
-        mediaType: String?,
-        captionMeta: String?,
-        promise: Promise,
-    ) {
-        scope.launch {
-            try {
-                val id = requireClient().postStory(
-                    content = content,
-                    mediaRef = mediaRef,
-                    contentKey = contentKey,
-                    nonce = nonce,
-                    mediaType = mediaType,
-                    captionMeta = captionMeta,
-                )
-                promise.resolve(id)
-            } catch (e: Exception) {
-                promise.rejectKit("POST_STORY_ERROR", e)
             }
         }
     }
@@ -960,8 +912,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     private fun attachmentToMap(att: MediaAttachment): WritableMap =
         Arguments.createMap().apply {
             putString("id", att.id)
-            putString("contentKey", Base64.encodeToString(att.contentKey, Base64.NO_WRAP))
-            putString("nonce", Base64.encodeToString(att.nonce, Base64.NO_WRAP))
             putString("mediaType", att.mediaType)
         }
 

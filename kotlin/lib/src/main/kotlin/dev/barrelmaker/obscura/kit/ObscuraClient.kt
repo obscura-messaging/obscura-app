@@ -7,7 +7,6 @@ import dev.barrelmaker.obscura.kit.crypto.AttachmentCrypto
 import dev.barrelmaker.obscura.kit.crypto.LinkCrypto
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
 import dev.barrelmaker.obscura.kit.crypto.UuidCodec
-import dev.barrelmaker.obscura.kit.crypto.fromBase64
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import dev.barrelmaker.obscura.kit.linking.HistorySync
 import dev.barrelmaker.obscura.kit.managers.AuthManager
@@ -845,30 +844,52 @@ class ObscuraClient(
         return id
     }
 
+    /**
+     * Uploads [file] once, sends it as a pix to each of [peerUserIds] and, if [toStory], posts it as a
+     * story with [caption] as its text, so key material never reaches the host. Recipients and the
+     * session are checked before the upload, so a reported recipient almost always has a stored pix
+     * that `flushOutbox` retries; only a session lost mid-send leaves one unstored.
+     */
+    suspend fun sendCapture(
+        file: File,
+        mediaType: String,
+        caption: String,
+        captionMeta: String?,
+        displayDuration: Int,
+        peerUserIds: List<String>,
+        toStory: Boolean,
+    ): CaptureResult {
+        val self = requireFreshToken()
+        for (peer in peerUserIds) {
+            if (peer.isBlank()) throw ObscuraError.InvalidArgument("peerUserId must not be blank")
+            if (peer == self.userId) throw ObscuraError.InvalidArgument("Cannot message yourself")
+        }
+        val attachment = uploadAttachmentFile(file).media(mediaType)
+        val undelivered = peerUserIds.filter { peer ->
+            !succeeds("send.pix") { sendPix(peer, attachment, caption, captionMeta, displayDuration) }
+        }
+        val storyUndelivered = toStory && !succeeds("send.story") { postStory(caption, attachment, captionMeta) }
+        return CaptureResult(undelivered, storyUndelivered)
+    }
+
+    private suspend fun succeeds(event: String, block: suspend () -> Unit): Boolean = try {
+        block()
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log("$event failed: ${e.reason()}")
+        false
+    }
+
     suspend fun sendPix(
         peerUserId: String,
-        mediaRef: String,
-        contentKey: String,
-        nonce: String,
-        mediaType: String,
+        attachment: MediaAttachment,
         caption: String,
         captionMeta: String?,
         displayDuration: Int,
     ): String {
         if (peerUserId.isBlank()) throw ObscuraError.InvalidArgument("peerUserId must not be blank")
-        if (mediaRef.isBlank() || contentKey.isBlank() || nonce.isBlank()) {
-            throw ObscuraError.InvalidArgument("pix attachment fields must not be blank")
-        }
-        val keyBytes = try {
-            contentKey.fromBase64()
-        } catch (e: Exception) {
-            throw ObscuraError.InvalidArgument("Invalid base64 contentKey: ${e.message}")
-        }
-        val nonceBytes = try {
-            nonce.fromBase64()
-        } catch (e: Exception) {
-            throw ObscuraError.InvalidArgument("Invalid base64 nonce: ${e.message}")
-        }
         val self = requireFreshToken()
         if (peerUserId == self.userId) throw ObscuraError.InvalidArgument("Cannot message yourself")
         val sentAt = clock()
@@ -878,12 +899,7 @@ class ObscuraClient(
             peerUserId = peerUserId,
             authorUserId = self.userId,
             sentAt = sentAt,
-            attachment = MediaAttachment(
-                id = mediaRef,
-                contentKey = keyBytes,
-                nonce = nonceBytes,
-                mediaType = mediaType,
-            ),
+            attachment = attachment,
             caption = caption.ifEmpty { null },
             captionMeta = captionMeta?.ifEmpty { null },
             displayDuration = displayDuration,
@@ -920,26 +936,7 @@ class ObscuraClient(
 
     suspend fun getStories(now: Long = clock()): List<StoryItem> = content.getStories(now)
 
-    suspend fun postStory(
-        content: String,
-        mediaRef: String?,
-        contentKey: String?,
-        nonce: String?,
-        mediaType: String?,
-        captionMeta: String?,
-    ): String {
-        val attachment = if (!mediaRef.isNullOrBlank()) {
-            if (contentKey.isNullOrBlank()) throw ObscuraError.InvalidArgument("story contentKey must not be blank when mediaRef is set")
-            val keyBytes = try { contentKey.fromBase64() } catch (e: Exception) { throw ObscuraError.InvalidArgument("Invalid base64 contentKey: ${e.message}") }
-            if (nonce.isNullOrBlank()) throw ObscuraError.InvalidArgument("story nonce must not be blank when mediaRef is set")
-            val nonceBytes = try { nonce.fromBase64() } catch (e: Exception) { throw ObscuraError.InvalidArgument("Invalid base64 nonce: ${e.message}") }
-            MediaAttachment(
-                id = mediaRef,
-                contentKey = keyBytes,
-                nonce = nonceBytes,
-                mediaType = mediaType.orEmpty(),
-            )
-        } else null
+    suspend fun postStory(content: String, attachment: MediaAttachment?, captionMeta: String?): String {
         val self = requireFreshToken()
         val sentAt = clock()
         val id = generateEntryId("story", sentAt)
@@ -1106,24 +1103,16 @@ class ObscuraClient(
         return AttachmentCrypto.decrypt(api.fetchAttachment(id), contentKey, nonce)
     }
 
-    suspend fun downloadAttachmentToCache(id: String, contentKeyBase64: String, nonceBase64: String): File {
+    /** Decrypts the attachment of entry [entryId] (a pix or story) to the cache, keyed by attachment id. */
+    suspend fun downloadAttachmentToCache(entryId: String): File {
         val dir = attachmentCacheDir ?: throw ObscuraError.InvalidArgument("attachmentCacheDir is not configured")
+        val att = content.getAttachment(entryId) ?: throw ObscuraError.InvalidArgument("No attachment for entry $entryId")
         withContext(Dispatchers.IO) {
             dir.mkdirs()
-            AttachmentCrypto.readCached(dir, id)
+            AttachmentCrypto.readCached(dir, att.id)
         }?.let { return it }
-        val keyBytes = try {
-            contentKeyBase64.fromBase64()
-        } catch (e: Exception) {
-            throw ObscuraError.InvalidArgument("Invalid base64 contentKey: ${e.message}")
-        }
-        val nonceBytes = try {
-            nonceBase64.fromBase64()
-        } catch (e: Exception) {
-            throw ObscuraError.InvalidArgument("Invalid base64 nonce: ${e.message}")
-        }
-        val data = downloadDecryptedAttachment(id, keyBytes, nonceBytes)
-        return withContext(Dispatchers.IO) { AttachmentCrypto.writeCached(dir, id, data) }
+        val data = downloadDecryptedAttachment(att.id, att.contentKey, att.nonce)
+        return withContext(Dispatchers.IO) { AttachmentCrypto.writeCached(dir, att.id, data) }
     }
 
     fun friendCode(): String {

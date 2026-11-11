@@ -45,8 +45,6 @@ function pixItem(
     viewedAt,
     attachment: {
       id: 'att_1',
-      contentKey: 'key',
-      nonce: 'nonce',
       mediaType: 'photo',
     },
     caption,

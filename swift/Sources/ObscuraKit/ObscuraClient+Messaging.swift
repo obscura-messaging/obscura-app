@@ -45,12 +45,59 @@ extension ObscuraClient {
         return id
     }
 
+    /// Uploads `filePath` once, sends it as a pix to each of `peerUserIds` and, if `toStory`, posts it
+    /// as a story with `caption` as its text, so key material never reaches the host. Recipients and
+    /// the session are checked before the upload, so a reported recipient almost always has a stored
+    /// pix that `flushOutbox` retries; only a session lost mid-send leaves one unstored.
+    public func sendCapture(
+        filePath: String,
+        mediaType: String,
+        caption: String,
+        captionMeta: String?,
+        displayDuration: Int,
+        peerUserIds: [String],
+        toStory: Bool
+    ) async throws -> CaptureResult {
+        let (selfUserId, _) = try await sendContext()
+        for peer in peerUserIds {
+            guard !peer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ObscuraError.invalidArgument("peerUserId must not be blank")
+            }
+            guard peer != selfUserId else { throw ObscuraError.invalidArgument("cannot message yourself") }
+        }
+        let attachment = try await uploadAttachmentFile(filePath: filePath).media(mediaType)
+        var undelivered: [String] = []
+        for peer in peerUserIds {
+            let sent = try await succeeds("send.pix") {
+                _ = try await self.sendPix(peerUserId: peer, attachment: attachment, caption: caption,
+                                           captionMeta: captionMeta, displayDuration: displayDuration)
+            }
+            if !sent { undelivered.append(peer) }
+        }
+        var storyUndelivered = false
+        if toStory {
+            storyUndelivered = !(try await succeeds("send.story") {
+                _ = try await self.postStory(content: caption, attachment: attachment, captionMeta: captionMeta)
+            })
+        }
+        return CaptureResult(undeliveredPeerUserIds: undelivered, storyUndelivered: storyUndelivered)
+    }
+
+    private func succeeds(_ event: String, _ body: () async throws -> Void) async throws -> Bool {
+        do {
+            try await body()
+            return true
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            logger.log("\(event) failed: \(error)")
+            return false
+        }
+    }
+
     public func sendPix(
         peerUserId: String,
-        mediaRef: String,
-        contentKey: String,
-        nonce: String,
-        mediaType: String,
+        attachment: MediaAttachment,
         caption: String,
         captionMeta: String?,
         displayDuration: Int
@@ -58,23 +105,12 @@ extension ObscuraClient {
         guard !peerUserId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ObscuraError.invalidArgument("peerUserId must not be blank")
         }
-        guard !mediaRef.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let keyBytes = Data(base64Encoded: contentKey), !keyBytes.isEmpty,
-              let nonceBytes = Data(base64Encoded: nonce), !nonceBytes.isEmpty else {
-            throw ObscuraError.invalidArgument("invalid pix attachment reference or key material")
-        }
         let (selfUserId, _) = try await sendContext()
         guard peerUserId != selfUserId else {
             throw ObscuraError.invalidArgument("cannot message yourself")
         }
         let sentAt = Self.nowMs()
         let id = Self.generateId(prefix: "pix")
-        let attachment = MediaAttachment(
-            id: mediaRef,
-            contentKey: keyBytes,
-            nonce: nonceBytes,
-            mediaType: mediaType
-        )
         let item = ConversationItem.pix(
             id: id,
             peerUserId: peerUserId,
@@ -119,28 +155,7 @@ extension ObscuraClient {
         try await content.stories(now: now)
     }
 
-    public func postStory(
-        content text: String,
-        mediaRef: String?,
-        contentKey: String?,
-        nonce: String?,
-        mediaType: String?,
-        captionMeta: String?
-    ) async throws -> String {
-        let hasMedia = (mediaRef?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
-        var attachment: MediaAttachment?
-        if hasMedia, let mediaRef {
-            guard let contentKey, let decodedKey = Data(base64Encoded: contentKey), !decodedKey.isEmpty,
-                  let nonce, let decodedNonce = Data(base64Encoded: nonce), !decodedNonce.isEmpty else {
-                throw ObscuraError.invalidArgument("invalid story attachment key material")
-            }
-            attachment = MediaAttachment(
-                id: mediaRef,
-                contentKey: decodedKey,
-                nonce: decodedNonce,
-                mediaType: mediaType ?? "photo"
-            )
-        }
+    public func postStory(content text: String, attachment: MediaAttachment?, captionMeta: String?) async throws -> String {
         let (selfUserId, _) = try await sendContext()
         let sentAt = Self.nowMs()
         let id = Self.generateId(prefix: "story")
@@ -446,20 +461,19 @@ extension ObscuraClient {
         return AttachmentUpload(id: response.id, contentKey: encrypted.contentKey, nonce: encrypted.nonce)
     }
 
-    public func downloadAttachmentToCache(id: String, contentKeyBase64: String, nonceBase64: String) async throws -> String {
+    /// Decrypts the attachment of entry `entryId` (a pix or story) to the cache, keyed by attachment id.
+    public func downloadAttachmentToCache(entryId: String) async throws -> String {
         guard let cacheDir = attachmentCacheDir else {
             throw ObscuraError.storageFailed("attachment cache directory unavailable")
         }
-        if let cached = AttachmentCrypto.readCached(cacheDir: cacheDir, id: id) {
+        guard let att = try await content.attachment(entryId: entryId) else {
+            throw ObscuraError.invalidArgument("no attachment for entry \(entryId)")
+        }
+        if let cached = AttachmentCrypto.readCached(cacheDir: cacheDir, id: att.id) {
             return cached.path
         }
-        guard let keyData = Data(base64Encoded: contentKeyBase64), !keyData.isEmpty,
-              let nonceData = Data(base64Encoded: nonceBase64), !nonceData.isEmpty else {
-            throw ObscuraError.invalidArgument("invalid base64 key/nonce")
-        }
-        let data = try await downloadDecryptedAttachment(id: id, contentKey: keyData, nonce: nonceData)
-        let dest = try AttachmentCrypto.writeCached(cacheDir: cacheDir, id: id, data: data)
-        return dest.path
+        let data = try await downloadDecryptedAttachment(id: att.id, contentKey: att.contentKey, nonce: att.nonce)
+        return try AttachmentCrypto.writeCached(cacheDir: cacheDir, id: att.id, data: data).path
     }
 
     public func downloadDecryptedAttachment(id: String, contentKey: Data, nonce: Data) async throws -> Data {

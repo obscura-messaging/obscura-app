@@ -1,7 +1,6 @@
 package scenarios
 
 import dev.barrelmaker.obscura.kit.crypto.fromBase64
-import dev.barrelmaker.obscura.kit.crypto.toBase64
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -86,7 +85,7 @@ class MessagingTests {
         val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte()) + ByteArray(250)
 
         val attachment = alice.uploadAttachment(jpeg)
-        alice.postStory("vacation", attachment.id, attachment.contentKey.toBase64(), attachment.nonce.toBase64(), "photo", null)
+        alice.postStory("vacation", attachment.media("photo"), null)
 
         eventually { bob.getStories().isNotEmpty() }
         val story = bob.getStories().single()

@@ -33,6 +33,7 @@ final class FakeObscuraServer: @unchecked Sendable {
     private var sessionTokens: [String: String] = [:]
     private var linkSessions: [String: (userId: String, body: Data?)] = [:]
     private var attachments: [String: Data] = [:]
+    private var attachmentUploadStatus: Int?
     private var createDeviceStatus = 201
     private var tokenRejections = 0
     private var refreshStatus = 401
@@ -86,6 +87,8 @@ final class FakeObscuraServer: @unchecked Sendable {
     func linkSession(_ id: String) -> (userId: String, body: Data?)? { lock.withLock { linkSessions[id] } }
     func approve(_ id: String, body: Data) { lock.withLock { linkSessions[id]?.body = body } }
     func attachment(_ id: String) -> Data? { lock.withLock { attachments[id] } }
+    func attachmentCount() -> Int { lock.withLock { attachments.count } }
+    func failAttachmentUpload(status: Int?) { lock.withLock { attachmentUploadStatus = status } }
 
     init() {
         Self.active = self
@@ -181,6 +184,7 @@ final class FakeObscuraServer: @unchecked Sendable {
         }
         if path.hasPrefix("/v1/link-sessions") { return link(request, token: token, body: body) }
         if request.httpMethod == "POST", path == "/v1/attachments" {
+            if let status = lock.withLock({ attachmentUploadStatus }) { return (status, Data()) }
             let id = UUID().uuidString.lowercased()
             lock.withLock { attachments[id] = body }
             return (201, Data(#"{"id":"\#(id)"}"#.utf8))

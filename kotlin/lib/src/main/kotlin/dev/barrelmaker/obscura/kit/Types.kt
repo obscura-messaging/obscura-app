@@ -57,7 +57,12 @@ class AttachmentUpload(val id: String, val contentKey: ByteArray, val nonce: Byt
         result = 31 * result + nonce.contentHashCode()
         return result
     }
+
+    fun media(mediaType: String): MediaAttachment = MediaAttachment(id, contentKey, nonce, mediaType)
 }
+
+/** What `sendCapture` reached nobody with. */
+data class CaptureResult(val undeliveredPeerUserIds: List<String>, val storyUndelivered: Boolean)
 
 typealias MediaAttachment = dev.barrelmaker.obscura.kit.stores.MediaAttachment
 typealias ConversationItem = dev.barrelmaker.obscura.kit.stores.ConversationItem

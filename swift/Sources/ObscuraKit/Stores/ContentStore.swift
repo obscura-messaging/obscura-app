@@ -374,6 +374,21 @@ actor ContentStore {
         }
     }
 
+    /// The attachment of the pix or story `entryId`, if it has one.
+    func attachment(entryId: String) async throws -> MediaAttachment? {
+        try await db.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT media_ref, content_key, nonce, media_type FROM conversation_entries WHERE id = ?
+                    UNION ALL
+                    SELECT media_ref, content_key, nonce, media_type FROM story_entries WHERE id = ?
+                    """,
+                arguments: [entryId.storedText, entryId.storedText]
+            ).lazy.compactMap { try? Self.mediaAttachment($0) }.first
+        }
+    }
+
     func markSeenLocal(entryId: String, selfUserId: String, viewedAt: UInt64) async throws -> ConversationItem? {
         try await db.write { db in
             guard let row = try Self.message(id: entryId, in: db),
@@ -703,11 +718,11 @@ actor ContentStore {
     }
 
     private static func mediaAttachment(_ row: Row) throws -> MediaAttachment? {
-        guard let id = try row.optionalText("media_ref"), !id.isEmpty else {
+        guard let id = try row.optionalText("media_ref"), !id.isEmpty,
+              let contentKey = row["content_key"] as Data?, !contentKey.isEmpty,
+              let nonce = row["nonce"] as Data?, !nonce.isEmpty else {
             return nil
         }
-        let contentKey = (row["content_key"] as Data?) ?? Data()
-        let nonce = (row["nonce"] as Data?) ?? Data()
         let mediaType = try row.optionalText("media_type") ?? "photo"
         return MediaAttachment(id: id, contentKey: contentKey, nonce: nonce, mediaType: mediaType)
     }

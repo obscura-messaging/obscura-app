@@ -271,6 +271,8 @@ The kit exposes typed content operations:
 
 - `getMessages()`, `sendMessage(peerUserId, content)`, `sendPix(...)`, `markSeen(entryId)`
 - `getStories()`, `postStory(...)`
+- `sendCapture(...)`: one upload sent as a pix to each recipient and
+  optionally posted as a story, reporting who it could not reach
 - `getProfiles()`, `updateProfile(displayName, bio)`
 - `flushOutbox()`, `sweepExpired()`
 
@@ -297,9 +299,11 @@ Received `STARTED` lasts 5 s from receipt, renewed per sender device;
 `STOPPED` clears that device. Typing is client-local, cleared on logout,
 and never authorizes recipients or parses a conversation.
 
-`uploadAttachment` encrypts with fresh AES-256-GCM key/nonce and returns
-id/key/nonce. Download returns decrypted bytes; kits keep no decrypted
-cache. `registerPushToken` registers the host's token.
+Each upload gets a fresh AES-256-GCM key and nonce, which travel only
+inside the end-to-end encrypted entry. The app layer never handles them:
+it sends a capture by path and downloads by entry id, so the keys stay in
+the kit's encrypted database. `registerPushToken` registers the host's
+token.
 
 Android's `processPendingMessages(timeoutMs)` connects/reuses the receive
 path and waits within its budget. It returns processed-envelope count,

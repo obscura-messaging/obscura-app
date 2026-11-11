@@ -1,5 +1,5 @@
 import { NativeEventEmitter, TurboModuleRegistry, type TurboModule } from 'react-native';
-import { parseCaptionMeta, serializeCaptionMeta, type CaptionMeta } from '../domain/caption';
+import { parseCaptionMeta, type CaptionMeta } from '../domain/caption';
 import type { ConversationItem, DirectMessageItem, PixItem } from '../domain/chats';
 import type { DeviceInfo } from '../domain/devices';
 import type { Friend, ProfileItem } from '../domain/friends';
@@ -16,15 +16,32 @@ export interface ResizedImage {
   height: number;
 }
 
-export interface AttachmentRef {
+/** An attachment as the kit describes it. Its key material stays native; download it by entry id. */
+export interface RawAttachment {
   id: string;
-  contentKey: string;
-  nonce: string;
-}
-
-export interface RawAttachment extends AttachmentRef {
   mediaType: string;
 }
+
+/** One capture, uploaded once and sent to each recipient and optionally the story. */
+export interface CaptureRequest {
+  path: string;
+  mediaType: MediaType;
+  caption: string;
+  /** Serialized `CaptionMeta`; the kit stores it opaquely. */
+  captionMeta: string | null;
+  displayDuration: number;
+  recipientUserIds: string[];
+  toStory: boolean;
+}
+
+/** What could not be delivered; the kit stored those entries and retries them from the outbox. */
+export interface CaptureResult {
+  undeliveredUserIds: string[];
+  storyUndelivered: boolean;
+}
+
+/** The content models the kit reports as changed, by `messageReceived` and `sweepExpired`. */
+export type EntryModel = 'directMessage' | 'pix' | 'seen' | 'story' | 'profile';
 
 export interface RawDirectMessageItem {
   kind: 'message';
@@ -126,29 +143,22 @@ export interface ObscuraBridge extends TurboModule, EventModule {
 
   getMessages(): Promise<RawConversationItem[]>;
   sendMessage(peerUserId: string, content: string): Promise<string>;
-  sendPix(
-    peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
-    mediaType: string, caption: string, captionMeta: string | null, displayDuration: number,
-  ): Promise<string>;
+  /** Rejects only if the upload fails; per-recipient failures are in the result. */
+  sendCapture(capture: CaptureRequest): Promise<CaptureResult>;
   markSeen(entryId: string): Promise<void>;
   getStories(): Promise<RawStoryItem[]>;
-  postStory(
-    content: string, mediaRef: string | null, contentKey: string | null,
-    nonce: string | null, mediaType: string | null, captionMeta: string | null,
-  ): Promise<string>;
   getProfiles(): Promise<ProfileItem[]>;
   updateProfile(displayName: string, bio: string): Promise<void>;
   flushOutbox(): Promise<number>;
-  sweepExpired(): Promise<string[]>;
+  sweepExpired(): Promise<EntryModel[]>;
 
   sendTyping(peerUserId: string): Promise<void>;
   stopTyping(peerUserId: string): Promise<void>;
   observeTyping(peerUserId: string): Promise<void>;
   stopObservingTyping(peerUserId: string): Promise<void>;
 
-  uploadAttachment(filePath: string): Promise<AttachmentRef>;
-  /** Decrypts to a cache file and resolves its absolute path. */
-  downloadAttachment(id: string, contentKey: string, nonce: string): Promise<string>;
+  /** Decrypts the attachment of a pix or story entry to a cache file and resolves its absolute path. */
+  downloadAttachment(entryId: string): Promise<string>;
   resizeImage(srcPath: string, maxDim: number, quality: number): Promise<ResizedImage>;
   writeTestImage(width: number, height: number): Promise<ResizedImage>;
 
@@ -163,17 +173,10 @@ export interface ObscuraBridge extends TurboModule, EventModule {
   getLaunchIntent(): Promise<LaunchIntent | null>;
 }
 
-export interface ObscuraClient extends Omit<ObscuraBridge, 'getMessages' | 'getStories' | 'sendPix' | 'postStory'> {
+/** The bridge with its content reads normalized into domain types. */
+export interface ObscuraClient extends Omit<ObscuraBridge, 'getMessages' | 'getStories'> {
   getMessages(): Promise<ConversationItem[]>;
-  sendPix(
-    peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
-    mediaType: MediaType | string, caption: string, captionMeta: CaptionMeta | string | null, displayDuration: number,
-  ): Promise<string>;
   getStories(): Promise<StoryItem[]>;
-  postStory(
-    content: string, mediaRef: string | null, contentKey: string | null,
-    nonce: string | null, mediaType: MediaType | string | null, captionMeta: CaptionMeta | string | null,
-  ): Promise<string>;
 }
 
 function normalizeMediaType(mediaType: string | null | undefined): MediaType {
@@ -181,12 +184,7 @@ function normalizeMediaType(mediaType: string | null | undefined): MediaType {
 }
 
 function normalizeAttachment(raw: RawAttachment): MediaAttachment {
-  return {
-    id: raw.id,
-    contentKey: raw.contentKey,
-    nonce: raw.nonce,
-    mediaType: normalizeMediaType(raw.mediaType),
-  };
+  return { id: raw.id, mediaType: normalizeMediaType(raw.mediaType) };
 }
 
 function toConversationItem(raw: RawConversationItem): ConversationItem {
@@ -226,11 +224,6 @@ function toStoryItem(raw: RawStoryItem): StoryItem {
   };
 }
 
-function encodeCaptionMeta(meta: CaptionMeta | string | null | undefined): string | null {
-  if (meta == null) return null;
-  return typeof meta === 'string' ? meta : serializeCaptionMeta(meta);
-}
-
 const rawBridge = TurboModuleRegistry.getEnforcing<ObscuraBridge>('ObscuraBridge');
 
 export const Obscura: ObscuraClient = new Proxy(rawBridge, {
@@ -240,24 +233,6 @@ export const Obscura: ObscuraClient = new Proxy(rawBridge, {
         return async (): Promise<ConversationItem[]> => (await target.getMessages()).map(toConversationItem);
       case 'getStories':
         return async (): Promise<StoryItem[]> => (await target.getStories()).map(toStoryItem);
-      case 'sendPix':
-        return (
-          peerUserId: string, mediaRef: string, contentKey: string, nonce: string,
-          mediaType: MediaType | string, caption: string, captionMeta: CaptionMeta | string | null, displayDuration: number,
-        ): Promise<string> =>
-          target.sendPix(
-            peerUserId, mediaRef, contentKey, nonce,
-            mediaType, caption, encodeCaptionMeta(captionMeta), displayDuration,
-          );
-      case 'postStory':
-        return (
-          content: string, mediaRef: string | null, contentKey: string | null,
-          nonce: string | null, mediaType: MediaType | string | null, captionMeta: CaptionMeta | string | null,
-        ): Promise<string> =>
-          target.postStory(
-            content, mediaRef, contentKey,
-            nonce, mediaType, encodeCaptionMeta(captionMeta),
-          );
       default: {
         const value = Reflect.get(target, prop, receiver);
         return typeof value === 'function' ? value.bind(target) : value;
@@ -273,7 +248,7 @@ export type ObscuraEvent =
   | { type: 'appStateChanged'; state: AppLifecycleState }
   | { type: 'launchedFrom'; screen: string }
   | { type: 'friendsChanged' }
-  | { type: 'messageReceived'; model: string }
+  | { type: 'messageReceived'; model: EntryModel }
   | { type: 'typingChanged'; peerUserId: string; typing: boolean }
   | { type: 'pushTokenReceived'; token: string };
 

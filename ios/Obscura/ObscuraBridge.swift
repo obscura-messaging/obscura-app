@@ -460,25 +460,6 @@ extension ObscuraBridge {
         }
     }
 
-    @objc(sendPix:mediaRef:contentKey:nonce:mediaType:caption:captionMeta:displayDuration:resolver:rejecter:)
-    func sendPix(_ peerUserId: String, mediaRef: String, contentKey: String, nonce: String,
-                 mediaType: String, caption: String, captionMeta: String?, displayDuration: NSNumber,
-                 resolver resolve: @escaping RCTPromiseResolveBlock,
-                 rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do {
-                let id = try await client.sendPix(
-                    peerUserId: peerUserId, mediaRef: mediaRef, contentKey: contentKey,
-                    nonce: nonce, mediaType: mediaType, caption: caption,
-                    captionMeta: captionMeta, displayDuration: displayDuration.intValue
-                )
-                resolve(id)
-            } catch {
-                rejectKit(reject, "SEND_PIX_ERROR", error)
-            }
-        }
-    }
-
     @objc(markSeen:resolver:rejecter:)
     func markSeen(_ entryId: String,
                   resolver resolve: @escaping RCTPromiseResolveBlock,
@@ -502,24 +483,6 @@ extension ObscuraBridge {
                 resolve(items.map(ObscuraBridge.storyItemDict))
             } catch {
                 rejectKit(reject, "GET_STORIES_ERROR", error)
-            }
-        }
-    }
-
-    @objc(postStory:mediaRef:contentKey:nonce:mediaType:captionMeta:resolver:rejecter:)
-    func postStory(_ content: String, mediaRef: String?, contentKey: String?,
-                   nonce: String?, mediaType: String?, captionMeta: String?,
-                   resolver resolve: @escaping RCTPromiseResolveBlock,
-                   rejecter reject: @escaping RCTPromiseRejectBlock) {
-        Task {
-            do {
-                let id = try await client.postStory(
-                    content: content, mediaRef: mediaRef, contentKey: contentKey,
-                    nonce: nonce, mediaType: mediaType, captionMeta: captionMeta
-                )
-                resolve(id)
-            } catch {
-                rejectKit(reject, "POST_STORY_ERROR", error)
             }
         }
     }
@@ -579,8 +542,6 @@ extension ObscuraBridge {
     static func attachmentDict(_ att: MediaAttachment) -> [String: Any] {
         [
             "id": att.id,
-            "contentKey": att.contentKey.base64EncodedString(),
-            "nonce": att.nonce.base64EncodedString(),
             "mediaType": att.mediaType,
         ]
     }
@@ -705,38 +666,46 @@ extension ObscuraBridge {
 
 // MARK: - Attachments
 //
-// Bytes never cross the bridge: upload reads a file path, download decrypts to
-// a cache file and returns its path. Mirrors ObscuraBridgeModule.kt.
+// Bytes and key material never cross the bridge: the kit uploads from a file path and keeps the
+// keys, and download decrypts an entry's attachment to a cache file and returns its path. Mirrors
+// ObscuraBridgeModule.kt.
 
 extension ObscuraBridge {
 
-    @objc(uploadAttachment:resolver:rejecter:)
-    func uploadAttachment(_ filePath: String,
-                          resolver resolve: @escaping RCTPromiseResolveBlock,
-                          rejecter reject: @escaping RCTPromiseRejectBlock) {
+    @objc(sendCapture:resolver:rejecter:)
+    func sendCapture(_ capture: NSDictionary,
+                     resolver resolve: @escaping RCTPromiseResolveBlock,
+                     rejecter reject: @escaping RCTPromiseRejectBlock) {
+        let path = capture["path"] as? String ?? ""
+        let mediaType = capture["mediaType"] as? String ?? "photo"
+        let caption = capture["caption"] as? String ?? ""
+        let captionMeta = capture["captionMeta"] as? String
+        let displayDuration = (capture["displayDuration"] as? NSNumber)?.intValue ?? 0
+        let recipients = capture["recipientUserIds"] as? [String] ?? []
+        let toStory = (capture["toStory"] as? NSNumber)?.boolValue ?? false
         Task {
             do {
-                let result = try await client.uploadAttachmentFile(filePath: filePath)
+                let result = try await client.sendCapture(
+                    filePath: path, mediaType: mediaType, caption: caption, captionMeta: captionMeta,
+                    displayDuration: displayDuration, peerUserIds: recipients, toStory: toStory
+                )
                 resolve([
-                    "id": result.id,
-                    "contentKey": result.contentKey.base64EncodedString(),
-                    "nonce": result.nonce.base64EncodedString(),
+                    "undeliveredUserIds": result.undeliveredPeerUserIds,
+                    "storyUndelivered": result.storyUndelivered,
                 ])
             } catch {
-                rejectKit(reject, "UPLOAD_ERROR", error)
+                rejectKit(reject, "SEND_CAPTURE_ERROR", error)
             }
         }
     }
 
-    @objc(downloadAttachment:contentKey:nonce:resolver:rejecter:)
-    func downloadAttachment(_ id: String, contentKey: String, nonce: String,
+    @objc(downloadAttachment:resolver:rejecter:)
+    func downloadAttachment(_ entryId: String,
                             resolver resolve: @escaping RCTPromiseResolveBlock,
                             rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
             do {
-                let path = try await client.downloadAttachmentToCache(
-                    id: id, contentKeyBase64: contentKey, nonceBase64: nonce)
-                resolve(path)
+                resolve(try await client.downloadAttachmentToCache(entryId: entryId))
             } catch {
                 rejectKit(reject, "DOWNLOAD_ERROR", error)
             }
