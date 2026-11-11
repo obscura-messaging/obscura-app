@@ -166,6 +166,16 @@ jobs:
         if: failure()
         run: just server-logs 200 || true
 
+      # The full log, since a failure early in a long suite falls outside the tail above.
+      - name: Server log artifact
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: kotlin-server-log
+          path: ~/.cache/obscura-server/run/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Test report
         if: failure()
         uses: actions/upload-artifact@v7.0.2
@@ -278,6 +288,16 @@ jobs:
       - name: Server log
         if: failure()
         run: just server-logs 200 || true
+
+      # The full log, since a failure early in a long suite falls outside the tail above.
+      - name: Server log artifact
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: swift-server-log
+          path: ~/.cache/obscura-server/run/*.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Stop server
         if: always()
