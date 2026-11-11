@@ -68,7 +68,7 @@ import obscura.client.v1.typingSignal
 import org.signal.libsignal.protocol.DuplicateMessageException
 import org.signal.libsignal.protocol.IdentityKeyPair
 import org.signal.libsignal.protocol.ecc.ECKeyPair
-import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
+import obscura.v1.Obscura.Envelope
 import java.io.File
 import java.security.SecureRandom
 import java.text.SimpleDateFormat

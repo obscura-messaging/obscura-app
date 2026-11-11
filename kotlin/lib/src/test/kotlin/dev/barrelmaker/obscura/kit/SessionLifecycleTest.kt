@@ -28,9 +28,9 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.signal.libsignal.protocol.IdentityKeyPair
-import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
-import xyz.obscura.server.contracts.ObscuraProtocol.EnvelopeBatch
-import xyz.obscura.server.contracts.ObscuraProtocol.WebSocketFrame
+import obscura.v1.Obscura.Envelope
+import obscura.v1.Obscura.EnvelopeBatch
+import obscura.v1.Obscura.WebSocketFrame
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong

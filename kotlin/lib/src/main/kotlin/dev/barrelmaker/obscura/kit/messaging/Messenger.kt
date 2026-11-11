@@ -17,8 +17,8 @@ import org.signal.libsignal.protocol.SignalProtocolAddress
 import org.signal.libsignal.protocol.message.CiphertextMessage
 import org.signal.libsignal.protocol.message.PreKeySignalMessage
 import org.signal.libsignal.protocol.message.SignalMessage
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
-import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageResponse
+import obscura.v1.Obscura.SendMessageRequest
+import obscura.v1.Obscura.SendMessageResponse
 import java.util.UUID
 
 /**
