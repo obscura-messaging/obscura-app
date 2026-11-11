@@ -317,7 +317,8 @@ final class GatewayAndConnectionTests: XCTestCase {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
         XCTAssertEqual(client.connectionState, .reconnecting)
-        for _ in 0..<60 {
+        // The first retry waits 1 s, then fetches a ticket and opens a socket; allow for a slow simulator.
+        for _ in 0..<200 {
             if client.connectionState == .connected { break }
             try await Task.sleep(nanoseconds: 25_000_000)
         }
