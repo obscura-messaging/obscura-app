@@ -70,6 +70,10 @@ final class AttachmentCryptoTests: XCTestCase {
             kSecAttrAccount as String: "db_key_\(userId)",
         ]
         defer { SecItemDelete(query as CFDictionary) }
+        // Package tests run on a simulator without a host app, which gets no Keychain entitlement.
+        if SecItemCopyMatching(query as CFDictionary, nil) == errSecMissingEntitlement {
+            throw XCTSkip("the Keychain needs a host app on the iOS simulator")
+        }
 
         let key1 = try DatabaseSecret.getOrCreate(userId: userId, accessGroup: nil)
         XCTAssertEqual(key1.count, 32)

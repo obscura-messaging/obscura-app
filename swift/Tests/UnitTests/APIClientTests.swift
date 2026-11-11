@@ -13,12 +13,13 @@ final class APIClientTests: XCTestCase {
         URLProtocol.unregisterClass(RetryProtocol.self)
     }
 
-    func testRetryAfterIsClampedToOneToTenSeconds() {
+    func testRetryAfterWaitsAtLeastASecondAndGivesUpPastTen() {
         XCTAssertEqual(APIClient.retryDelay(retryAfter: nil), 1)
         XCTAssertEqual(APIClient.retryDelay(retryAfter: "0"), 1)
         XCTAssertEqual(APIClient.retryDelay(retryAfter: "soon"), 1)
         XCTAssertEqual(APIClient.retryDelay(retryAfter: "3"), 3)
-        XCTAssertEqual(APIClient.retryDelay(retryAfter: "120"), 10)
+        XCTAssertEqual(APIClient.retryDelay(retryAfter: "10"), 10)
+        XCTAssertNil(APIClient.retryDelay(retryAfter: "120"), "a long wait, such as the pre-key fetch limit's, is not retried")
     }
 
     func testA429OrA503IsRetriedUntilItSucceeds() async throws {
@@ -29,6 +30,14 @@ final class APIClientTests: XCTestCase {
 
         XCTAssertEqual(ticket, "t")
         XCTAssertEqual(RetryProtocol.responses.withLock { $0.count }, 0)
+    }
+
+    func testALongRetryAfterFailsAtOnceInsteadOfHoldingTheRequest() async throws {
+        RetryProtocol.responses.withLock { $0 = [(429, "120"), (200, nil)] }
+        let api = try APIClient(baseURL: "https://\(RetryProtocol.host)")
+
+        await assertThrows(.http(status: 429, body: "slow down")) { _ = try await api.fetchGatewayTicket() }
+        XCTAssertEqual(RetryProtocol.responses.withLock { $0.count }, 1, "not retried")
     }
 
     func testRetriesStopAfterTwoAndTheErrorCarriesStatusAndBody() async throws {
@@ -60,7 +69,7 @@ final class APIClientTests: XCTestCase {
     func testAnExistingDevicesWrongPasswordNeedsOnlyOneLoginRequest() async throws {
         RetryProtocol.responses.withLock { $0 = [(401, nil), (401, nil)] }
         let client = try makeClient(apiURL: "https://\(RetryProtocol.host)")
-        try client.signalStore.install(SignalKeys.generate())
+        try client.signalStore.install(provisioningKeys())
         let deviceId = UUID().uuidString.lowercased()
         try await client.db.write { try DeviceStore.setLocalDevice(deviceId, primaryDeviceId: deviceId, in: $0) }
 

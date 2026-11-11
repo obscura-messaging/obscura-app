@@ -7,7 +7,9 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.signal.libsignal.protocol.*
-import org.signal.libsignal.protocol.ecc.Curve
+import org.signal.libsignal.protocol.ecc.ECKeyPair
+import org.signal.libsignal.protocol.kem.KEMKeyPair
+import org.signal.libsignal.protocol.kem.KEMKeyType
 import org.signal.libsignal.protocol.state.*
 
 class SignalStoreTest {
@@ -93,7 +95,7 @@ class SignalStoreTest {
     @Test
     fun `Prekey store-load round trip`() {
         store.generateIdentity()
-        val keyPair = Curve.generateKeyPair()
+        val keyPair = ECKeyPair.generate()
         val record = PreKeyRecord(1, keyPair)
         store.storePreKey(1, record)
 
@@ -105,7 +107,7 @@ class SignalStoreTest {
     @Test
     fun `Prekey removal works`() {
         store.generateIdentity()
-        val keyPair = Curve.generateKeyPair()
+        val keyPair = ECKeyPair.generate()
         store.storePreKey(42, PreKeyRecord(42, keyPair))
         assertTrue(store.containsPreKey(42))
 
@@ -122,35 +124,21 @@ class SignalStoreTest {
     }
 
     @Test
-    fun `Prekey count tracks additions and removals`() {
+    fun `Prekeys are stored and removed by id`() {
         store.generateIdentity()
-        assertEquals(0L, store.getPreKeyCount())
-
-        for (i in 1..10) {
-            store.storePreKey(i, PreKeyRecord(i, Curve.generateKeyPair()))
-        }
-        assertEquals(10L, store.getPreKeyCount())
+        for (i in 1..10) store.storePreKey(i, PreKeyRecord(i, ECKeyPair.generate()))
+        assertTrue(store.containsPreKey(10))
 
         store.removePreKey(1)
-        store.removePreKey(2)
-        assertEquals(8L, store.getPreKeyCount())
-    }
-
-    @Test
-    fun `Highest prekey ID tracks correctly`() {
-        store.generateIdentity()
-        store.storePreKey(5, PreKeyRecord(5, Curve.generateKeyPair()))
-        store.storePreKey(50, PreKeyRecord(50, Curve.generateKeyPair()))
-        store.storePreKey(25, PreKeyRecord(25, Curve.generateKeyPair()))
-
-        assertEquals(50L, store.getHighestPreKeyId())
+        assertFalse(store.containsPreKey(1))
+        assertEquals(9L, db.signalKeyQueries.countPreKeys().executeAsOne())
     }
 
     @Test
     fun `Signed prekey store-load round trip`() {
         val (identity, _) = store.generateIdentity()
-        val keyPair = Curve.generateKeyPair()
-        val signature = Curve.calculateSignature(identity.privateKey, keyPair.publicKey.serialize())
+        val keyPair = ECKeyPair.generate()
+        val signature = identity.privateKey.calculateSignature(keyPair.publicKey.serialize())
         val record = SignedPreKeyRecord(1, System.currentTimeMillis(), keyPair, signature)
         store.storeSignedPreKey(1, record)
 
@@ -232,8 +220,8 @@ class SignalStoreTest {
         store.installIdentity(identity, 123)
         assertTrue(store.hasIdentity())
 
-        val keyPair = Curve.generateKeyPair()
-        val sig = Curve.calculateSignature(identity.privateKey, keyPair.publicKey.serialize())
+        val keyPair = ECKeyPair.generate()
+        val sig = identity.privateKey.calculateSignature(keyPair.publicKey.serialize())
         store.storeSignedPreKey(7, SignedPreKeyRecord(7, 1000L, keyPair, sig))
         assertEquals(listOf(7), store.loadSignedPreKeys().map { it.id })
         store.removeSignedPreKey(7)
@@ -249,25 +237,53 @@ class SignalStoreTest {
     }
 
     @Test
-    fun `sender keys and Kyber prekey operations are rejected as unsupported`() {
+    fun `sender keys are rejected as unsupported`() {
         val bobAddr = SignalProtocolAddress("bob-phone", 1)
         val dummySenderKey = object : org.signal.libsignal.protocol.groups.state.SenderKeyRecord(0L) {
             override fun release(handle: Long) {}
         }
-        val dummyKyberKey = KyberPreKeyRecord(
-            1,
-            0L,
-            org.signal.libsignal.protocol.kem.KEMKeyPair.generate(org.signal.libsignal.protocol.kem.KEMKeyType.KYBER_1024),
-            ByteArray(64),
-        )
         val distId = java.util.UUID.randomUUID()
         assertThrows(UnsupportedOperationException::class.java) { store.storeSenderKey(bobAddr, distId, dummySenderKey) }
         assertThrows(UnsupportedOperationException::class.java) { store.loadSenderKey(bobAddr, distId) }
-        assertThrows(InvalidKeyIdException::class.java) { store.loadKyberPreKey(1) }
-        assertEquals(emptyList<KyberPreKeyRecord>(), store.loadKyberPreKeys())
-        assertThrows(UnsupportedOperationException::class.java) { store.storeKyberPreKey(1, dummyKyberKey) }
-        assertFalse(store.containsKyberPreKey(1))
-        assertThrows(UnsupportedOperationException::class.java) { store.markKyberPreKeyUsed(1) }
     }
 
+    private fun kyberKey(id: Int) = KyberPreKeyRecord(id, 0L, KEMKeyPair.generate(KEMKeyType.KYBER_1024), ByteArray(64))
+
+    @Test
+    fun `a used one-time Kyber prekey is deleted`() {
+        store.storeKyberPreKey(1, kyberKey(1))
+        assertEquals(1, store.loadKyberPreKey(1).id)
+
+        store.markKyberPreKeyUsed(1, 7, ECKeyPair.generate().publicKey)
+
+        assertFalse(store.containsKyberPreKey(1))
+        assertThrows(InvalidKeyIdException::class.java) { store.loadKyberPreKey(1) }
+    }
+
+    @Test
+    fun `a last-resort Kyber prekey stays, and a base key used with it twice is a replay`() {
+        store.storeLastResortKyberPreKey(2, kyberKey(2))
+        val baseKey = ECKeyPair.generate().publicKey
+
+        store.markKyberPreKeyUsed(2, 7, baseKey)
+        store.markKyberPreKeyUsed(2, 8, baseKey)
+        store.markKyberPreKeyUsed(2, 7, ECKeyPair.generate().publicKey)
+        assertThrows(ReusedBaseKeyException::class.java) { store.markKyberPreKeyUsed(2, 7, baseKey) }
+
+        assertTrue(store.containsKyberPreKey(2))
+        assertEquals(listOf(2), store.loadLastResortKyberPreKeys().map { it.id })
+        store.removeKyberPreKey(2)
+        store.storeLastResortKyberPreKey(2, kyberKey(2))
+        store.markKyberPreKeyUsed(2, 7, baseKey)
+    }
+
+    @Test
+    fun `clear deletes Kyber prekeys and pre-key bookkeeping`() {
+        dev.barrelmaker.obscura.kit.managers.PreKeys.install(
+            store, dev.barrelmaker.obscura.kit.managers.PreKeys.generateProvisioningKeys(org.signal.libsignal.protocol.IdentityKeyPair.generate()),
+        )
+        store.clear()
+        assertEquals(emptyList<KyberPreKeyRecord>(), store.loadKyberPreKeys())
+        assertNull(store.preKeyState())
+    }
 }

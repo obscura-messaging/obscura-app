@@ -5,7 +5,7 @@ import com.google.protobuf.ByteString
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
 import dev.barrelmaker.obscura.kit.crypto.UuidCodec
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
-import dev.barrelmaker.obscura.kit.managers.SignalKeyUtils
+import dev.barrelmaker.obscura.kit.managers.PreKeys
 import dev.barrelmaker.obscura.kit.messaging.Messenger
 import dev.barrelmaker.obscura.kit.messaging.parsePeerBundles
 import dev.barrelmaker.obscura.kit.network.APIClient
@@ -28,13 +28,13 @@ class ReceiveDurabilityTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         ObscuraDatabase.Schema.create(driver)
         val c = ObscuraClient(ObscuraConfig("http://127.0.0.1:1", "test"), driver, storedSession())
-        val keys = SignalKeyUtils.generateProvisioningKeys(org.signal.libsignal.protocol.IdentityKeyPair.generate())
-        SignalKeyUtils.install(c.signalStore, keys)
+        val keys = PreKeys.generateProvisioningKeys(org.signal.libsignal.protocol.IdentityKeyPair.generate())
+        PreKeys.install(c.signalStore, keys)
         c.storeLocalDevice()
         assertTrue(c.auth.restore())
         val senderDb = newInMemoryDatabase().apply { deviceQueries.insert(SELF_USER_ID, SELF_DEVICE_ID) }
         val sender = SignalStore(senderDb).also { it.generateIdentity() }
-        val messenger = Messenger(sender, APIClient("http://127.0.0.1:1") { null })
+        val messenger = Messenger(sender, APIClient("http://127.0.0.1:1") { null }) { peerDevice }
         messenger.establishSession(parsePeerBundles(JSONArray().put(keys.bundle(SELF_DEVICE_ID))).single())
         val message = incoming ?: ClientMessage.newBuilder().setTimestamp(1).setDirectMessage(
             DirectMessage.newBuilder()
@@ -43,7 +43,7 @@ class ReceiveDurabilityTest {
                 .setContent("""{"deviceId":"payload-is-not-discovery"}"""),
         ).build()
         val encrypted = if (malformedPlaintext) {
-            val ciphertext = org.signal.libsignal.protocol.SessionCipher(sender, Messenger.addressFor(SELF_DEVICE_ID))
+            val ciphertext = org.signal.libsignal.protocol.SessionCipher(sender, Messenger.addressFor(peerDevice), Messenger.addressFor(SELF_DEVICE_ID))
                 .encrypt(byteArrayOf(-1, -1, -1))
             obscura.client.v1.Client.EncryptedMessage.newBuilder()
                 .setType(obscura.client.v1.Client.EncryptedMessage.Type.TYPE_PREKEY_MESSAGE)
@@ -173,7 +173,7 @@ class ReceiveDurabilityTest {
         NoOpLogger.decryptFailed("u", "r")
         NoOpLogger.ackFailed("e", "r")
         NoOpLogger.tokenRefreshFailed(1, "r")
-        NoOpLogger.preKeyReplenishFailed("r")
+        NoOpLogger.preKeySyncFailed("r")
         NoOpLogger.identityChanged("u")
         NoOpLogger.sessionEstablishFailed("u", "r")
         NoOpLogger.databaseError("s", "op", "r")
@@ -210,20 +210,19 @@ class ReceiveDurabilityTest {
         driver.close()
     }
 
-    @Test fun `low prekey count after receive triggers replenishment and reports failure`() = runBlocking {
+    @Test fun `a pre-key message makes the client sync its pre-keys and a failed sync is reported`() = runBlocking {
         val (cLow, driverLow, envLow) = fixture()
-        val replenishFailures = kotlinx.coroutines.CompletableDeferred<String>()
+        val syncFailures = kotlinx.coroutines.CompletableDeferred<String>()
         cLow.logger = object : ObscuraLogger by NoOpLogger {
-            override fun preKeyReplenishFailed(reason: String) {
-                replenishFailures.complete(reason)
+            override fun preKeySyncFailed(reason: String) {
+                syncFailures.complete(reason)
             }
         }
         var acks = 0
-        for (id in 2..90) cLow.signalStore.removePreKey(id)
         cLow.receive(envLow) { acks++ }
         assertEquals(1, acks)
         kotlinx.coroutines.withTimeout(5_000) {
-            assertTrue(replenishFailures.await().isNotBlank())
+            assertTrue(syncFailures.await().isNotBlank(), "the count check cannot reach the server")
         }
         cLow.auth.end()
         driverLow.close()

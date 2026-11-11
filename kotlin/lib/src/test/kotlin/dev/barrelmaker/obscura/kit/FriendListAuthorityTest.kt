@@ -10,6 +10,7 @@ import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
+import obscura.client.v1.Client.EncryptedMessage
 import obscura.client.v1.Client.ClientMessage
 import obscura.client.v1.Client.FriendListSync
 import obscura.client.v1.Client.FriendRecord
@@ -131,7 +132,7 @@ class FriendListAuthorityTest {
                 val syncs = sent.map { request ->
                     val submission = request.recipientsList.single().submissionsList.single()
                     assertEquals(linkedDevice.deviceId, UuidCodec.uuidString(submission.deviceId))
-                    linkedDevice.messenger.decryptAndCommit(SELF_DEVICE_ID, submission.message,
+                    linkedDevice.messenger.decryptAndCommit(SELF_DEVICE_ID, EncryptedMessage.parseFrom(submission.message),
                         record = { linkedDevice.directory.addInTransaction(SELF_USER_ID, SELF_DEVICE_ID) }) { ClientMessage.parseFrom(it) }
                         .friendListSync
                 }

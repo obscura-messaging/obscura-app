@@ -10,8 +10,11 @@ import dev.barrelmaker.obscura.kit.SubmissionStatus
 import dev.barrelmaker.obscura.kit.crypto.UuidCodec
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import dev.barrelmaker.obscura.kit.managers.AuthManager
+import dev.barrelmaker.obscura.kit.managers.PreKeys
 import dev.barrelmaker.obscura.kit.messaging.Messenger
 import dev.barrelmaker.obscura.kit.messaging.parsePeerBundles
+import dev.barrelmaker.obscura.kit.network.PreKeyCounts
+import dev.barrelmaker.obscura.kit.network.PreKeyUpload
 import dev.barrelmaker.obscura.kit.stores.FriendStatus
 import kotlinx.coroutines.runBlocking
 import obscura.client.v1.Client.ClientMessage
@@ -46,58 +49,55 @@ class ServerContractTests {
     }
 
     @Test
-    fun `gateway refills twice with rotated signed keys new one time keys and working Signal sessions`(): Unit = runBlocking {
+    fun `pre-key sync rotates on schedule, refills a low supply, and old sessions still decrypt`(): Unit = runBlocking {
         val storage = MemoryStorage()
         val receiver = newClient(storage = storage)
         val inspector = newClient()
         receiver.register(uniqueName("refill"), TEST_PASSWORD)
         inspector.register(uniqueName("inspector"), TEST_PASSWORD)
         try {
-            val sender = Messenger(inspector.signalStore, inspector.api)
+            val sender = Messenger(inspector.signalStore, inspector.api) { inspector.deviceId }
             inspector.devices.add(receiver.userId!!, listOf(receiver.deviceId!!))
             val original = inspector.api.fetchPreKeyBundles(receiver.userId!!)
             val first = original.getJSONObject(0)
             val identity = first.getString("identityKey")
             val originalSignedId = first.getJSONObject("signedPreKey").getInt("keyId")
+            val originalKyberId = first.getJSONObject("kyberPreKey").getInt("keyId")
             sender.establishSession(parsePeerBundles(original).single())
             val delayed = sender.prepareSubmission(receiver.deviceId!!, entry("delayed-before-rotation"))
+            assertEquals(PreKeyCounts(PreKeys.BATCH_SIZE - 1, PreKeys.BATCH_SIZE - 1), receiver.api.fetchPreKeyCounts(),
+                "the fetch used up one one-time key of each kind")
 
-            // Drain while offline so the gateway's on-connect PREKEY_STATUS must cause the upload.
-            var empty = false
-            repeat(100) {
-                if (!empty) empty = inspector.api.fetchPreKeyBundles(receiver.userId!!)
-                    .getJSONObject(0).optJSONObject("oneTimePreKey") == null
-            }
-            assertTrue(empty, "provisioning must have at most 100 one-time keys")
+            // Two days since the last sync: connecting rotates the signed and last-resort keys.
+            val state = receiver.signalStore.preKeyState()!!
+            val longAgo = System.currentTimeMillis() - PreKeys.REFRESH_INTERVAL_MS - 1
+            receiver.signalStore.savePreKeyState(state.copy(synced_at = longAgo, rotated_at = longAgo))
+            receiver.preKeySyncSpacingMs = 0 // the refill below follows this sync within seconds
             receiver.connect()
-            var rotated = first
-            eventually(message = "server-visible automatic refill") {
-                rotated = inspector.api.fetchPreKeyBundles(receiver.userId!!).getJSONObject(0)
-                rotated.getJSONObject("signedPreKey").getInt("keyId") > originalSignedId &&
-                    (rotated.optJSONObject("oneTimePreKey")?.getInt("keyId") ?: 0) > 100
+            eventually(message = "rotated signed pre-key is active") {
+                receiver.signalStore.preKeyState()!!.active_signed_id != originalSignedId.toLong()
             }
-            val secondSignedId = rotated.getJSONObject("signedPreKey").getInt("keyId")
+            val rotated = inspector.api.fetchPreKeyBundles(receiver.userId!!).getJSONObject(0)
             assertEquals(identity, rotated.getString("identityKey"))
-            assertTrue(receiver.signalStore.containsSignedPreKey(originalSignedId))
-            assertEquals(SubmissionStatus.ACCEPTED,
-                sender.submit(receiver.userId!!, listOf(delayed)).submitted.single().result.status)
-            receiver.awaitRow { it.id == "delayed-before-rotation" }
+            assertEquals(receiver.signalStore.preKeyState()!!.active_signed_id, rotated.getJSONObject("signedPreKey").getLong("keyId"))
+            assertNotEquals(originalKyberId, rotated.getJSONObject("kyberPreKey").getInt("keyId"))
+            assertTrue(receiver.signalStore.containsSignedPreKey(originalSignedId), "kept for messages in flight")
 
-            // Consumption while connected must trigger another advisory-driven refill, including refresh.
+            // Leave the server only 5 of each kind. The delayed message, built on the original keys, still
+            // decrypts after rotation, and as a pre-key message it makes the receiver refill both kinds,
+            // refreshing its token on the way.
+            val low = PreKeys.prepareRefill(receiver.signalStore, PreKeyCounts(0, 0), System.currentTimeMillis()).toUpload()
+            receiver.api.uploadPreKeys(PreKeyUpload(null, null, low.oneTimePreKeys.take(5), low.kyberPreKeys.take(5)))
+            assertEquals(PreKeyCounts(5, 5), receiver.api.fetchPreKeyCounts())
             val oldRefresh = storage.data!!.getValue("refreshToken")
-            val highestBefore = receiver.signalStore.getHighestPreKeyId()
             expireAccess(receiver)
-            var newest = rotated
-            eventually(message = "second server-visible automatic refill") {
-                newest = inspector.api.fetchPreKeyBundles(receiver.userId!!).getJSONObject(0)
-                newest.getJSONObject("signedPreKey").getInt("keyId") > secondSignedId &&
-                    (newest.optJSONObject("oneTimePreKey")?.getLong("keyId") ?: 0) > highestBefore
+            assertEquals(SubmissionStatus.ACCEPTED, sender.submit(receiver.userId!!, listOf(delayed)).submitted.single().result.status)
+            receiver.awaitRow { it.id == "delayed-before-rotation" }
+            eventually(message = "server-visible refill") {
+                receiver.api.fetchPreKeyCounts() == PreKeyCounts(PreKeys.BATCH_SIZE, PreKeys.BATCH_SIZE)
             }
-            assertEquals(identity, newest.getString("identityKey"))
             assertNotEquals(oldRefresh, storage.data!!.getValue("refreshToken"))
             assertEquals(receiver.auth.requireCredentials().toMap(), storage.data)
-            assertTrue(receiver.signalStore.containsSignedPreKey(originalSignedId))
-            assertTrue(receiver.signalStore.containsSignedPreKey(secondSignedId))
 
             val fresh = registerAndConnect("fresh_signal")
             try {
@@ -179,7 +179,7 @@ class ServerContractTests {
         alice.register(uniqueName("batch_sender"), TEST_PASSWORD)
         bob.register(uniqueName("batch_target"), TEST_PASSWORD)
         try {
-            val messenger = Messenger(alice.signalStore, alice.api)
+            val messenger = Messenger(alice.signalStore, alice.api) { alice.deviceId }
             alice.devices.add(bob.userId!!, listOf(bob.deviceId!!))
             messenger.establishSession(parsePeerBundles(alice.api.fetchPreKeyBundles(bob.userId!!)).single())
             val submissions = List(101) { messenger.prepareSubmission(bob.deviceId!!, entry("batch-$it")) }
@@ -207,7 +207,7 @@ class ServerContractTests {
             assertEquals(AuthState.LOGGED_OUT, first.authState.value)
             assertEquals(LoginScenario.EXISTING_DEVICE, first.login(firstName, TEST_PASSWORD))
             first.logout()
-            val resetKeys = dev.barrelmaker.obscura.kit.managers.SignalKeyUtils.generateProvisioningKeys(
+            val resetKeys = dev.barrelmaker.obscura.kit.managers.PreKeys.generateProvisioningKeys(
                 org.signal.libsignal.protocol.IdentityKeyPair.generate()
             )
             first.api.resetAccount(firstName, TEST_PASSWORD, "replacement", resetKeys.toDeviceKeys())
@@ -222,31 +222,19 @@ class ServerContractTests {
         val bob = registerAndConnect("reuse_target")
         becomeFriends(alice, bob)
         try {
-            val before = alice.api.fetchPreKeyBundles(bob.userId!!).getJSONObject(0)
-                .getJSONObject("oneTimePreKey").getInt("keyId")
+            assertTrue(alice.signalStore.containsSession(Messenger.addressFor(bob.deviceId!!)), "the friend request started a session")
+            val start = bob.api.fetchPreKeyCounts()
             repeat(3) { assertEquals(listOf(bob.deviceId), bob.api.fetchOwnDevices().map { it.deviceId }) }
-            sendAndVerify(alice, bob, "first session")
-            val afterFirst = alice.api.fetchPreKeyBundles(bob.userId!!).getJSONObject(0)
-                .getJSONObject("oneTimePreKey").getInt("keyId")
-            assertNotEquals(before, afterFirst)
+            sendAndVerify(alice, bob, "first send")
             val session = alice.signalStore.loadSession(Messenger.addressFor(bob.deviceId!!)).serialize()
             sendAndVerify(alice, bob, "reused session")
-            val afterSecond = alice.api.fetchPreKeyBundles(bob.userId!!).getJSONObject(0)
-                .getJSONObject("oneTimePreKey").getInt("keyId")
-            assertNotEquals(afterFirst, afterSecond)
             assertFalse(session.contentEquals(alice.signalStore.loadSession(Messenger.addressFor(bob.deviceId!!)).serialize()),
                 "sending must advance the existing ratchet")
-            bob.disconnect()
-            var remaining = 0
-            var exhausted = false
-            repeat(100) {
-                if (!exhausted) {
-                    val key = alice.api.fetchPreKeyBundles(bob.userId!!).getJSONObject(0).optJSONObject("oneTimePreKey")
-                    if (key == null) exhausted = true else remaining++
-                }
-            }
-            assertTrue(exhausted)
-            assertEquals(96, remaining, "three inspections and first-session discovery consume four keys; metadata and reuse consume none")
+            assertEquals(start, bob.api.fetchPreKeyCounts(), "metadata and sends over an existing session consume no pre-keys")
+
+            // A fetch, by contrast, uses up one of each kind.
+            alice.api.fetchPreKeyBundles(bob.userId!!)
+            assertEquals(PreKeyCounts(start.oneTime - 1, start.kyber - 1), bob.api.fetchPreKeyCounts())
         } finally { alice.logout(); bob.logout() }
     }
 
@@ -260,8 +248,17 @@ class ServerContractTests {
         verifyReceiveRecovery("Device")
     }
 
+    /**
+     * A database in a temporary file. These tests roll a receive back on purpose, and an in-memory
+     * JDBC database shares one connection and one transaction across threads, so another coroutine's
+     * transaction could commit the rolled-back writes. Android's driver and file databases keep each
+     * thread's transaction to itself.
+     */
+    private fun fileDriver(): JdbcSqliteDriver =
+        JdbcSqliteDriver("jdbc:sqlite:${java.io.File.createTempFile("obscura-test", ".db").apply { deleteOnExit() }.path}")
+
     private suspend fun verifyReceiveRecovery(table: String) {
-        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val driver = fileDriver()
         ObscuraDatabase.Schema.create(driver)
         val bob = ObscuraClient(ObscuraConfig(API, "durability"), driver, MemoryStorage())
         val alice = registerAndConnect("durable_sender")
@@ -320,7 +317,7 @@ class ServerContractTests {
 
     @Test
     fun `failed local friend request persistence recovers on real server redelivery`(): Unit = runBlocking {
-        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val driver = fileDriver()
         ObscuraDatabase.Schema.create(driver)
         val bob = ObscuraClient(ObscuraConfig(API, "friend durability"), driver, MemoryStorage())
         val alice = registerAndConnect("durable_friend_sender")

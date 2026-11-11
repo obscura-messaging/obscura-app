@@ -9,7 +9,7 @@ date with `main`.
 | --- | --- |
 | All work | [`just`](https://github.com/casey/just), Git, Node 22.13+ ([`.nvmrc`](.nvmrc)) |
 | Android | JDK 21, Android SDK 37, NDK `27.1.12297006` |
-| iOS | macOS, Xcode ([`.xcode-version`](.xcode-version)), `rustup`, `protoc`, CocoaPods 1.17.0 |
+| iOS | macOS, Xcode ([`.xcode-version`](.xcode-version)), `protoc`, CocoaPods 1.17.0 |
 
 On macOS: `brew install just protobuf`, then
 `sudo gem install cocoapods -v 1.17.0 -N`.
@@ -37,10 +37,17 @@ or `just ios-build arm64`.
   push, download the Firebase config (containing `dev.barrelmaker.obscura.dev`
   and `dev.barrelmaker.obscura`) into that path. It is gitignored. Never commit
   it, or any Firebase Admin credential.
-- **iOS.** The first build fetches the libsignal commit pinned in `swift/LIBSIGNAL_REF`.
-  It then builds the simulator FFI, the Swift package and the pods, and
-  caches them (gitignored). Simulator builds do not exercise APNs, background
-  delivery or release signing.
+- **iOS.** The first build resolves the Swift package, including libsignal and
+  its prebuilt Rust core (an XCFramework from Signal, pinned with its checksum
+  in `swift/Package.swift`), then builds the pods. No Rust toolchain is needed.
+  The XCFramework has iOS slices only, so the kit's tests run on an iOS
+  simulator. Simulator builds do not exercise APNs, background delivery or
+  release signing.
+- **Swift protobuf bindings** are generated, not committed: `just swift-proto`
+  builds `protoc-gen-swift` at the SwiftProtobuf version both `Package.resolved`
+  files pin and writes `swift/Sources/ObscuraKit/Proto`. Every `swift-*` and
+  `ios-*` recipe runs it first, so a fresh clone opened straight in Xcode
+  does not compile until one of them has run.
 - **Environments (`dev` vs `prod`).** Builds default to `dev`
   (`dev.barrelmaker.obscura.dev`, **Obscura Dev**, pointing at
   `https://devscura.barrelmaker.dev`); passing `env=prod` selects production
@@ -62,7 +69,6 @@ falls back to its private container.
 
 ```bash
 just ios-build   # once, to prepare dependencies
-./swift/scripts/bootstrap-libsignal.sh ios-device
 cd ios && mkdir -p build
 printf '<plist version="1.0"><dict/></plist>' > build/Personal.entitlements
 xcodebuild -workspace Obscura.xcworkspace -scheme Obscura \

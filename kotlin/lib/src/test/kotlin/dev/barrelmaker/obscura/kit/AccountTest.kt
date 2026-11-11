@@ -26,7 +26,8 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.signal.libsignal.protocol.ecc.Curve
+import org.signal.libsignal.protocol.ecc.ECKeyPair
+import org.signal.libsignal.protocol.ecc.ECPublicKey
 import java.util.Collections
 import java.util.UUID
 
@@ -153,7 +154,10 @@ class AccountTest {
         assertEquals("password", body.getString("password"))
         assertArrayEquals(c.signalStore.identityKeyPair.publicKey.serialize(), body.getString("identityKey").fromBase64())
         assertEquals(100, body.getJSONArray("oneTimePreKeys").length())
-        assertEquals(1, body.getJSONObject("signedPreKey").getInt("keyId"))
+        assertEquals(100, body.getJSONArray("kyberPreKeys").length())
+        val state = c.signalStore.preKeyState()!!
+        assertEquals(state.active_signed_id, body.getJSONObject("signedPreKey").getLong("keyId"))
+        assertEquals(state.active_last_resort_id, body.getJSONObject("lastResortKyberPreKey").getLong("keyId"))
         assertTrue(c.isPrimary())
         assertEquals(listOf(SELF_DEVICE_ID), c.devices.devicesOf(SELF_USER_ID))
         assertEquals(SELF_DEVICE_ID, storage.data!!["deviceId"])
@@ -207,7 +211,7 @@ class AccountTest {
         val code = LinkCrypto.decodeCode(request.code)
         assertEquals("ls-1", code.sessionId)
         assertEquals("Tablet", code.deviceName)
-        assertEquals(33, Curve.decodePoint(code.ephemeralPublicKey.toByteArray(), 0).serialize().size)
+        assertEquals(33, ECPublicKey(code.ephemeralPublicKey.toByteArray()).serialize().size)
         primary.approveLink(request.code)
         tablet.completeLink(request)
 
@@ -262,7 +266,7 @@ class AccountTest {
     @Test fun `a bundle that decrypts but has invalid fields is a protocol violation and stores nothing`() = runBlocking {
         val tablet = newClient(url, MemoryStorage())
         val request = tablet.beginLink("self", "password", "Tablet")
-        val epk = Curve.decodePoint(LinkCrypto.decodeCode(request.code).ephemeralPublicKey.toByteArray(), 0)
+        val epk = ECPublicKey(LinkCrypto.decodeCode(request.code).ephemeralPublicKey.toByteArray())
         val validIdentity = com.google.protobuf.ByteString.copyFrom(org.signal.libsignal.protocol.IdentityKeyPair.generate().serialize())
 
         val invalidPayloads = listOf(
@@ -325,7 +329,7 @@ class AccountTest {
     @Test fun `an envelope that does not decrypt fails the link and stores nothing`() = runBlocking {
         val tablet = newClient(url, MemoryStorage())
         val request = tablet.beginLink("self", "password", "Tablet")
-        account.linkBody = LinkCrypto.seal(ByteArray(8), Curve.generateKeyPair().publicKey).toByteArray()
+        account.linkBody = LinkCrypto.seal(ByteArray(8), ECKeyPair.generate().publicKey).toByteArray()
 
         val error = runCatching { tablet.completeLink(request) }.exceptionOrNull()
 
@@ -367,7 +371,7 @@ class AccountTest {
     @Test fun `a malformed link code is an invalid argument`() = runBlocking {
         val primary = sessionClient(url, storedSession())
         assertTrue(primary.auth.restore())
-        val key = com.google.protobuf.ByteString.copyFrom(Curve.generateKeyPair().publicKey.serialize())
+        val key = com.google.protobuf.ByteString.copyFrom(ECKeyPair.generate().publicKey.serialize())
         val valid = LinkCrypto.encodeCode(obscura.client.v1.Client.LinkCode.newBuilder().setSessionId("s").setEphemeralPublicKey(key).build())
         assertEquals("", ObscuraClient.linkCodeDeviceName(valid))
         val notLinkCode = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(byteArrayOf(-1, -1, -1))
@@ -436,7 +440,7 @@ class AccountTest {
         unprovisioned.auth.publishAuthenticated()
         assertEquals(AuthState.LOGGED_OUT, unprovisioned.authState.value)
         account.provisionUserId = "019f025a-0000-7de6-84b6-000000000999"
-        val keys = dev.barrelmaker.obscura.kit.managers.SignalKeyUtils.generateProvisioningKeys(
+        val keys = dev.barrelmaker.obscura.kit.managers.PreKeys.generateProvisioningKeys(
             org.signal.libsignal.protocol.IdentityKeyPair.generate(),
         )
         val err = runCatching {

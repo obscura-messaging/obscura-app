@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import LibSignalClient
 import XCTest
 @testable import ObscuraKit
 
@@ -46,9 +47,16 @@ func makeClient(apiURL: String = "https://obscura.invalid", database: DatabaseQu
                       sessionStorage: storage, logger: SilentLogger())
 }
 
+func testNowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+
+/// A new device's keys, generated now.
+func provisioningKeys(identity: IdentityKeyPair = .generate()) throws -> ProvisioningKeys {
+    try PreKeys.generateProvisioningKeys(identity: identity, nowMs: testNowMs())
+}
+
 func signalStoreWithIdentity() throws -> PersistentSignalStore {
     let store = PersistentSignalStore(db: try ObscuraDatabase.inMemory(), logger: SilentLogger())
-    try store.install(SignalKeys.generate())
+    try store.install(provisioningKeys())
     return store
 }
 
@@ -91,5 +99,47 @@ func assertThrows(_ expected: ObscuraError, file: StaticString = #filePath, line
         XCTFail("expected \(expected)", file: file, line: line)
     } catch {
         XCTAssertEqual(error as? ObscuraError, expected, file: file, line: line)
+    }
+}
+
+/// Inspection the kit itself never needs.
+extension PersistentSignalStore {
+    func findPreKey(_ id: UInt32) throws -> PreKeyRecord? {
+        try db.read { try Data.fetchOne($0, sql: "SELECT record FROM signal_prekeys WHERE key_id = ?", arguments: [id]) }
+            .map { try PreKeyRecord(bytes: $0) }
+    }
+
+    func findSignedPreKey(_ id: UInt32) throws -> SignedPreKeyRecord? {
+        try db.read { try Data.fetchOne($0, sql: "SELECT record FROM signal_signed_prekeys WHERE key_id = ?", arguments: [id]) }
+            .map { try SignedPreKeyRecord(bytes: $0) }
+    }
+
+    func findKyberPreKey(_ id: UInt32) throws -> KyberPreKeyRecord? {
+        try db.read { try Data.fetchOne($0, sql: "SELECT record FROM signal_kyber_prekeys WHERE key_id = ?", arguments: [id]) }
+            .map { try KyberPreKeyRecord(bytes: $0) }
+    }
+
+    func oneTimePreKeyCount() throws -> Int {
+        try db.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM signal_prekeys") ?? 0 }
+    }
+
+    func kyberPreKeyCount(lastResort: Bool) throws -> Int {
+        try db.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM signal_kyber_prekeys WHERE last_resort = ?", arguments: [lastResort]) ?? 0 }
+    }
+
+    func lastResortKyberPreKeyIds() throws -> [UInt32] {
+        try db.read { try UInt32.fetchAll($0, sql: "SELECT key_id FROM signal_kyber_prekeys WHERE last_resort = 1 ORDER BY key_id") }
+    }
+
+    func signedPreKeyCount() throws -> Int {
+        try db.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM signal_signed_prekeys") ?? 0 }
+    }
+
+    func savePreKeyState(_ state: PreKeyState) throws {
+        try db.write { try PersistentSignalStore.savePreKeyState(state, in: $0) }
+    }
+
+    func cleanPreKeys(nowMs: Int64) throws {
+        try db.write { try PersistentSignalStore.cleanPreKeys(nowMs: nowMs, in: $0) }
     }
 }

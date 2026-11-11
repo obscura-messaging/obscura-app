@@ -3,7 +3,6 @@ package dev.barrelmaker.obscura.kit
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import dev.barrelmaker.obscura.kit.crypto.SignalStore
 import dev.barrelmaker.obscura.kit.managers.ProvisioningKeys
-import dev.barrelmaker.obscura.kit.managers.SignalKeyUtils.toApiJson
 import org.json.JSONObject
 import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
 import dev.barrelmaker.obscura.kit.persistence.SessionStorage
@@ -88,6 +87,10 @@ internal fun SignalStore.generateIdentity(): Pair<IdentityKeyPair, Int> =
     (IdentityKeyPair.generate() to KeyHelper.generateRegistrationId(false)).also { installIdentity(it.first, it.second) }
 
 /** The prekey bundle the server would serve for a device provisioned with these keys. */
-internal fun ProvisioningKeys.bundle(deviceId: String): JSONObject = toDeviceKeys().toJson()
-    .put("deviceId", deviceId)
-    .put("oneTimePreKey", oneTimePreKeys.first().toApiJson().toJson())
+internal fun ProvisioningKeys.bundle(deviceId: String): JSONObject {
+    val keys = toDeviceKeys()
+    return keys.toJson()
+        .put("deviceId", deviceId)
+        .put("oneTimePreKey", keys.oneTimePreKeys.first().toJson())
+        .put("kyberPreKey", keys.kyberPreKeys.first().toJson())
+}

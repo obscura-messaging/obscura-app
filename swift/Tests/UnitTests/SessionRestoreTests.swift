@@ -30,7 +30,7 @@ final class SessionRestoreTests: XCTestCase {
     private func client(_ storage: MemorySessionStorage, identity: Bool = true) throws -> ObscuraClient {
         let db = try ObscuraDatabase.inMemory()
         if identity {
-            try PersistentSignalStore(db: db, logger: SilentLogger()).install(SignalKeys.generate())
+            try PersistentSignalStore(db: db, logger: SilentLogger()).install(provisioningKeys())
             try db.write { try DeviceStore.setLocalDevice(Self.deviceId, primaryDeviceId: Self.deviceId, in: $0) }
         }
         return try makeClient(apiURL: FakeObscuraServer.baseURL, database: db, storage: storage)

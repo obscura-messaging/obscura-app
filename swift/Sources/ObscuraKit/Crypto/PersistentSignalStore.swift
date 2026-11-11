@@ -9,11 +9,15 @@ final class PersistentSignalStore: IdentityKeyStore, PreKeyStore, SignedPreKeySt
         let database: Database
     }
 
-    static let signedPreKeyId: UInt32 = 1
-    /// The server's queued-message TTL.
-    static let signedPreKeyGraceMs: Int64 = 30 * 24 * 60 * 60 * 1000
+    /// Signed and last-resort keys other than the active one are kept this long: the server's
+    /// queued-message TTL.
+    static let archiveAgeMs: Int64 = 30 * 24 * 60 * 60 * 1000
+    /// Stale one-time keys are kept this long, as Signal-Android does.
+    static let staleOneTimeAgeMs: Int64 = 90 * 24 * 60 * 60 * 1000
+    /// At least this many one-time keys of each kind are kept however old they are.
+    static let minOneTimeKept = 200
 
-    private let db: DatabaseQueue
+    let db: DatabaseQueue
     private let logger: ObscuraLogger
 
     init(db: DatabaseQueue, logger: ObscuraLogger) {
@@ -25,60 +29,114 @@ final class PersistentSignalStore: IdentityKeyStore, PreKeyStore, SignedPreKeySt
         try db.read { db in try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM signal_local_identity)") ?? false }
     }
 
-    /// Replaces every Signal record with a new identity and its keys.
-    func install(_ keys: SignalKeys) throws {
+    /// Replaces every Signal record with a new device's identity and keys.
+    func install(_ keys: ProvisioningKeys) throws {
         try db.write { db in try Self.install(keys, in: db) }
     }
 
-    static func install(_ keys: SignalKeys, in db: Database) throws {
-        for table in ["signal_local_identity", "signal_identities", "signal_prekeys", "signal_signed_prekeys", "signal_sessions"] {
+    static func install(_ keys: ProvisioningKeys, in db: Database) throws {
+        for table in ["signal_local_identity", "signal_identities", "signal_prekeys", "signal_signed_prekeys",
+                      "signal_kyber_prekeys", "signal_last_resort_key_uses", "signal_prekey_state", "signal_sessions"] {
             try db.execute(sql: "DELETE FROM \(table)")
         }
         try db.execute(sql: "INSERT INTO signal_local_identity (id, key_pair, registration_id) VALUES (1, ?, ?)",
                        arguments: [Data(keys.identity.serialize()), keys.registrationId])
-        try db.execute(sql: "INSERT INTO signal_signed_prekeys (key_id, record) VALUES (?, ?)",
-                       arguments: [signedPreKeyId, Data(keys.signedPreKey.serialize())])
-        for preKey in keys.preKeys {
-            try db.execute(sql: "INSERT INTO signal_prekeys (key_id, record) VALUES (?, ?)",
-                           arguments: [preKey.id, Data(preKey.serialize())])
-        }
+        try storeSignedPreKey(keys.signedPreKey, in: db)
+        try storeKyberPreKey(keys.lastResortKyberPreKey, lastResort: true, in: db)
+        for preKey in keys.oneTimePreKeys { try storePreKey(preKey, in: db) }
+        for preKey in keys.kyberPreKeys { try storeKyberPreKey(preKey, lastResort: false, in: db) }
+        try savePreKeyState(keys.state, in: db)
     }
 
-    /// Call once the server has accepted signed prekey `publishedId`. Every older key stops being
-    /// advertised now; one superseded longer than the server keeps queued messages can no longer be
-    /// named by a deliverable message, so it is deleted.
-    func retireSignedPreKeys(publishedId: Int, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) throws {
-        try db.write { db in
-            try db.execute(sql: "UPDATE signal_signed_prekeys SET superseded_at = ? WHERE key_id < ? AND superseded_at IS NULL",
-                           arguments: [nowMs, publishedId])
-            try db.execute(sql: "DELETE FROM signal_signed_prekeys WHERE superseded_at <= ?",
-                           arguments: [nowMs - Self.signedPreKeyGraceMs])
+    /// The local device's address, which libsignal pairs with the peer's in every session operation.
+    static func localAddress(in db: Database) throws -> ProtocolAddress {
+        guard let deviceId = try String.fetchOne(db, sql: "SELECT device_id FROM device_identity WHERE id = 1") else {
+            throw SignalError.invalidState("no local device")
         }
+        return try Messenger.address(deviceId)
     }
 
-    func preKeyCount() throws -> Int {
-        try db.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM signal_prekeys") ?? 0 }
+    func localAddress(context: StoreContext = NullContext()) throws -> ProtocolAddress {
+        try read(context) { db in try Self.localAddress(in: db) }
     }
 
-    /// Refills with the current identity and a fresh signed prekey; earlier signed keys remain stored.
-    func addPreKeys(_ count: UInt32) throws -> PreKeysUpload {
-        let identity = try identityKeyPair(context: NullContext())
-        return try db.write { db in
-            let highestSigned = try Int64.fetchOne(db, sql: "SELECT MAX(key_id) FROM signal_signed_prekeys") ?? 0
-            guard let nextSignedId = Int32(exactly: highestSigned + 1) else {
-                throw SignalError.invalidState("signed prekey IDs exhausted")
-            }
-            let signedPreKey = try SignalKeys.generateSignedPreKey(identity: identity, id: UInt32(nextSignedId))
-            try db.execute(sql: "INSERT INTO signal_signed_prekeys (key_id, record) VALUES (?, ?)",
-                           arguments: [signedPreKey.id, Data(signedPreKey.serialize())])
-            let highest = try Int64.fetchOne(db, sql: "SELECT MAX(key_id) FROM signal_prekeys") ?? 0
-            let records = try (1...count).map { try PreKeyRecord(id: UInt32(highest) + $0, privateKey: PrivateKey.generate()) }
-            for record in records {
-                try db.execute(sql: "INSERT INTO signal_prekeys (key_id, record) VALUES (?, ?)",
-                               arguments: [record.id, Data(record.serialize())])
-            }
-            return SignalKeys.upload(signedPreKey: signedPreKey, preKeys: records)
+    // MARK: - Pre-key bookkeeping
+
+    func preKeyState() throws -> PreKeyState? {
+        try db.read { db in try Self.preKeyState(in: db) }
+    }
+
+    static func preKeyState(in db: Database) throws -> PreKeyState? {
+        try Row.fetchOne(db, sql: "SELECT * FROM signal_prekey_state WHERE id = 1").map(PreKeyState.init(row:))
+    }
+
+    static func savePreKeyState(_ state: PreKeyState, in db: Database) throws {
+        try db.execute(sql: """
+            INSERT OR REPLACE INTO signal_prekey_state (
+                id, next_signed_id, next_one_time_id, next_kyber_id, active_signed_id, active_last_resort_id, rotated_at, synced_at
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+            """, arguments: [
+                state.nextSignedId, state.nextOneTimeId, state.nextKyberId, state.activeSignedId, state.activeLastResortId,
+                state.rotatedAt, state.syncedAt,
+            ])
+    }
+
+    static func storePreKey(_ record: PreKeyRecord, in db: Database) throws {
+        try db.execute(sql: "INSERT OR REPLACE INTO signal_prekeys (key_id, record) VALUES (?, ?)",
+                       arguments: [record.id, Data(record.serialize())])
+    }
+
+    static func storeSignedPreKey(_ record: SignedPreKeyRecord, in db: Database) throws {
+        try db.execute(sql: "INSERT OR REPLACE INTO signal_signed_prekeys (key_id, record) VALUES (?, ?)",
+                       arguments: [record.id, Data(record.serialize())])
+    }
+
+    static func storeKyberPreKey(_ record: KyberPreKeyRecord, lastResort: Bool, in db: Database) throws {
+        try db.execute(sql: "INSERT OR REPLACE INTO signal_kyber_prekeys (key_id, record, last_resort) VALUES (?, ?, ?)",
+                       arguments: [record.id, Data(record.serialize()), lastResort])
+    }
+
+    /// The one-time keys of a kind stored so far, about to be replaced on the server by a new batch.
+    static func markOneTimePreKeysStale(kyber: Bool, nowMs: Int64, in db: Database) throws {
+        try db.execute(sql: kyber
+            ? "UPDATE signal_kyber_prekeys SET stale_at = ? WHERE stale_at = 0 AND last_resort = 0"
+            : "UPDATE signal_prekeys SET stale_at = ? WHERE stale_at = 0", arguments: [nowMs])
+    }
+
+    /// Signal-Android's cleanup. Signed and last-resort keys other than the active one are deleted once
+    /// older than `archiveAgeMs`, except the youngest of those, which a message in flight may still
+    /// name. One-time keys stale for longer than `staleOneTimeAgeMs` are deleted, keeping at least
+    /// `minOneTimeKept` of each kind.
+    static func cleanPreKeys(nowMs: Int64, in db: Database) throws {
+        guard let state = try preKeyState(in: db) else { return }
+        let signed = try Data.fetchAll(db, sql: "SELECT record FROM signal_signed_prekeys").map { try SignedPreKeyRecord(bytes: $0) }
+        for id in archived(signed.map { ($0.id, $0.timestamp) }, active: state.activeSignedId, nowMs: nowMs) {
+            try db.execute(sql: "DELETE FROM signal_signed_prekeys WHERE key_id = ?", arguments: [id])
         }
+        let lastResort = try Data.fetchAll(db, sql: "SELECT record FROM signal_kyber_prekeys WHERE last_resort = 1")
+            .map { try KyberPreKeyRecord(bytes: $0) }
+        for id in archived(lastResort.map { ($0.id, $0.timestamp) }, active: state.activeLastResortId, nowMs: nowMs) {
+            try db.execute(sql: "DELETE FROM signal_kyber_prekeys WHERE key_id = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM signal_last_resort_key_uses WHERE kyber_id = ?", arguments: [id])
+        }
+        let cutoff = nowMs - staleOneTimeAgeMs
+        // Stale before the cutoff, except the most recent `minOneTimeKept` (fresh first, then latest stale).
+        try db.execute(sql: """
+            DELETE FROM signal_prekeys WHERE stale_at > 0 AND stale_at < ? AND key_id NOT IN (
+                SELECT key_id FROM signal_prekeys ORDER BY stale_at = 0 DESC, stale_at DESC, key_id DESC LIMIT ?)
+            """, arguments: [cutoff, minOneTimeKept])
+        try db.execute(sql: """
+            DELETE FROM signal_kyber_prekeys WHERE last_resort = 0 AND stale_at > 0 AND stale_at < ? AND key_id NOT IN (
+                SELECT key_id FROM signal_kyber_prekeys WHERE last_resort = 0
+                ORDER BY stale_at = 0 DESC, stale_at DESC, key_id DESC LIMIT ?)
+            """, arguments: [cutoff, minOneTimeKept])
+    }
+
+    private static func archived(_ keys: [(id: UInt32, createdAt: UInt64)], active: UInt32, nowMs: Int64) -> [UInt32] {
+        keys.filter { $0.id != active && nowMs - Int64($0.createdAt) > archiveAgeMs }
+            .sorted { $0.createdAt > $1.createdAt }
+            .dropFirst()
+            .map(\.id)
     }
 
     private static func address(_ address: ProtocolAddress) -> String {
@@ -137,8 +195,8 @@ final class PersistentSignalStore: IdentityKeyStore, PreKeyStore, SignedPreKeySt
 
     /// Signal's policy for an unverified contact: the first key seen for an account is trusted, and a
     /// different one is accepted as an account reset. Then every session with the account's devices is
-    /// dropped and the change is logged. Returns whether the key changed.
-    func saveIdentity(_ identity: IdentityKey, for address: ProtocolAddress, context: StoreContext) throws -> Bool {
+    /// dropped and the change is logged.
+    func saveIdentity(_ identity: IdentityKey, for address: ProtocolAddress, context: StoreContext) throws -> IdentityChange {
         let new = Data(identity.serialize())
         let (userId, changed) = try write(context) { db -> (String, Bool) in
             let userId = try self.userId(of: address, in: db)
@@ -153,7 +211,7 @@ final class PersistentSignalStore: IdentityKeyStore, PreKeyStore, SignedPreKeySt
             return (userId, true)
         }
         if changed { logger.identityChanged(userId: userId) }
-        return changed
+        return changed ? .replacedExisting : .newOrUnchanged
     }
 
     func isTrustedIdentity(_ identity: IdentityKey, for address: ProtocolAddress, direction: Direction,
@@ -213,72 +271,36 @@ final class PersistentSignalStore: IdentityKeyStore, PreKeyStore, SignedPreKeySt
                   [Self.address(address), Data(record.serialize())], context)
     }
 
-    // MARK: - KyberPreKeyStore (the server does not distribute Kyber prekeys)
+    // MARK: - KyberPreKeyStore
 
     func loadKyberPreKey(id: UInt32, context: StoreContext) throws -> KyberPreKeyRecord {
-        throw SignalError.invalidKeyIdentifier("no kyber prekey \(id)")
+        guard let data = try blob("SELECT record FROM signal_kyber_prekeys WHERE key_id = ?", id, context) else {
+            throw SignalError.invalidKeyIdentifier("no kyber prekey \(id)")
+        }
+        return try KyberPreKeyRecord(bytes: data)
     }
 
+    /// Stores a one-time Kyber pre-key; last-resort keys are stored by `install` and pre-key syncs.
     func storeKyberPreKey(_ record: KyberPreKeyRecord, id: UInt32, context: StoreContext) throws {
-        throw SignalError.invalidState("kyber prekeys are not supported")
+        try write("INSERT OR REPLACE INTO signal_kyber_prekeys (key_id, record, last_resort) VALUES (?, ?, 0)",
+                  [id, Data(record.serialize())], context)
     }
 
-    func markKyberPreKeyUsed(id: UInt32, context: StoreContext) throws {
-        throw SignalError.invalidState("kyber prekeys are not supported")
-    }
-}
-
-/// A new device's keys: the account identity (new for a primary, received for a linked device), its own
-/// registration id, signed prekey and one-time prekeys.
-struct SignalKeys {
-    static let initialPreKeyCount: UInt32 = 100
-
-    let identity: IdentityKeyPair
-    let registrationId: UInt32
-    let signedPreKey: SignedPreKeyRecord
-    let preKeys: [PreKeyRecord]
-
-    static func generate(identity: IdentityKeyPair = .generate()) throws -> SignalKeys {
-        SignalKeys(
-            identity: identity,
-            registrationId: UInt32.random(in: 1...16380),
-            signedPreKey: try generateSignedPreKey(identity: identity, id: PersistentSignalStore.signedPreKeyId),
-            preKeys: try (1...initialPreKeyCount).map { try PreKeyRecord(id: $0, privateKey: PrivateKey.generate()) }
-        )
-    }
-
-    static func generateSignedPreKey(identity: IdentityKeyPair, id: UInt32) throws -> SignedPreKeyRecord {
-        let privateKey = PrivateKey.generate()
-        let signature = identity.privateKey.generateSignature(message: privateKey.publicKey.serialize())
-        return try SignedPreKeyRecord(id: id, timestamp: UInt64(Date().timeIntervalSince1970 * 1000),
-                                      privateKey: privateKey, signature: signature)
-    }
-
-    func accountRequest(username: String, password: String, name: String) -> AccountProvisionRequest {
-        let keys = Self.upload(signedPreKey: signedPreKey, preKeys: preKeys)
-        return AccountProvisionRequest(
-            username: username, password: password, name: name,
-            identityKey: Data(identity.publicKey.serialize()).base64EncodedString(),
-            registrationId: Int(registrationId), signedPreKey: keys.signedPreKey, oneTimePreKeys: keys.oneTimePreKeys)
-    }
-
-    func deviceRequest(name: String, linkSessionId: String) -> CreateDeviceRequest {
-        let keys = Self.upload(signedPreKey: signedPreKey, preKeys: preKeys)
-        return CreateDeviceRequest(
-            linkSessionId: linkSessionId, name: name,
-            identityKey: Data(identity.publicKey.serialize()).base64EncodedString(),
-            registrationId: Int(registrationId), signedPreKey: keys.signedPreKey, oneTimePreKeys: keys.oneTimePreKeys)
-    }
-
-    static func upload(signedPreKey: SignedPreKeyRecord, preKeys: [PreKeyRecord]) -> PreKeysUpload {
-        PreKeysUpload(
-            signedPreKey: SignedPreKeyUpload(
-                keyId: Int(signedPreKey.id),
-                publicKey: Data(signedPreKey.publicKey.serialize()).base64EncodedString(),
-                signature: Data(signedPreKey.signature).base64EncodedString()),
-            oneTimePreKeys: preKeys.map {
-                PreKeyUpload(keyId: Int($0.id), publicKey: Data($0.publicKey.serialize()).base64EncodedString())
+    /// A one-time key is deleted. A last-resort key stays, so each session started with it is recorded
+    /// instead, and one started again with the same keys and base key is a replay.
+    func markKyberPreKeyUsed(id: UInt32, signedPreKeyId: UInt32, baseKey: PublicKey, context: StoreContext) throws {
+        try write(context) { db in
+            guard try Bool.fetchOne(db, sql: "SELECT last_resort FROM signal_kyber_prekeys WHERE key_id = ?", arguments: [id]) == true else {
+                try db.execute(sql: "DELETE FROM signal_kyber_prekeys WHERE key_id = ? AND last_resort = 0", arguments: [id])
+                return
             }
-        )
+            let base = Data(baseKey.serialize())
+            let seen = try Bool.fetchOne(db, sql: """
+                SELECT EXISTS(SELECT 1 FROM signal_last_resort_key_uses WHERE kyber_id = ? AND signed_id = ? AND base_key = ?)
+                """, arguments: [id, signedPreKeyId, base]) ?? false
+            if seen { throw SignalError.invalidMessage("base key reused with last-resort Kyber prekey \(id)") }
+            try db.execute(sql: "INSERT INTO signal_last_resort_key_uses (kyber_id, signed_id, base_key) VALUES (?, ?, ?)",
+                           arguments: [id, signedPreKeyId, base])
+        }
     }
 }

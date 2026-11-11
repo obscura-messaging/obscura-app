@@ -15,6 +15,7 @@ import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
 import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageResponse
 import java.net.InetSocketAddress
 import java.util.UUID
+import dev.barrelmaker.obscura.kit.SELF_DEVICE_ID
 
 class SubmissionResultsTest {
     private fun submission() = SendMessageRequest.Submission.newBuilder()
@@ -118,16 +119,18 @@ class SubmissionResultsTest {
 
         val storeDb = newInMemoryDatabase()
         val store = SignalStore(storeDb)
-        val keys = dev.barrelmaker.obscura.kit.managers.SignalKeyUtils.generateProvisioningKeys(
+        val keys = dev.barrelmaker.obscura.kit.managers.PreKeys.generateProvisioningKeys(
             org.signal.libsignal.protocol.IdentityKeyPair.generate(),
         )
-        dev.barrelmaker.obscura.kit.managers.SignalKeyUtils.install(store, keys)
-        val noOtpBundleJson = keys.toDeviceKeys().toJson()
-            .put("deviceId", userId)
-            .put("oneTimePreKey", org.json.JSONObject.NULL)
-        assertThrows(IllegalArgumentException::class.java) {
-            parsePeerBundle(noOtpBundleJson)
-        }
+        dev.barrelmaker.obscura.kit.managers.PreKeys.install(store, keys)
+        // A device out of one-time keys is still reachable through its signed and Kyber keys.
+        val noOtp = parsePeerBundle(keys.bundle(userId).put("oneTimePreKey", org.json.JSONObject.NULL))
+        assertNull(noOtp.bundle.preKey)
+        // A bundle without a Kyber key, or with one that doesn't decode, is a typed protocol violation.
+        for (broken in listOf(
+            keys.bundle(userId).apply { remove("kyberPreKey") },
+            keys.bundle(userId).apply { getJSONObject("kyberPreKey").put("publicKey", "AAAA") },
+        )) assertThrows(dev.barrelmaker.obscura.kit.ObscuraError.ProtocolViolation::class.java) { parsePeerBundle(broken) }
         val validBundleJson = keys.bundle(userId)
         val parsed = parsePeerBundle(validBundleJson)
         assertEquals(userId, parsed.deviceId)
@@ -139,7 +142,7 @@ class SubmissionResultsTest {
             parsePeerBundles(org.json.JSONArray().put(validBundleJson).put(validBundleJson))
         }
 
-        val messenger = Messenger(store, APIClient("http://127.0.0.1:1") { "t" })
+        val messenger = Messenger(store, APIClient("http://127.0.0.1:1") { "t" }) { SELF_DEVICE_ID }
         assertThrows(IllegalStateException::class.java) {
             runBlocking {
                 messenger.prepareSubmission(userId, obscura.client.v1.Client.ClientMessage.getDefaultInstance())
@@ -165,7 +168,7 @@ class SubmissionResultsTest {
         }
         server.start()
         val messenger = Messenger(SignalStore(newInMemoryDatabase()),
-            APIClient("http://127.0.0.1:${server.address.port}") { "unit-test" })
+            APIClient("http://127.0.0.1:${server.address.port}") { "unit-test" }) { SELF_DEVICE_ID }
         try {
             for ((code, expected) in listOf(
                 400 to SubmissionStatus.REJECTED, 413 to SubmissionStatus.REJECTED,
@@ -195,7 +198,7 @@ class SubmissionResultsTest {
         server.start()
         try {
             val messenger = Messenger(SignalStore(newInMemoryDatabase()),
-                APIClient("http://127.0.0.1:${server.address.port}") { "unit-test" })
+                APIClient("http://127.0.0.1:${server.address.port}") { "unit-test" }) { SELF_DEVICE_ID }
             assertEquals(SubmissionStatus.REJECTED, messenger.submit(userId, listOf(a)).submitted.single().result.status)
             val b = submission()
             response = byteArrayOf()

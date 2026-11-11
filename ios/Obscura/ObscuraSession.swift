@@ -7,7 +7,7 @@ final class BridgeLogger: ObscuraLogger {
     func decryptFailed(sourceUserId: String, reason: String) { log("decrypt failed from \(sourceUserId): \(reason)") }
     func ackFailed(envelopeId: String, reason: String) { log("ack failed \(envelopeId): \(reason)") }
     func tokenRefreshFailed(attempt: Int, reason: String) { log("token refresh failed (\(attempt)): \(reason)") }
-    func preKeyReplenishFailed(reason: String) { log("prekey replenish failed: \(reason)") }
+    func preKeySyncFailed(reason: String) { log("prekey sync failed: \(reason)") }
     func identityChanged(userId: String) { log("identity changed: \(userId)") }
     func sessionEstablishFailed(userId: String, reason: String) { log("session establish failed \(userId): \(reason)") }
     func databaseError(store: String, operation: String, reason: String) { log("db error \(store).\(operation): \(reason)") }

@@ -49,8 +49,7 @@ Development certificates cannot upload to TestFlight.
 - Never commit a private key or a profile.
 
 With the identity and profile installed, `just ios-archive` builds a signed
-device archive. It prepares the libsignal **device** FFI, whereas
-`just ios-build` prepares the simulator FFI.
+device archive.
 
 ## GitHub `ios-dev` and `ios-prod` environments
 

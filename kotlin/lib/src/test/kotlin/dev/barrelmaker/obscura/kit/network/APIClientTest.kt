@@ -7,6 +7,7 @@ import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -20,14 +21,25 @@ class APIClientTest {
         .apply { if (retryAfter != null) setHeader("Retry-After", retryAfter) }.build()
 
     @Test
-    fun `retryAfterMs clamps missing, non-numeric, zero, and large values to 1 to 10 seconds`() {
+    fun `retryAfterMs waits at least 1 second and gives up past 10`() {
         assertEquals(1_000L, APIClient.retryAfterMs(null))
         assertEquals(1_000L, APIClient.retryAfterMs("0"))
         assertEquals(1_000L, APIClient.retryAfterMs("-5"))
         assertEquals(1_000L, APIClient.retryAfterMs("soon"))
         assertEquals(3_000L, APIClient.retryAfterMs(" 3 "))
         assertEquals(10_000L, APIClient.retryAfterMs("10"))
-        assertEquals(10_000L, APIClient.retryAfterMs("120"))
+        assertNull(APIClient.retryAfterMs("11"))
+        assertNull(APIClient.retryAfterMs("600"))
+    }
+
+    @Test
+    fun `a rate limit asking for a long wait is thrown without retrying`() = runBlocking {
+        server.enqueue(status(429, retryAfter = "600", body = "Too many requests"))
+
+        val error = runCatching { api.fetchGatewayTicket() }.exceptionOrNull() as ObscuraError.Http
+
+        assertEquals(429, error.status)
+        assertEquals(1, server.requestCount)
     }
 
     @Test

@@ -10,7 +10,6 @@ struct Envelope: Sendable {
 
 enum GatewayEvent: Sendable {
     case envelope(Envelope)
-    case preKeyStatus(count: Int32, threshold: Int32)
 }
 
 /// One gateway WebSocket. `events` finishes when the socket closes for any reason; a reconnect opens
@@ -140,8 +139,6 @@ final class GatewaySocket: NSObject, URLSessionWebSocketDelegate, Sendable {
                 continuation.yield(.envelope(Envelope(id: envelope.id, senderUserId: envelope.senderUserID,
                                                       senderDeviceId: envelope.senderDeviceID, message: envelope.message)))
             }
-        case .preKeyStatus(let status)?:
-            continuation.yield(.preKeyStatus(count: status.oneTimePreKeyCount, threshold: status.minThreshold))
         default:
             break
         }

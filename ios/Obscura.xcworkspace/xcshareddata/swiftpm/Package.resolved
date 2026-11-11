@@ -1,5 +1,5 @@
 {
-  "originHash" : "471cf851f8d451e914c919a7f2fd4d8044beb2e0acfdcb531472b7aff57372c9",
+  "originHash" : "e1e0a831b0c4605ce1cd57727f7ffc0b6e844301a394fc17eb0e5ecf8fda9637",
   "pins" : [
     {
       "identity" : "grdb.swift",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "80cae244b20530bc3a4aae93ed2f211167ac08c0",
         "version" : "2.4.2-1"
+      }
+    },
+    {
+      "identity" : "libsignal",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/signalapp/libsignal",
+      "state" : {
+        "revision" : "850942581c06fa65c0323fd52029afa02fa1a1ba",
+        "version" : "0.106.2"
       }
     },
     {

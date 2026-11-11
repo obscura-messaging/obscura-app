@@ -69,5 +69,4 @@ kotlin/build/
 kotlin/lib/build/
 swift/.build/
 swift/.swiftpm/
-swift/vendored/
 protocol/**/__pycache__/

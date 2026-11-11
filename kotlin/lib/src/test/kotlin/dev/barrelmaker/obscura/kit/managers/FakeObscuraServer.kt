@@ -16,7 +16,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.signal.libsignal.protocol.IdentityKeyPair
 import org.signal.libsignal.protocol.message.PreKeySignalMessage
+import org.signal.libsignal.protocol.state.KyberPreKeyRecord
 import org.signal.libsignal.protocol.state.PreKeyRecord
+import org.signal.libsignal.protocol.state.SignedPreKeyRecord
 import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
 import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageRequest
 import xyz.obscura.server.contracts.ObscuraProtocol.SendMessageResponse
@@ -57,14 +59,16 @@ class FakeObscuraServer : AutoCloseable {
     /**
      * A new device of [userId]: the first one creates the account identity, later ones share it, as
      * linking does. [identity] overrides that, which the real server forbids. A device without
-     * [servesBundles] is listed as current but its bundle is never found.
+     * [servesBundles] is listed as current but its bundle is never found. [corruptBundle] and
+     * [corruptKyber] zero the signature on its signed or Kyber prekey.
      */
     fun register(
         userId: String,
         corruptBundle: Boolean = false,
+        corruptKyber: Boolean = false,
         identity: IdentityKeyPair = identities.getOrPut(userId) { IdentityKeyPair.generate() },
         servesBundles: Boolean = true,
-    ): FakeDevice = FakeDevice(this, userId, identity, corruptBundle, servesBundles).also { devices[it.deviceId] = it }
+    ): FakeDevice = FakeDevice(this, userId, identity, corruptBundle, corruptKyber, servesBundles).also { devices[it.deviceId] = it }
 
     fun remove(device: FakeDevice) { devices.remove(device.deviceId) }
 
@@ -134,6 +138,7 @@ class FakeDevice internal constructor(
     val userId: String,
     identity: IdentityKeyPair,
     private val corruptBundle: Boolean,
+    private val corruptKyber: Boolean,
     internal val servesBundles: Boolean,
 ) {
     val deviceId: String = UUID.randomUUID().toString()
@@ -144,29 +149,39 @@ class FakeDevice internal constructor(
     internal val sender: MessageSender
     val mailbox: MutableList<Envelope> = Collections.synchronizedList(mutableListOf())
     private val unusedPreKeys = ArrayDeque<PreKeyRecord>()
+    private val unusedKyberPreKeys = ArrayDeque<KyberPreKeyRecord>()
+    private val signedPreKey: SignedPreKeyRecord
+    private val lastResortKyberPreKey: KyberPreKeyRecord
 
     init {
         val api = APIClient(server.url) { deviceId }
-        messenger = Messenger(signalStore, api)
+        messenger = Messenger(signalStore, api) { deviceId }
         sender = MessageSender(api, messenger, directory) { deviceId }
-        val keys = SignalKeyUtils.generateProvisioningKeys(identity)
-        SignalKeyUtils.install(signalStore, keys)
+        val keys = PreKeys.generateProvisioningKeys(identity)
+        PreKeys.install(signalStore, keys)
+        signedPreKey = keys.signedPreKey
+        lastResortKyberPreKey = keys.lastResortKyberPreKey
         unusedPreKeys.addAll(keys.oneTimePreKeys)
+        unusedKyberPreKeys.addAll(keys.kyberPreKeys)
     }
 
     val remainingPreKeys get() = unusedPreKeys.size
 
+    /** Serves a one-time Kyber key while any remain, then the last-resort key, as the server does. */
     internal fun consumeBundle(): JSONObject {
-        val spk = signalStore.loadSignedPreKey(1)
         val otpk = unusedPreKeys.removeFirstOrNull()
-        val signature = if (corruptBundle) ByteArray(64) else spk.signature
+        val kyber = unusedKyberPreKeys.removeFirstOrNull() ?: lastResortKyberPreKey
+        val signature = if (corruptBundle) ByteArray(64) else signedPreKey.signature
         return JSONObject()
             .put("deviceId", deviceId)
             .put("registrationId", signalStore.localRegistrationId)
             .put("identityKey", signalStore.identityKeyPair.publicKey.serialize().toBase64())
-            .put("signedPreKey", JSONObject().put("keyId", 1)
-                .put("publicKey", spk.keyPair.publicKey.serialize().toBase64())
+            .put("signedPreKey", JSONObject().put("keyId", signedPreKey.id)
+                .put("publicKey", signedPreKey.keyPair.publicKey.serialize().toBase64())
                 .put("signature", signature.toBase64()))
+            .put("kyberPreKey", JSONObject().put("keyId", kyber.id)
+                .put("publicKey", kyber.keyPair.publicKey.serialize().toBase64())
+                .put("signature", (if (corruptKyber) ByteArray(64) else kyber.signature).toBase64()))
             .put("oneTimePreKey", otpk?.let { JSONObject().put("keyId", it.id).put("publicKey", it.keyPair.publicKey.serialize().toBase64()) } ?: JSONObject.NULL)
     }
 
@@ -174,7 +189,7 @@ class FakeDevice internal constructor(
     suspend fun receive(): List<Received> = mailbox.toList().also { mailbox.clear() }.map { envelope ->
         val encrypted = EncryptedMessage.parseFrom(envelope.message)
         val senderDevice = UuidCodec.uuidString(envelope.senderDeviceId)!!
-        val plaintext = messenger.decryptAndCommit(senderDevice, envelope.message,
+        val plaintext = messenger.decryptAndCommit(senderDevice, encrypted,
             record = { directory.addInTransaction(UuidCodec.uuidString(envelope.senderUserId)!!, senderDevice) }) { it }
         Received(
             ClientMessage.parseFrom(plaintext),

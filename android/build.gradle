@@ -23,6 +23,12 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // libsignal releases after 0.86.5 are only in Signal's repository
+        // (see ../kotlin/settings.gradle.kts).
+        exclusiveContent {
+            forRepository { maven { name = "signal"; url = "https://build-artifacts.signal.org/libraries/maven/" } }
+            filter { includeGroup("org.signal") }
+        }
     }
 }
 

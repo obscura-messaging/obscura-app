@@ -13,18 +13,38 @@ import org.junit.jupiter.api.Test
 class ApiTypesTest {
 
     @Test
-    fun `device keys nest the signed prekey and one-time prekeys`() {
+    fun `device keys carry every kind of pre-key`() {
         val json = DeviceKeys(
             identityKey = "idk",
             registrationId = 100,
-            preKeys = PreKeyUpload(SignedPreKeyJson(1, "spk", "sig"), listOf(OneTimePreKeyJson(2, "otk"))),
+            signedPreKey = SignedPreKeyJson(1, "spk", "sig"),
+            lastResortKyberPreKey = KyberPreKeyJson(3, "lrk", "lrsig"),
+            oneTimePreKeys = listOf(OneTimePreKeyJson(2, "otk")),
+            kyberPreKeys = listOf(KyberPreKeyJson(4, "kpk", "ksig")),
         ).toJson()
 
-        assertEquals(setOf("identityKey", "registrationId", "signedPreKey", "oneTimePreKeys"), json.keySet())
+        assertEquals(
+            setOf("identityKey", "registrationId", "signedPreKey", "lastResortKyberPreKey", "oneTimePreKeys", "kyberPreKeys"),
+            json.keySet(),
+        )
         assertEquals(100, json.getInt("registrationId"))
         assertEquals("sig", json.getJSONObject("signedPreKey").getString("signature"))
+        assertEquals("lrsig", json.getJSONObject("lastResortKyberPreKey").getString("signature"))
         assertEquals(2, json.getJSONArray("oneTimePreKeys").getJSONObject(0).getInt("keyId"))
         assertEquals("otk", json.getJSONArray("oneTimePreKeys").getJSONObject(0).getString("publicKey"))
+        assertEquals("ksig", json.getJSONArray("kyberPreKeys").getJSONObject(0).getString("signature"))
+    }
+
+    @Test
+    fun `an upload sends only the parts it has`() {
+        assertEquals(emptySet<String>(), PreKeyUpload(null, null, emptyList(), emptyList()).toJson().keySet())
+        val json = PreKeyUpload(null, KyberPreKeyJson(3, "lrk", "lrsig"), listOf(OneTimePreKeyJson(2, "otk")), emptyList()).toJson()
+        assertEquals(setOf("lastResortKyberPreKey", "oneTimePreKeys"), json.keySet())
+    }
+
+    @Test
+    fun `pre-key counts read both kinds`() {
+        assertEquals(PreKeyCounts(7, 3), PreKeyCounts.from(JSONObject("""{"oneTimePreKeyCount":7,"kyberPreKeyCount":3}""")))
     }
 
     @Test
@@ -42,14 +62,5 @@ class ApiTypesTest {
         )) {
             assertThrows(ObscuraError.ProtocolViolation::class.java, { AuthResponse.from(JSONObject(invalid)) }, invalid)
         }
-    }
-
-    @Test
-    fun `Retry-After is whole seconds clamped to 1 through 10`() {
-        assertEquals(1_000L, APIClient.retryAfterMs(null))
-        assertEquals(1_000L, APIClient.retryAfterMs("soon"))
-        assertEquals(1_000L, APIClient.retryAfterMs("0"))
-        assertEquals(3_000L, APIClient.retryAfterMs(" 3 "))
-        assertEquals(10_000L, APIClient.retryAfterMs("60"))
     }
 }

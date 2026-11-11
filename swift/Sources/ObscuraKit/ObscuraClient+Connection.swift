@@ -20,6 +20,12 @@ extension ObscuraClient {
     public func connect() async throws {
         try Task.checkCancellation()
         guard session != nil else { throw ObscuraError.notAuthenticated }
+        startPreKeySync()
+        do {
+            if try PreKeys.isSyncDue(signalStore, nowMs: Int64(Self.nowMs())) { requestPreKeySync() }
+        } catch {
+            logger.databaseError(store: "signal", operation: "preKeyState", reason: "\(error)")
+        }
         if connection.value == .connected { return }
         if let connectTask { return try await connectTask.value }
         reconnectTask?.cancel()
@@ -131,8 +137,6 @@ extension ObscuraClient {
     private func handle(_ event: GatewayEvent, from socket: GatewaySocket) async {
         guard self.socket === socket, session != nil, !Task.isCancelled else { return }
         switch event {
-        case .preKeyStatus(let count, let threshold):
-            if count < threshold { replenishPreKeys() }
         case .envelope(let envelope):
             await receive(envelope) { try await socket.acknowledge($0) }
         }
@@ -159,8 +163,10 @@ extension ObscuraClient {
         }
         let content: PersistedContent
         let selfUserId = session?.userId
+        var preKeyMessage = false
         do {
             let encrypted = try Obscura_Client_V1_EncryptedMessage(serializedBytes: envelope.message)
+            preKeyMessage = encrypted.type == .prekeyMessage
             content = try await messenger.decryptAndPersist(senderUserId: senderUserId, senderDeviceUuid: senderDeviceId,
                                                             encrypted) { plaintext, db in
                 try Task.checkCancellation()
@@ -214,7 +220,8 @@ extension ObscuraClient {
             logger.log("dropped an unparseable client message from \(senderUserId): \(reason)")
         }
         guard generation == sessionGeneration, !Task.isCancelled else { return }
-        replenishPreKeysIfLow()
+        // As Signal-Android does after a pre-key message: the sender used up one of this device's keys.
+        if preKeyMessage { requestPreKeySync() }
         await ack(envelope.id, envelopeId, acknowledge)
     }
 
@@ -394,31 +401,63 @@ extension ObscuraClient {
 
     // MARK: - Prekeys
 
-    private func replenishPreKeysIfLow() {
-        do {
-            if try signalStore.preKeyCount() < Self.preKeyMinimum { replenishPreKeys() }
-        } catch {
-            logger.databaseError(store: "signal", operation: "preKeyCount", reason: "\(error)")
+    /// For tests: sync timing takes effect at the next session's first sync request.
+    func setPreKeySyncTiming(checkIntervalMs: UInt64, spacingMs: UInt64) {
+        preKeyCheckIntervalMs = checkIntervalMs
+        preKeySyncSpacingMs = spacingMs
+    }
+
+    func requestPreKeySync() {
+        startPreKeySync()
+        preKeySyncRequests?.yield()
+    }
+
+    /// Starts the session's sync task if it is not running: it syncs on each request, at least
+    /// `preKeySyncSpacingMs` apart, and requests one every `preKeyCheckIntervalMs`.
+    func startPreKeySync() {
+        guard session != nil, preKeySyncTask == nil else { return }
+        let generation = sessionGeneration
+        let (requests, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        preKeySyncRequests = continuation
+        let interval = preKeyCheckIntervalMs
+        let spacing = preKeySyncSpacingMs
+        preKeySyncTask = Task { [weak self] in
+            let ticker = Task {
+                while (try? await Task.sleep(nanoseconds: interval * 1_000_000)) != nil {
+                    continuation.yield()
+                }
+            }
+            defer { ticker.cancel() }
+            // Ends when the session's end cancels this task or finishes the stream.
+            for await _ in requests {
+                guard let self else { return }
+                await self.syncPreKeys(generation)
+                guard (try? await Task.sleep(nanoseconds: spacing * 1_000_000)) != nil else { return }
+            }
         }
     }
 
-    private func replenishPreKeys() {
-        guard replenishTask == nil else { return }
-        let generation = sessionGeneration
-        replenishTask = Task { await self.performReplenish(generation) }
-    }
-
-    private func performReplenish(_ generation: Int) async {
-        defer { if generation == sessionGeneration { replenishTask = nil } }
+    /// Signal-Android's `PreKeysSyncJob`: ask the server how many one-time keys it still holds for this
+    /// device, upload a refill of each kind it is short of and the signed and last-resort keys due for
+    /// rotation, then clean up old keys.
+    func syncPreKeys(_ generation: Int) async {
         guard generation == sessionGeneration, session != nil, !Task.isCancelled else { return }
         do {
             _ = try await requireFreshSession()
             guard generation == sessionGeneration, !Task.isCancelled else { return }
-            let keys = try signalStore.addPreKeys(Self.preKeyReplenishCount)
-            try await api.uploadPreKeys(keys)
-            try signalStore.retireSignedPreKeys(publishedId: keys.signedPreKey.keyId)
+            let counts = try await api.fetchPreKeyCounts()
+            let store = signalStore
+            let now = Int64(Self.nowMs())
+            // Off the actor: a Kyber batch takes a while to generate.
+            let refill = try await Task.detached { try PreKeys.prepareRefill(store, counts: counts, nowMs: now) }.value
+            if !refill.isEmpty { try await api.uploadPreKeys(refill.upload()) }
+            guard generation == sessionGeneration else { return }
+            try PreKeys.confirmRefill(signalStore, refill, nowMs: Int64(Self.nowMs()))
+            if !refill.isEmpty { logger.log("prekeys uploaded (counts were \(counts.oneTime) EC, \(counts.kyber) Kyber)") }
+        } catch is CancellationError {
+            return
         } catch {
-            logger.preKeyReplenishFailed(reason: "\(error)")
+            logger.preKeySyncFailed(reason: "\(error)")
         }
     }
 }

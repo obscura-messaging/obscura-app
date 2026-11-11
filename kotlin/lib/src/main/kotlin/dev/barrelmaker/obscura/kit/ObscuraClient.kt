@@ -13,7 +13,7 @@ import dev.barrelmaker.obscura.kit.linking.HistorySync
 import dev.barrelmaker.obscura.kit.managers.AuthManager
 import dev.barrelmaker.obscura.kit.managers.Credentials
 import dev.barrelmaker.obscura.kit.managers.MessageSender
-import dev.barrelmaker.obscura.kit.managers.SignalKeyUtils
+import dev.barrelmaker.obscura.kit.managers.PreKeys
 import dev.barrelmaker.obscura.kit.managers.TokenStatus
 import dev.barrelmaker.obscura.kit.messaging.Messenger
 import dev.barrelmaker.obscura.kit.network.APIClient
@@ -59,6 +59,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import com.google.protobuf.InvalidProtocolBufferException
 import obscura.client.v1.Client.ClientMessage
+import obscura.client.v1.Client.EncryptedMessage
 import obscura.client.v1.Client.FriendListSync
 import obscura.client.v1.Client.LinkBundle
 import obscura.client.v1.Client.LinkCode
@@ -68,7 +69,7 @@ import obscura.client.v1.friendRequest
 import obscura.client.v1.typingSignal
 import org.signal.libsignal.protocol.DuplicateMessageException
 import org.signal.libsignal.protocol.IdentityKeyPair
-import org.signal.libsignal.protocol.ecc.Curve
+import org.signal.libsignal.protocol.ecc.ECKeyPair
 import xyz.obscura.server.contracts.ObscuraProtocol.Envelope
 import java.io.File
 import java.security.SecureRandom
@@ -132,7 +133,7 @@ class ObscuraClient(
         )
         authRef = auth
         gateway = GatewayConnection(api, scope, beforeConnect = { requireFreshToken() }, log = ::log)
-        messenger = Messenger(signalStore, api)
+        messenger = Messenger(signalStore, api) { auth.credentials?.deviceId }
         sender = MessageSender(api, messenger, devices, logger = { logger }) { auth.credentials?.deviceId }
     }
 
@@ -176,7 +177,7 @@ class ObscuraClient(
     suspend fun beginLink(username: String, password: String, deviceName: String): LinkRequest {
         if (deviceName.isBlank()) throw ObscuraError.InvalidArgument("deviceName must not be blank")
         val session = auth.takeOrCreateLinkSession(username, password)
-        val ephemeral = Curve.generateKeyPair()
+        val ephemeral = ECKeyPair.generate()
         val code = LinkCode.newBuilder()
             .setSessionId(session.id)
             .setEphemeralPublicKey(ByteString.copyFrom(ephemeral.publicKey.serialize()))
@@ -209,7 +210,7 @@ class ObscuraClient(
         })
         auth.provisionLinked(
             request.userId, bundle.primaryDeviceId, request.username, request.deviceName,
-            SignalKeyUtils.generateProvisioningKeys(identity), request.sessionId,
+            PreKeys.generateProvisioningKeys(identity, clock()), request.sessionId,
         ) { friends.replaceInTransaction(friendList) }
         try {
             if (bundle.hasHistory()) {
@@ -340,10 +341,10 @@ class ObscuraClient(
             if (auth.credentials == null) {
                 gateway.disconnect()
                 val stopping = synchronized(this) {
-                    val jobs = listOfNotNull(receiveJob, replenishJob)
+                    val jobs = listOfNotNull(receiveJob, preKeySyncJob)
                     jobs.forEach { it.cancel() }
                     receiveJob = null
-                    replenishJob = null
+                    preKeySyncJob = null
                     jobs
                 }
                 withContext(NonCancellable) { stopping.forEach { it.join() } }
@@ -364,6 +365,8 @@ class ObscuraClient(
     suspend fun connect() {
         auth.requireCredentials()
         startReceiving()
+        startPreKeySync()
+        if (PreKeys.isSyncDue(signalStore, clock())) requestPreKeySync()
         gateway.connect()
         log("CONNECTED")
     }
@@ -375,20 +378,44 @@ class ObscuraClient(
     }
 
     private var receiveJob: Job? = null
-    private var replenishJob: Job? = null
+    private var preKeySyncJob: Job? = null
+
+    /** Conflated, so requests made while a sync runs collapse into one more sync after it. */
+    private val preKeySyncRequests = Channel<Unit>(Channel.CONFLATED)
+
+    /** How often a signed-in client checks its supply anyway: peers fetching bundles use keys up without messaging. */
+    internal var preKeyCheckIntervalMs = PreKeys.CHECK_INTERVAL_MS
+
+    /** The least time between syncs, so a backlog of pre-key messages costs one or two checks rather than one each. */
+    internal var preKeySyncSpacingMs = PreKeys.SYNC_SPACING_MS
+
+    private fun requestPreKeySync() {
+        if (startPreKeySync()) preKeySyncRequests.trySend(Unit)
+    }
+
+    /** Syncs run one at a time on their own job, which the session's end cancels. False when signed out. */
+    private fun startPreKeySync(): Boolean = synchronized(this) {
+        if (auth.credentials == null) return false
+        if (preKeySyncJob?.isActive != true) preKeySyncJob = scope.launch {
+            launch {
+                while (true) {
+                    delay(preKeyCheckIntervalMs)
+                    preKeySyncRequests.trySend(Unit)
+                }
+            }
+            for (request in preKeySyncRequests) {
+                syncPreKeys()
+                delay(preKeySyncSpacingMs)
+            }
+        }
+        true
+    }
     private val processedEnvelopes = MutableStateFlow(0L)
     @Volatile private var lastProcessedAtMs = 0L
 
     private fun startReceiving() = synchronized(this) {
         if (receiveJob?.isActive == true) return
-        receiveJob = scope.launch {
-            launch { for (envelope in gateway.envelopes) receive(envelope) }
-            launch {
-                for (status in gateway.preKeyStatus) {
-                    if (status.oneTimePreKeyCount < status.minThreshold) replenishPreKeys { true }
-                }
-            }
-        }
+        receiveJob = scope.launch { for (envelope in gateway.envelopes) receive(envelope) }
     }
 
     /** Commit receive ratchets with local durable writes; network-dependent control handlers run afterward. */
@@ -412,9 +439,16 @@ class ObscuraClient(
             logger.databaseError("content", "containsEnvelope", e.reason())
             return
         }
+        val encrypted = try {
+            EncryptedMessage.parseFrom(envelope.message)
+        } catch (e: com.google.protobuf.InvalidProtocolBufferException) {
+            log("RECV decrypt failed from $senderUserId: ${e.message}")
+            logger.decryptFailed(senderUserId, e.reason())
+            return
+        }
         var stage = "directory"
         val stored = try {
-            messenger.decryptAndCommit(senderDeviceId, envelope.message, record = {
+            messenger.decryptAndCommit(senderDeviceId, encrypted, record = {
                 devices.addInTransaction(senderUserId, senderDeviceId)
                 stage = "decrypt"
             }) { plaintext ->
@@ -459,7 +493,8 @@ class ObscuraClient(
                 return
             }
         }
-        replenishPreKeys { signalStore.getPreKeyCount() < PREKEY_MIN_COUNT }
+        // As Signal-Android does after a pre-key message: the sender used up one of this device's keys.
+        if (encrypted.type == EncryptedMessage.Type.TYPE_PREKEY_MESSAGE) requestPreKeySync()
         acknowledge(envelope.id, envelopeId, ack)
     }
 
@@ -717,22 +752,23 @@ class ObscuraClient(
         }
     }
 
-    /** At most one replenish in flight; a backlog of envelopes would otherwise upload the same ids N times. */
-    private fun replenishPreKeys(needed: () -> Boolean) = synchronized(this) {
-        if (auth.credentials == null || replenishJob?.isActive == true) return
-        replenishJob = scope.launch {
-            try {
-                if (needed()) {
-                    requireFreshToken()
-                    val keys = SignalKeyUtils.generateMorePreKeys(signalStore, PREKEY_REPLENISH_COUNT)
-                    api.uploadPreKeys(keys)
-                    signalStore.retireSignedPreKeys(keys.signedPreKey.keyId)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                logger.preKeyReplenishFailed(e.reason())
-            }
+    /**
+     * Signal-Android's `PreKeysSyncJob`: ask the server how many one-time keys it still holds for this
+     * device, upload a refill of each kind it is short of and the signed and last-resort keys due for
+     * rotation, then clean up old keys.
+     */
+    private suspend fun syncPreKeys() {
+        try {
+            requireFreshToken()
+            val counts = api.fetchPreKeyCounts()
+            val refill = withContext(Dispatchers.IO) { PreKeys.prepareRefill(signalStore, counts, clock()) }
+            if (!refill.isEmpty) api.uploadPreKeys(refill.toUpload())
+            withContext(Dispatchers.IO) { PreKeys.confirmRefill(signalStore, refill, clock()) }
+            if (!refill.isEmpty) log("PREKEYS uploaded (counts were ${counts.oneTime} EC, ${counts.kyber} Kyber)")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.preKeySyncFailed(e.reason())
         }
     }
 
@@ -1184,8 +1220,6 @@ class ObscuraClient(
         private val random = SecureRandom()
         private const val MESSAGE_RECEIVED_CAPACITY = 100
         private const val DEBUG_LOG_SIZE = 200
-        private const val PREKEY_MIN_COUNT = 20L
-        private const val PREKEY_REPLENISH_COUNT = 50
         private const val PUSH_IDLE_MS = 500L
         private const val PUSH_RECENT_ACTIVITY_MS = 10_000L
         private const val LINK_POLL_MS = 250L

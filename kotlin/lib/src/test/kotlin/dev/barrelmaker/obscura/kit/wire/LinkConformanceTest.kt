@@ -18,7 +18,7 @@ import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
 import org.signal.libsignal.protocol.IdentityKey
 import org.signal.libsignal.protocol.IdentityKeyPair
-import org.signal.libsignal.protocol.ecc.Curve
+import org.signal.libsignal.protocol.ecc.ECPublicKey
 import org.signal.libsignal.protocol.ecc.ECKeyPair
 import org.signal.libsignal.protocol.ecc.ECPrivateKey
 
@@ -39,14 +39,14 @@ class LinkConformanceTest {
     private fun envelope(v: JSONObject) {
         val newDevice = ECPrivateKey(v.getString("newDevicePrivateKey").hex())
         val primary = ECPrivateKey(v.getString("primaryPrivateKey").hex())
-        assertEquals(v.getString("newDevicePublicKey"), newDevice.publicKey().serialize().hex(), "new device public key")
-        assertEquals(v.getString("primaryPublicKey"), primary.publicKey().serialize().hex(), "primary public key")
+        assertEquals(v.getString("newDevicePublicKey"), newDevice.getPublicKey().serialize().hex(), "new device public key")
+        assertEquals(v.getString("primaryPublicKey"), primary.getPublicKey().serialize().hex(), "primary public key")
 
-        val newDevicePublic = Curve.decodePoint(v.getString("newDevicePublicKey").hex(), 0)
-        val primaryPublic = Curve.decodePoint(v.getString("primaryPublicKey").hex(), 0)
-        val shared = Curve.calculateAgreement(primaryPublic, newDevice)
+        val newDevicePublic = ECPublicKey(v.getString("newDevicePublicKey").hex())
+        val primaryPublic = ECPublicKey(v.getString("primaryPublicKey").hex())
+        val shared = newDevice.calculateAgreement(primaryPublic)
         assertEquals(v.getString("sharedSecret"), shared.hex(), "shared secret from the new device")
-        assertEquals(v.getString("sharedSecret"), Curve.calculateAgreement(newDevicePublic, primary).hex(), "shared secret from the primary")
+        assertEquals(v.getString("sharedSecret"), primary.calculateAgreement(newDevicePublic).hex(), "shared secret from the primary")
         assertEquals(v.getString("key"), LinkCrypto.key(shared).hex(), "HKDF key")
 
         val plaintext = v.getString("plaintext").hex()
@@ -130,7 +130,7 @@ class LinkConformanceTest {
 
     @org.junit.jupiter.api.Test
     fun `LinkCrypto open rejects malformed protobuf, invalid nonce length, and invalid ephemeral public key`() {
-        val own = Curve.generateKeyPair().privateKey
+        val own = ECKeyPair.generate().privateKey
         org.junit.jupiter.api.Assertions.assertThrows(dev.barrelmaker.obscura.kit.ObscuraError.LinkFailed::class.java) {
             LinkCrypto.open(byteArrayOf(-1, -1, -1), own)
         }
