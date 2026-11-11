@@ -846,8 +846,9 @@ class ObscuraClient(
 
     /**
      * Uploads [file] once, sends it as a pix to each of [peerUserIds] and, if [toStory], posts it as a
-     * story with [caption] as its text. The key material never leaves the kit. Upload failures throw;
-     * per-recipient failures are reported, and their entries are stored for `flushOutbox`.
+     * story with [caption] as its text, so key material never reaches the host. Recipients and the
+     * session are checked before the upload, so a reported recipient almost always has a stored pix
+     * that `flushOutbox` retries; only a session lost mid-send leaves one unstored.
      */
     suspend fun sendCapture(
         file: File,
@@ -858,6 +859,11 @@ class ObscuraClient(
         peerUserIds: List<String>,
         toStory: Boolean,
     ): CaptureResult {
+        val self = requireFreshToken()
+        for (peer in peerUserIds) {
+            if (peer.isBlank()) throw ObscuraError.InvalidArgument("peerUserId must not be blank")
+            if (peer == self.userId) throw ObscuraError.InvalidArgument("Cannot message yourself")
+        }
         val attachment = uploadAttachmentFile(file).media(mediaType)
         val undelivered = peerUserIds.filter { peer ->
             !succeeds("send.pix") { sendPix(peer, attachment, caption, captionMeta, displayDuration) }
@@ -872,7 +878,7 @@ class ObscuraClient(
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        logger.log("$event failed: ${e.message ?: e.javaClass.simpleName}")
+        log("$event failed: ${e.reason()}")
         false
     }
 

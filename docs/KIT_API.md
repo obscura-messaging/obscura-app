@@ -299,13 +299,11 @@ Received `STARTED` lasts 5 s from receipt, renewed per sender device;
 `STOPPED` clears that device. Typing is client-local, cleared on logout,
 and never authorizes recipients or parses a conversation.
 
-`uploadAttachment` encrypts with a fresh AES-256-GCM key/nonce and returns
-id/key/nonce; `sendPix` and `postStory` carry that key material inside the
-end-to-end encrypted entry. The app layer never sees it: `sendCapture`
-uploads and sends in one call, and `downloadAttachmentToCache(entryId)`
-looks the keys up from the stored pix or story, then decrypts into
-`attachmentCacheDir` (keyed by attachment id, purged by `sweepExpired` and
-`wipeDevice`). `registerPushToken` registers the host's token.
+Each upload gets a fresh AES-256-GCM key and nonce, which travel only
+inside the end-to-end encrypted entry. The app layer never handles them:
+it sends a capture by path and downloads by entry id, so the keys stay in
+the kit's encrypted database. `registerPushToken` registers the host's
+token.
 
 Android's `processPendingMessages(timeoutMs)` connects/reuses the receive
 path and waits within its budget. It returns processed-envelope count,

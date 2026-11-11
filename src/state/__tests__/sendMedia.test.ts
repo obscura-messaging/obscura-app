@@ -51,10 +51,10 @@ describe('sendCapture', () => {
     expect(bridge.deletedFiles).toContain(CAPTURE.path);
   });
 
-  it('reports recipients it could not reach and keeps their pix', async () => {
+  it('reports recipients it could not reach and keeps their pix; the story still reaches the others', async () => {
     bridge.__setUnreachable([CAROL.userId]);
 
-    expect(await sendCapture(CAPTURE, [BOB, CAROL], false)).toEqual(['carol']);
+    expect(await sendCapture(CAPTURE, [BOB, CAROL], true)).toEqual(['carol']);
 
     expect(await Obscura.getMessages()).toHaveLength(2);
     expect(useStore.getState().messages).toHaveLength(2);

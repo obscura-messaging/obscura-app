@@ -127,7 +127,8 @@ export class FakeObscuraBridge implements ObscuraBridge {
         id: `story_${sentAt}`, authorUserId: this.userId, sentAt, content: capture.caption,
         attachment, captionMeta: capture.captionMeta,
       });
-      storyUndelivered = this.friends.some((f) => this.unreachable.has(f.userId));
+      // Like the kit: undelivered only when there is an audience and none of it was reached.
+      storyUndelivered = this.friends.length > 0 && this.friends.every((f) => this.unreachable.has(f.userId));
     }
     return { undeliveredUserIds, storyUndelivered };
   }

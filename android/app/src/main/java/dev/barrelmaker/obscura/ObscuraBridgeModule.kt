@@ -546,15 +546,19 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun sendCapture(capture: ReadableMap, promise: Promise) {
         scope.launch {
             try {
-                val recipients = capture.getArray("recipientUserIds")?.toArrayList()?.map { it as String }.orEmpty()
+                // Absent keys fall back like the iOS bridge does.
+                fun string(key: String) = if (capture.hasKey(key) && !capture.isNull(key)) capture.getString(key) else null
+                val recipients = if (capture.hasKey("recipientUserIds")) {
+                    capture.getArray("recipientUserIds")?.toArrayList()?.map { it as String }.orEmpty()
+                } else emptyList()
                 val result = requireClient().sendCapture(
-                    file = java.io.File(capture.getString("path") ?: ""),
-                    mediaType = capture.getString("mediaType") ?: "photo",
-                    caption = capture.getString("caption") ?: "",
-                    captionMeta = if (capture.isNull("captionMeta")) null else capture.getString("captionMeta"),
-                    displayDuration = capture.getDouble("displayDuration").toInt(),
+                    file = java.io.File(string("path") ?: ""),
+                    mediaType = string("mediaType") ?: "photo",
+                    caption = string("caption") ?: "",
+                    captionMeta = string("captionMeta"),
+                    displayDuration = if (capture.hasKey("displayDuration")) capture.getDouble("displayDuration").toInt() else 0,
                     peerUserIds = recipients,
-                    toStory = capture.getBoolean("toStory"),
+                    toStory = capture.hasKey("toStory") && capture.getBoolean("toStory"),
                 )
                 promise.resolve(Arguments.createMap().apply {
                     putArray("undeliveredUserIds", Arguments.fromList(result.undeliveredPeerUserIds))

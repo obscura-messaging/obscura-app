@@ -11,7 +11,7 @@ public struct AttachmentUpload: Sendable, Equatable {
     }
 }
 
-/// What `sendCapture` could not deliver; those entries are stored and retried by `flushOutbox`.
+/// What `sendCapture` reached nobody with.
 public struct CaptureResult: Sendable, Equatable {
     public let undeliveredPeerUserIds: [String]
     public let storyUndelivered: Bool

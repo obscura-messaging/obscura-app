@@ -61,7 +61,7 @@ class AttachmentUpload(val id: String, val contentKey: ByteArray, val nonce: Byt
     fun media(mediaType: String): MediaAttachment = MediaAttachment(id, contentKey, nonce, mediaType)
 }
 
-/** What `sendCapture` could not deliver; those entries are stored and retried by `flushOutbox`. */
+/** What `sendCapture` reached nobody with. */
 data class CaptureResult(val undeliveredPeerUserIds: List<String>, val storyUndelivered: Boolean)
 
 typealias MediaAttachment = dev.barrelmaker.obscura.kit.stores.MediaAttachment

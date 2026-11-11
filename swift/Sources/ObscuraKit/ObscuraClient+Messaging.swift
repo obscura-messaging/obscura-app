@@ -46,8 +46,9 @@ extension ObscuraClient {
     }
 
     /// Uploads `filePath` once, sends it as a pix to each of `peerUserIds` and, if `toStory`, posts it
-    /// as a story with `caption` as its text. The key material never leaves the kit. Upload failures
-    /// throw; per-recipient failures are reported, and their entries are stored for `flushOutbox`.
+    /// as a story with `caption` as its text, so key material never reaches the host. Recipients and
+    /// the session are checked before the upload, so a reported recipient almost always has a stored
+    /// pix that `flushOutbox` retries; only a session lost mid-send leaves one unstored.
     public func sendCapture(
         filePath: String,
         mediaType: String,
@@ -57,6 +58,13 @@ extension ObscuraClient {
         peerUserIds: [String],
         toStory: Bool
     ) async throws -> CaptureResult {
+        let (selfUserId, _) = try await sendContext()
+        for peer in peerUserIds {
+            guard !peer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ObscuraError.invalidArgument("peerUserId must not be blank")
+            }
+            guard peer != selfUserId else { throw ObscuraError.invalidArgument("cannot message yourself") }
+        }
         let attachment = try await uploadAttachmentFile(filePath: filePath).media(mediaType)
         var undelivered: [String] = []
         for peer in peerUserIds {

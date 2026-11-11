@@ -718,11 +718,11 @@ actor ContentStore {
     }
 
     private static func mediaAttachment(_ row: Row) throws -> MediaAttachment? {
-        guard let id = try row.optionalText("media_ref"), !id.isEmpty else {
+        guard let id = try row.optionalText("media_ref"), !id.isEmpty,
+              let contentKey = row["content_key"] as Data?, !contentKey.isEmpty,
+              let nonce = row["nonce"] as Data?, !nonce.isEmpty else {
             return nil
         }
-        let contentKey = (row["content_key"] as Data?) ?? Data()
-        let nonce = (row["nonce"] as Data?) ?? Data()
         let mediaType = try row.optionalText("media_type") ?? "photo"
         return MediaAttachment(id: id, contentKey: contentKey, nonce: nonce, mediaType: mediaType)
     }

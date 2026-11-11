@@ -330,6 +330,54 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(bobReceived.count, 2)
     }
 
+    func testSendCaptureChecksRecipientsFirstAndReportsOnlyUnreachableOnes() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("capture-\(UUID().uuidString).jpg")
+        try Data([1, 2, 3]).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let ghost = UUID().uuidString.lowercased()
+        try await client.friends.add(bob.userId, username: "bob", status: .accepted)
+
+        // Invalid recipients fail before anything is uploaded.
+        await assertThrows(.invalidArgument("peerUserId must not be blank")) {
+            _ = try await self.client.sendCapture(filePath: file.path, mediaType: "photo", caption: "", captionMeta: nil,
+                                                  displayDuration: 5, peerUserIds: [" "], toStory: false)
+        }
+        await assertThrows(.invalidArgument("cannot message yourself")) {
+            _ = try await self.client.sendCapture(filePath: file.path, mediaType: "photo", caption: "", captionMeta: nil,
+                                                  displayDuration: 5, peerUserIds: [self.phone.userId], toStory: false)
+        }
+        XCTAssertEqual(server.attachmentCount(), 0)
+
+        // A failed upload throws and stores nothing.
+        server.failAttachmentUpload(status: 500)
+        do {
+            _ = try await client.sendCapture(filePath: file.path, mediaType: "photo", caption: "", captionMeta: nil,
+                                             displayDuration: 5, peerUserIds: [bob.userId], toStory: true)
+            XCTFail("expected the upload to fail")
+        } catch {}
+        server.failAttachmentUpload(status: nil)
+        let afterFailure = try await client.getMessages()
+        XCTAssertEqual(afterFailure.count, 0)
+
+        // Nothing to send: only the upload happens.
+        let empty = try await client.sendCapture(filePath: file.path, mediaType: "photo", caption: "", captionMeta: nil,
+                                                 displayDuration: 5, peerUserIds: [], toStory: false)
+        XCTAssertEqual(empty, CaptureResult(undeliveredPeerUserIds: [], storyUndelivered: false))
+        XCTAssertEqual(server.attachmentCount(), 1)
+
+        // The friend gets the pix; only the stranger is reported and queued. Both share one upload.
+        let mixed = try await client.sendCapture(filePath: file.path, mediaType: "photo", caption: "", captionMeta: nil,
+                                                 displayDuration: 5, peerUserIds: [bob.userId, ghost], toStory: false)
+        XCTAssertEqual(mixed, CaptureResult(undeliveredPeerUserIds: [ghost], storyUndelivered: false))
+        let sent = try await client.getMessages()
+        XCTAssertEqual(Set(sent.map(\.peerUserId)), [bob.userId, ghost])
+        XCTAssertEqual(Set(sent.compactMap { $0.attachment?.id }).count, 1)
+        let queued = try await client.content.undeliveredMessages()
+        XCTAssertEqual(queued.map(\.peerUserId), [ghost])
+        let bobGot = try await bob.receive()
+        XCTAssertEqual(bobGot.count, 1)
+    }
+
     func testUploadDownloadAndCacheAttachmentFromFile() async throws {
         let testDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent(".att-test-\(UUID().uuidString)", isDirectory: true)
@@ -365,12 +413,19 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(result, CaptureResult(undeliveredPeerUserIds: [bob.userId], storyUndelivered: false))
         let undeliveredPix = try await customClient.getMessages()
         XCTAssertEqual(undeliveredPix.map(\.kind), ["pix"])
+        let queued = try await customClient.content.undeliveredMessages()
+        XCTAssertEqual(queued.map(\.id), undeliveredPix.map(\.id))
         let stories = try await customClient.getStories()
         let story = try XCTUnwrap(stories.first)
         XCTAssertEqual(story.content, "caption")
 
         await assertThrows(.invalidArgument("no attachment for entry no_such_entry")) {
             _ = try await customClient.downloadAttachmentToCache(entryId: "no_such_entry")
+        }
+
+        let textOnlyId = try await customClient.postStory(content: "text only", attachment: nil, captionMeta: nil)
+        await assertThrows(.invalidArgument("no attachment for entry \(textOnlyId)")) {
+            _ = try await customClient.downloadAttachmentToCache(entryId: textOnlyId)
         }
 
         let cachedPath = try await customClient.downloadAttachmentToCache(entryId: story.id)
