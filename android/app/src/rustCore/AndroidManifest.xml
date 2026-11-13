@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Rust core spike: merged only into the build types named by -PobscuraRustCore. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <provider
+            android:name="dev.barrelmaker.obscura.rustcore.RustCoreSmokeProvider"
+            android:authorities="${applicationId}.rustcoresmoke"
+            android:exported="false" />
+    </application>
+</manifest>
