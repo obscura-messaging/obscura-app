@@ -14,7 +14,8 @@ import { useSession, useMessages, useAcceptedFriends, markSeen } from '../state/
 import { usePeerTyping, notifyTyping, sendChatMessage } from '../state/chat';
 import { useAppActive } from '../hooks/useAppActive';
 import { isBackSwipeGesture, shouldCompleteBackSwipe } from '../utils/gesture';
-import { errorMessage, logError } from '../utils/log';
+import { errorMessage } from '../domain/errors';
+import { logError } from '../utils/log';
 import { toast } from '../components/Toast';
 import { SendIcon } from '../components/icons';
 import type { RootStackScreenProps, RootStackParamList } from '../navigation/types';

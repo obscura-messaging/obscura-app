@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, FlatList, StyleSheet } from 'react-native
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { errorMessage } from '../utils/log';
+import { errorMessage } from '../domain/errors';
 import { sendButtonLabel, sendOutcomeToast } from '../domain/friends';
 import { toast } from '../components/Toast';
 import { CheckIcon } from '../components/icons';

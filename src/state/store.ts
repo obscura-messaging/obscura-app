@@ -134,63 +134,38 @@ function coalesce(task: () => Promise<void>): () => Promise<void> {
   };
 }
 
-export const refreshMessages: () => Promise<void> = coalesce(async () => {
-  const epoch = sessionEpoch;
-  try {
-    const messages = await Obscura.getMessages();
-    if (epoch !== sessionEpoch) return;
-    useStore.setState({ messages });
-  } catch (e) {
-    logError('messages.refresh', e);
-  }
-});
+type Slice = 'messages' | 'stories' | 'profiles';
 
-export const refreshStories: () => Promise<void> = coalesce(async () => {
-  const epoch = sessionEpoch;
-  try {
-    const stories = await Obscura.getStories();
-    if (epoch !== sessionEpoch) return;
-    useStore.setState({ stories });
-  } catch (e) {
-    logError('stories.refresh', e);
-  }
-});
+/** A coalesced, never-rejecting refresh of one slice that drops results from a previous session. */
+function sliceRefresher<K extends Slice>(key: K, read: () => Promise<Session[K]>): () => Promise<void> {
+  return coalesce(async () => {
+    const epoch = sessionEpoch;
+    try {
+      const value = await read();
+      if (epoch !== sessionEpoch) return;
+      useStore.setState({ [key]: value } as Pick<Session, K>);
+    } catch (e) {
+      logError(`${key}.refresh`, e);
+    }
+  });
+}
 
-export const refreshProfiles: () => Promise<void> = coalesce(async () => {
-  const epoch = sessionEpoch;
-  try {
-    const profiles = await Obscura.getProfiles();
-    if (epoch !== sessionEpoch) return;
-    useStore.setState({ profiles });
-  } catch (e) {
-    logError('profiles.refresh', e);
-  }
-});
+export const refreshMessages = sliceRefresher('messages', () => Obscura.getMessages());
+export const refreshStories = sliceRefresher('stories', () => Obscura.getStories());
+export const refreshProfiles = sliceRefresher('profiles', () => Obscura.getProfiles());
 
+const REFRESH_FOR_MODEL: Record<EntryModel, () => Promise<void>> = {
+  directMessage: refreshMessages,
+  pix: refreshMessages,
+  seen: refreshMessages,
+  story: refreshStories,
+  profile: refreshProfiles,
+};
+
+/** Refresh each slice the given models live in, once. */
 async function refreshSlicesForModels(models: Iterable<EntryModel>): Promise<void> {
-  let needMessages = false;
-  let needStories = false;
-  let needProfiles = false;
-  for (const model of models) {
-  switch (model) {
-    case 'directMessage':
-    case 'pix':
-    case 'seen':
-      needMessages = true;
-      break;
-    case 'story':
-      needStories = true;
-      break;
-    case 'profile':
-      needProfiles = true;
-      break;
-  }
-  }
-  await Promise.all([
-    needMessages ? refreshMessages() : Promise.resolve(),
-    needStories ? refreshStories() : Promise.resolve(),
-    needProfiles ? refreshProfiles() : Promise.resolve(),
-  ]);
+  const refreshers = new Set(Array.from(models, (model) => REFRESH_FOR_MODEL[model]));
+  await Promise.all(Array.from(refreshers, (refresh) => refresh()));
 }
 
 export async function refreshAll(): Promise<void> {
@@ -252,7 +227,9 @@ export async function saveOwnProfile(displayName: string, bio: string): Promise<
 // ─── Session & Friends ───────────────────────────────────
 
 export async function refreshFriends(): Promise<void> {
-  useStore.setState({ friends: await Obscura.getFriends() });
+  const epoch = sessionEpoch;
+  const friends = await Obscura.getFriends();
+  if (epoch === sessionEpoch) useStore.setState({ friends });
 }
 
 export async function addFriend(rawCode: string): Promise<void> {
@@ -328,8 +305,12 @@ export async function applyObscuraEvent(event: ObscuraEvent): Promise<void> {
   }
 }
 
-/** Load the session identity and friends atomically, then sync all domain slices. */
-export async function loadSession(): Promise<void> {
+/**
+ * Load the session identity and friends atomically, then sync all domain slices. Resolves false,
+ * writing nothing, when the session was reset while the reads were in flight.
+ */
+export async function loadSession(): Promise<boolean> {
+  const epoch = sessionEpoch;
   const pull = <T>(p: Promise<T>, fallback: T): Promise<T> =>
     p.catch((e) => { logError('session.load', e); return fallback; });
   const [userId, username, deviceId, isPrimary, connState, friends] = await Promise.all([
@@ -340,6 +321,7 @@ export async function loadSession(): Promise<void> {
     pull(Obscura.getConnectionState(), 'disconnected' as ConnectionState),
     pull(Obscura.getFriends(), [] as Friend[]),
   ]);
+  if (epoch !== sessionEpoch) return false;
   useStore.setState({
     myUserId: userId ?? '',
     myUsername: username ?? '',
@@ -350,13 +332,13 @@ export async function loadSession(): Promise<void> {
   });
   // Push can store rows with no JS running and `messageReceived` may be dropped, so cold start syncs.
   await syncAll();
+  return true;
 }
 
 export async function bootstrapAuthState(): Promise<void> {
   try {
     const state = await Obscura.getAuthState();
-    if (state === 'authenticated') {
-      await loadSession();
+    if (state === 'authenticated' && await loadSession()) {
       useStore.setState({ authed: true });
     }
   } catch (e) {
