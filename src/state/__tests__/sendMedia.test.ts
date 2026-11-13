@@ -8,6 +8,7 @@ import {
 } from '../sendMedia';
 import { toPath } from '../../utils/files';
 import { resetSession, useStore } from '../store';
+import { signInAs } from './support';
 import { Obscura, type Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
@@ -35,7 +36,7 @@ beforeEach(() => {
   resetSession();
   bridge.__authenticate({ userId: SELF });
   bridge.__setFriends([BOB, CAROL]);
-  useStore.setState({ authed: true, myUserId: SELF, myDeviceId: 'device', friends: [BOB, CAROL] });
+  signInAs({ userId: SELF, deviceId: 'device' }, 'primary', [BOB, CAROL]);
 });
 
 describe('sendCapture', () => {

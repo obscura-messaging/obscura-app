@@ -12,7 +12,7 @@ import type {
   NativeStackNavigationProp,
 } from '@react-navigation/native-stack';
 
-import { useSession, useStore, subscribeToLaunchScreen } from '../state/store';
+import { useSessionStatus, subscribeToLaunchScreen } from '../state/store';
 import { useAppActive } from '../hooks/useAppActive';
 import { colors } from '../styles';
 import { CameraActiveContext } from './CameraActiveContext';
@@ -111,26 +111,26 @@ function headerOptions(title: string): NativeStackNavigationOptions {
 }
 
 export function RootNavigator() {
-  const { authed } = useSession();
-  const bootstrapped = useStore(s => s.bootstrapped);
+  const status = useSessionStatus();
+  const signedIn = status === 'signedIn';
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   // Notification taps: pulled once on cold start, and as an event while running.
   useEffect(() => {
-    if (!authed) return;
+    if (!signedIn) return;
     return subscribeToLaunchScreen(screen => {
       if (screen === 'chat') nav.navigate('MainTabs', { screen: 'Chats' });
     });
-  }, [authed, nav]);
+  }, [signedIn, nav]);
 
   return (
     <RootStack.Navigator
       screenOptions={{ headerShown: false, headerBackButtonDisplayMode: 'minimal' }}
     >
-      {!bootstrapped ? (
+      {status === 'booting' ? (
         // Avoids flashing the auth screen at a signed-in user.
         <RootStack.Screen name="Splash" component={SplashScreen} />
-      ) : !authed ? (
+      ) : !signedIn ? (
         <RootStack.Screen name="Auth" component={AuthScreen} />
       ) : (
         <>

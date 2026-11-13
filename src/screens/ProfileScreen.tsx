@@ -18,7 +18,8 @@ import { toast } from '../components/Toast';
 import { confirm } from '../components/confirm';
 import type { RootStackParamList } from '../navigation/types';
 import {
-  useSession,
+  useSignedIn,
+  useConnState,
   useIdentity,
   useProfiles,
   saveOwnProfile,
@@ -41,7 +42,10 @@ const DEBUG_LOG_POLL_MS = 2000;
 export function ProfileScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
-  const { myUserId, myUsername, connState } = useSession();
+  const {
+    me: { userId: myUserId, username: myUsername },
+  } = useSignedIn();
+  const connState = useConnState();
   const identity = useIdentity();
   const profiles = useProfiles();
   const ownProfile = profiles.find(p => p.userId === myUserId);

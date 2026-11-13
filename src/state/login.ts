@@ -1,5 +1,5 @@
 import { Obscura } from '../native/ObscuraModule';
-import { useStore } from './store';
+import { startSession, useStore } from './store';
 
 export const MIN_PASSWORD_LENGTH = 12;
 
@@ -13,7 +13,7 @@ export function credentialsProblem(username: string, password: string): string |
 
 async function signIn(): Promise<void> {
   await Obscura.connect();
-  useStore.setState({ authed: true });
+  await startSession();
 }
 
 export async function register(username: string, password: string): Promise<void> {
@@ -67,7 +67,7 @@ export async function linkThisDevice(
   }
   onCode(code);
   await Obscura.completeLink();
-  useStore.setState({ authed: true });
+  await startSession();
 }
 
 export function cancelLink(): Promise<void> {
@@ -76,7 +76,7 @@ export function cancelLink(): Promise<void> {
 }
 
 export function cancelPendingLinkOnUnmount(): Promise<void> {
-  if (useStore.getState().authed) return Promise.resolve();
+  if (useStore.getState().session.status === 'signedIn') return Promise.resolve();
   return cancelLink();
 }
 
