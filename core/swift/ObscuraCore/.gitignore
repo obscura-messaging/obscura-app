@@ -1,0 +1,5 @@
+# Built by core/scripts/build-xcframework.sh.
+/ObscuraCoreFFI.xcframework/
+/Sources/ObscuraCore/obscura_core.swift
+/.build/
+/.swiftpm/

@@ -1,0 +1,153 @@
+name: Core spike (iOS)
+
+# Go/no-go spike: build the Rust core as an XCFramework and run its Swift API tests on an iOS
+# simulator, once per SQLCipher crypto provider.
+on:
+  push:
+    branches: [spike/rust-core-ios]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-spike-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  xcframework:
+    name: XCFramework (${{ matrix.crypto }})
+    runs-on: macos-26
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        crypto: [openssl, commoncrypto]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Select Xcode
+        uses: ./.github/actions/xcode
+
+      # libsignal's spqr dependency generates its protobuf code at build time.
+      - name: Install protobuf
+        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
+
+      - name: Install Rust
+        run: scripts/ci-install-rust.sh aarch64-apple-ios aarch64-apple-ios-sim
+
+      - name: Cache Cargo
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core/target
+          key: core-ios-${{ matrix.crypto }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.xcode-version', 'core/Cargo.lock', 'core/Cargo.toml') }}
+
+      - name: Build XCFramework
+        run: |
+          start=$SECONDS
+          core/scripts/build-xcframework.sh ${{ matrix.crypto }}
+          echo "timing: build-xcframework.sh ${{ matrix.crypto }} $((SECONDS - start))s"
+          find core/swift/ObscuraCore/ObscuraCoreFFI.xcframework -maxdepth 4 | sort
+
+      - name: List simulators
+        run: xcrun simctl list devices available iPhone
+
+      - name: Test on iOS simulator
+        working-directory: core/swift/ObscuraCore
+        run: |
+          id="$("$GITHUB_WORKSPACE/swift/scripts/simulator.sh")"
+          echo "simulator: $id"
+          start=$SECONDS
+          xcodebuild -scheme ObscuraCore -derivedDataPath .build/DerivedData \
+            -destination "platform=iOS Simulator,id=$id" test
+          echo "timing: xcodebuild test $((SECONDS - start))s"
+
+      - name: Upload package
+        if: matrix.crypto == 'openssl'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: obscura-core-swift
+          path: |
+            core/swift/ObscuraCore/ObscuraCoreFFI.xcframework
+            core/swift/ObscuraCore/Sources/ObscuraCore/obscura_core.swift
+          retention-days: 3
+
+  # Can the app link the core next to the Swift kit (libsignal's own Rust FFI and GRDB's
+  # SQLCipher)? The kit gets a throwaway dependency on ObscuraCore here; nothing is committed.
+  app-link:
+    name: App links the core
+    needs: xcframework
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Download package
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: obscura-core-swift
+          path: core/swift/ObscuraCore
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          node: true
+
+      - name: Select Xcode
+        uses: ./.github/actions/xcode
+
+      - name: Install protobuf
+        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
+
+      - name: Install CocoaPods
+        run: sudo gem install cocoapods -v 1.17.0 -N
+
+      - name: Add ObscuraCore to the kit
+        run: |
+          python3 - <<'EOF'
+          from pathlib import Path
+          p = Path("swift/Package.swift")
+          s = p.read_text()
+          s = s.replace("    dependencies: [\n        .package(",
+                        "    dependencies: [\n        .package(path: \"../core/swift/ObscuraCore\"),\n        .package(", 1)
+          s = s.replace("                \"LibSignalFfi\",\n",
+                        "                \"LibSignalFfi\",\n                .product(name: \"ObscuraCore\", package: \"ObscuraCore\"),\n", 1)
+          p.write_text(s)
+          EOF
+          # A real call, so the linker must resolve the core's symbols in the app.
+          cat > swift/Sources/ObscuraKit/CoreLinkProbe.swift <<'EOF'
+          import Foundation
+          import ObscuraCore
+
+          public enum CoreLinkProbe {
+              public static func open(path: String, key: Data) throws -> SpikeClient {
+                  try SpikeClient.open(dbPath: path, dbKey: key, name: "probe", deviceId: 1)
+              }
+          }
+          EOF
+          git diff swift/Package.swift
+
+      - name: Build app
+        run: |
+          start=$SECONDS
+          just ios-build arm64
+          echo "timing: ios-build $((SECONDS - start))s"
+
+      - name: Inspect app binary
+        run: |
+          app="$(find ~/Library/Developer/Xcode/DerivedData -maxdepth 6 -path '*Debug-iphonesimulator/Obscura.app' | head -1)"
+          echo "app: $app"
+          for bin in "$app/Obscura" "$app/Obscura.debug.dylib"; do
+            [[ -f "$bin" ]] || continue
+            echo "$bin: $(du -k "$bin" | cut -f1) KiB"
+            echo "  uniffi_obscura_core symbols: $(nm "$bin" | grep -c uniffi_obscura_core || true)"
+            echo "  signal_ffi symbols: $(nm "$bin" | grep -c ' _signal_' || true)"
+            echo "  sqlite3_key definitions: $(nm "$bin" | grep -c ' T _sqlite3_key$' || true)"
+          done

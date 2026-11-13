@@ -17,6 +17,12 @@ use store::SqlStore;
 
 uniffi::setup_scaffolding!("obscura_core");
 
+// Without SQLCipher, `PRAGMA key` is silently ignored and the database is plaintext.
+#[cfg(not(any(feature = "sqlcipher-openssl", feature = "sqlcipher-commoncrypto")))]
+compile_error!("enable one SQLCipher crypto feature: sqlcipher-openssl or sqlcipher-commoncrypto");
+#[cfg(all(feature = "sqlcipher-openssl", feature = "sqlcipher-commoncrypto"))]
+compile_error!("sqlcipher-openssl and sqlcipher-commoncrypto are mutually exclusive");
+
 const SIGNED_PRE_KEY_ID: u32 = 1;
 const KYBER_PRE_KEY_ID: u32 = 1;
 const PRE_KEY_ID: u32 = 1;

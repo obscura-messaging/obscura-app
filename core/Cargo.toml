@@ -14,11 +14,17 @@ path = "uniffi-bindgen.rs"
 required-features = ["bindgen"]
 
 [features]
+default = ["sqlcipher-openssl"]
 bindgen = ["uniffi/cli"]
+# SQLCipher's crypto provider: enable exactly one. Vendored OpenSSL builds for every target.
+sqlcipher-openssl = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
+# Apple targets only: without OpenSSL, libsqlite3-sys builds SQLCipher against CommonCrypto
+# (and links Security.framework) when both host and target are Apple.
+sqlcipher-commoncrypto = ["rusqlite/bundled-sqlcipher"]
 
 [dependencies]
 libsignal-protocol = { git = "https://github.com/signalapp/libsignal", tag = "v0.106.2" }
-rusqlite = { version = "0.42.0", features = ["bundled-sqlcipher-vendored-openssl"] }
+rusqlite = "0.42.0"
 uniffi = "0.32.2"
 thiserror = "2.0.21"
 futures = { version = "0.3.34", default-features = false, features = ["executor", "alloc"] }
