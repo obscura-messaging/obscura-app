@@ -134,63 +134,38 @@ function coalesce(task: () => Promise<void>): () => Promise<void> {
   };
 }
 
-export const refreshMessages: () => Promise<void> = coalesce(async () => {
-  const epoch = sessionEpoch;
-  try {
-    const messages = await Obscura.getMessages();
-    if (epoch !== sessionEpoch) return;
-    useStore.setState({ messages });
-  } catch (e) {
-    logError('messages.refresh', e);
-  }
-});
+type Slice = 'messages' | 'stories' | 'profiles';
 
-export const refreshStories: () => Promise<void> = coalesce(async () => {
-  const epoch = sessionEpoch;
-  try {
-    const stories = await Obscura.getStories();
-    if (epoch !== sessionEpoch) return;
-    useStore.setState({ stories });
-  } catch (e) {
-    logError('stories.refresh', e);
-  }
-});
+/** A coalesced, never-rejecting refresh of one slice that drops results from a previous session. */
+function sliceRefresher<K extends Slice>(key: K, read: () => Promise<Session[K]>): () => Promise<void> {
+  return coalesce(async () => {
+    const epoch = sessionEpoch;
+    try {
+      const value = await read();
+      if (epoch !== sessionEpoch) return;
+      useStore.setState({ [key]: value } as Pick<Session, K>);
+    } catch (e) {
+      logError(`${key}.refresh`, e);
+    }
+  });
+}
 
-export const refreshProfiles: () => Promise<void> = coalesce(async () => {
-  const epoch = sessionEpoch;
-  try {
-    const profiles = await Obscura.getProfiles();
-    if (epoch !== sessionEpoch) return;
-    useStore.setState({ profiles });
-  } catch (e) {
-    logError('profiles.refresh', e);
-  }
-});
+export const refreshMessages = sliceRefresher('messages', () => Obscura.getMessages());
+export const refreshStories = sliceRefresher('stories', () => Obscura.getStories());
+export const refreshProfiles = sliceRefresher('profiles', () => Obscura.getProfiles());
 
+const REFRESH_FOR_MODEL: Record<EntryModel, () => Promise<void>> = {
+  directMessage: refreshMessages,
+  pix: refreshMessages,
+  seen: refreshMessages,
+  story: refreshStories,
+  profile: refreshProfiles,
+};
+
+/** Refresh each slice the given models live in, once. */
 async function refreshSlicesForModels(models: Iterable<EntryModel>): Promise<void> {
-  let needMessages = false;
-  let needStories = false;
-  let needProfiles = false;
-  for (const model of models) {
-  switch (model) {
-    case 'directMessage':
-    case 'pix':
-    case 'seen':
-      needMessages = true;
-      break;
-    case 'story':
-      needStories = true;
-      break;
-    case 'profile':
-      needProfiles = true;
-      break;
-  }
-  }
-  await Promise.all([
-    needMessages ? refreshMessages() : Promise.resolve(),
-    needStories ? refreshStories() : Promise.resolve(),
-    needProfiles ? refreshProfiles() : Promise.resolve(),
-  ]);
+  const refreshers = new Set(Array.from(models, (model) => REFRESH_FOR_MODEL[model]));
+  await Promise.all(Array.from(refreshers, (refresh) => refresh()));
 }
 
 export async function refreshAll(): Promise<void> {
