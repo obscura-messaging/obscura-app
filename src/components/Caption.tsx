@@ -1,15 +1,27 @@
 import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import {
-  CAPTION_FONT_LABELS, CAPTION_COLORS, DEFAULT_BAR, clamp01,
-  buildCaptionMeta, parseCaptionMeta, serializeCaptionMeta,
-  type CaptionMeta, type CaptionStyle, type BoldCaptionMeta,
+  CAPTION_FONT_LABELS,
+  CAPTION_COLORS,
+  DEFAULT_BAR,
+  clamp01,
+  buildCaptionMeta,
+  parseCaptionMeta,
+  serializeCaptionMeta,
+  type CaptionMeta,
+  type CaptionStyle,
+  type BoldCaptionMeta,
 } from '../domain/caption';
 
 export {
-  CAPTION_FONT_LABELS, CAPTION_COLORS, DEFAULT_BAR,
-  buildCaptionMeta, parseCaptionMeta, serializeCaptionMeta,
-  type CaptionMeta, type CaptionStyle,
+  CAPTION_FONT_LABELS,
+  CAPTION_COLORS,
+  DEFAULT_BAR,
+  buildCaptionMeta,
+  parseCaptionMeta,
+  serializeCaptionMeta,
+  type CaptionMeta,
+  type CaptionStyle,
 };
 
 // The blob stores a font index, resolved here to the closest system font on each platform.
@@ -22,23 +34,34 @@ const FONT_DEFS = [
 ];
 
 export const CAPTION_FONTS = FONT_DEFS.map(
-  (f) => Platform.select({ ios: f.ios, android: f.android, default: f.ios }) as string,
+  f => Platform.select({ ios: f.ios, android: f.android, default: f.ios }) as string,
 );
 
 export const captionStyles = StyleSheet.create({
   barWrap: {
-    left: 0, right: 0,
+    left: 0,
+    right: 0,
     backgroundColor: 'rgba(0,0,0,0.45)',
-    paddingVertical: 10, paddingHorizontal: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
   },
   barText: {
-    color: '#fff', fontSize: 20, fontWeight: '600', textAlign: 'center',
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   boldText: {
-    fontSize: 34, fontWeight: '900', textAlign: 'center',
+    fontSize: 34,
+    fontWeight: '900',
+    textAlign: 'center',
     // Centers the glyph in its box so it lands where it was dragged.
-    lineHeight: 40, includeFontPadding: false, textAlignVertical: 'center',
-    textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4,
+    lineHeight: 40,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
 });
 
@@ -50,18 +73,23 @@ export function boldTextStyle(meta: Pick<BoldCaptionMeta, 'font' | 'color'>) {
 }
 
 /** The read-only caption, positioned within a `width` × `height` media area. */
-export function CaptionView(
-  { meta, text, width, height }: { meta: CaptionMeta; text: string; width: number; height: number },
-) {
+export function CaptionView({
+  meta,
+  text,
+  width,
+  height,
+}: {
+  meta: CaptionMeta;
+  text: string;
+  width: number;
+  height: number;
+}) {
   if (!text) return null;
 
   if (meta.style === 'bar') {
     const barPos = { top: clamp01(meta.y) * height };
     return (
-      <View
-        pointerEvents="none"
-        style={[captionStyles.barWrap, styles.barAbsolute, barPos]}
-      >
+      <View pointerEvents="none" style={[captionStyles.barWrap, styles.barAbsolute, barPos]}>
         <Text style={captionStyles.barText}>{text}</Text>
       </View>
     );
@@ -77,14 +105,7 @@ export function CaptionView(
   };
   return (
     <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.center]}>
-      <Text
-        style={[
-          boldTextStyle(meta),
-          boldTransform,
-        ]}
-      >
-        {text}
-      </Text>
+      <Text style={[boldTextStyle(meta), boldTransform]}>{text}</Text>
     </View>
   );
 }

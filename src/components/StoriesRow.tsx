@@ -8,8 +8,16 @@ import { useIdentity, useStories } from '../state/store';
 import type { RootStackParamList } from '../navigation/types';
 import { colors } from '../styles';
 
-function StoryCircle({ label, username, empty, onPress }: {
-  label: string; username: string; empty: boolean; onPress: () => void;
+function StoryCircle({
+  label,
+  username,
+  empty,
+  onPress,
+}: {
+  label: string;
+  username: string;
+  empty: boolean;
+  onPress: () => void;
 }) {
   return (
     <TouchableOpacity style={styles.circle} onPress={onPress}>
@@ -23,7 +31,9 @@ function StoryCircle({ label, username, empty, onPress }: {
           </View>
         )}
       </View>
-      <Text style={styles.username} numberOfLines={1}>{label}</Text>
+      <Text style={styles.username} numberOfLines={1}>
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -50,10 +60,20 @@ export function StoriesRow() {
         label="My story"
         username={mine.username}
         empty={mine.stories.length === 0}
-        onPress={() => (mine.stories.length === 0 ? nav.navigate('MainTabs', { screen: 'Camera' }) : open(mine.userId))}
+        onPress={() =>
+          mine.stories.length === 0
+            ? nav.navigate('MainTabs', { screen: 'Camera' })
+            : open(mine.userId)
+        }
       />
-      {others.map((g) => (
-        <StoryCircle key={g.userId} label={g.username} username={g.username} empty={false} onPress={() => open(g.userId)} />
+      {others.map(g => (
+        <StoryCircle
+          key={g.userId}
+          label={g.username}
+          username={g.username}
+          empty={false}
+          onPress={() => open(g.userId)}
+        />
       ))}
     </ScrollView>
   );
@@ -65,13 +85,25 @@ const styles = StyleSheet.create({
   circle: { alignItems: 'center', marginRight: 16, width: 72 },
   ringWrap: { width: 64, height: 64 },
   ring: {
-    width: 64, height: 64, borderRadius: 32, borderWidth: 3,
-    borderColor: colors.accent, justifyContent: 'center', alignItems: 'center',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 3,
+    borderColor: colors.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   ringEmpty: { borderColor: colors.surfaceMuted, borderStyle: 'dashed' },
   addBadge: {
-    position: 'absolute', right: 0, bottom: 0, width: 20, height: 20,
-    borderRadius: 10, backgroundColor: colors.accent, justifyContent: 'center', alignItems: 'center',
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   addBadgeText: { color: colors.onAccent, fontWeight: '700', fontSize: 14, marginTop: -1 },
   username: { color: '#ccc', fontSize: 11, marginTop: 4, textAlign: 'center' },

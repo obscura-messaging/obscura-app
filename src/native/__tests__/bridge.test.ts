@@ -6,7 +6,7 @@ const bridge = getFakeBridge();
 describe('onObscuraEvent', () => {
   it('delivers native events and stops after unsubscribe', () => {
     const seen: ObscuraEvent[] = [];
-    const off = onObscuraEvent((e) => seen.push(e));
+    const off = onObscuraEvent(e => seen.push(e));
 
     bridge.__setConnectionState('connecting');
     expect(seen).toEqual([{ type: 'connectionChanged', state: 'connecting' }]);
@@ -196,4 +196,3 @@ describe('error code propagation', () => {
     expect((Obscura as unknown as { clipboard: string | null }).clipboard).toBeNull();
   });
 });
-

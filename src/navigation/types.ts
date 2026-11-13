@@ -11,7 +11,12 @@ export type MainTabParamList = {
 /** Normalized navigation target for `StoryViewer`: either live stories starting at a user, or specific view-once pix IDs. */
 export type StoryViewerParams =
   | { readonly mode: 'stories'; readonly initialUserId: string }
-  | { readonly mode: 'pix'; readonly userId: string; readonly username: string; readonly entryIds: readonly string[] };
+  | {
+      readonly mode: 'pix';
+      readonly userId: string;
+      readonly username: string;
+      readonly entryIds: readonly string[];
+    };
 
 export type RootStackParamList = {
   /** Shown while the cold-start auth check runs. */
@@ -29,5 +34,7 @@ export type RootStackParamList = {
   ScanLink: undefined;
 };
 
-export type RootStackScreenProps<T extends keyof RootStackParamList> =
-  NativeStackScreenProps<RootStackParamList, T>;
+export type RootStackScreenProps<T extends keyof RootStackParamList> = NativeStackScreenProps<
+  RootStackParamList,
+  T
+>;

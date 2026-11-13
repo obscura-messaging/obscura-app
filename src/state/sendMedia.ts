@@ -13,7 +13,10 @@ const inFlightByCache = new WeakMap<Map<string, string>, Map<string, Promise<str
  * Decrypt the attachment of a pix or story entry to the native cache and remember its `file://`
  * URI by entry id. Concurrent requests against the same `cache` share one in-flight download.
  */
-export async function loadAttachmentUri(entryId: string, cache: Map<string, string>): Promise<string> {
+export async function loadAttachmentUri(
+  entryId: string,
+  cache: Map<string, string>,
+): Promise<string> {
   const cached = cache.get(entryId);
   if (cached) return cached;
   let inFlight = inFlightByCache.get(cache);
@@ -37,11 +40,11 @@ export async function loadAttachmentUri(entryId: string, cache: Map<string, stri
 }
 
 export function discardCapture(path: string): void {
-  Obscura.deleteFile(path).catch((e) => logError('preview.cleanup', e));
+  Obscura.deleteFile(path).catch(e => logError('preview.cleanup', e));
 }
 
 export function prewarmAudio(): void {
-  Obscura.prewarmAudioSession().catch((e) => logError('prewarmAudio', e));
+  Obscura.prewarmAudioSession().catch(e => logError('prewarmAudio', e));
 }
 
 export async function createTestCapture(): Promise<string> {
@@ -65,19 +68,27 @@ const PHOTO_QUALITY = 80;
  * Resolves the usernames it could not reach; their pix are stored and retried by the outbox. Temp
  * files are deleted only once everything is stored, so a failure can be retried without reshooting.
  */
-export async function sendCapture(capture: Capture, recipients: readonly Friend[], toStory: boolean): Promise<string[]> {
+export async function sendCapture(
+  capture: Capture,
+  recipients: readonly Friend[],
+  toStory: boolean,
+): Promise<string[]> {
   const { path, mediaType, caption, captionMeta, displayDuration } = capture;
   // Photos are resized natively; video is uploaded as recorded.
-  const resized = mediaType === 'photo'
-    ? await Obscura.resizeImage(path, PHOTO_MAX_DIMENSION, PHOTO_QUALITY).catch((e) => { logError('resize', e); return null; })
-    : null;
+  const resized =
+    mediaType === 'photo'
+      ? await Obscura.resizeImage(path, PHOTO_MAX_DIMENSION, PHOTO_QUALITY).catch(e => {
+          logError('resize', e);
+          return null;
+        })
+      : null;
   const result = await Obscura.sendCapture({
     path: resized?.path ?? path,
     mediaType,
     caption,
     captionMeta: captionMeta ? serializeCaptionMeta(captionMeta) : null,
     displayDuration,
-    recipientUserIds: recipients.map((f) => f.userId),
+    recipientUserIds: recipients.map(f => f.userId),
     toStory,
   });
   await Promise.all([
@@ -86,11 +97,11 @@ export async function sendCapture(capture: Capture, recipients: readonly Friend[
   ]);
 
   for (const temp of new Set([path, resized?.path ?? path])) {
-    Obscura.deleteFile(temp).catch((e) => logError('cleanup', e));
+    Obscura.deleteFile(temp).catch(e => logError('cleanup', e));
   }
   const undelivered = new Set(result.undeliveredUserIds);
   return [
-    ...recipients.filter((f) => undelivered.has(f.userId)).map((f) => f.username),
+    ...recipients.filter(f => undelivered.has(f.userId)).map(f => f.username),
     ...(result.storyUndelivered ? ['My story'] : []),
   ];
 }

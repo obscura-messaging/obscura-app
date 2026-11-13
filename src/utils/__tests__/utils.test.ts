@@ -17,7 +17,12 @@ describe('timeAgo', () => {
 
 describe('back swipe & touch gesture helpers', () => {
   it('computes Euclidean distance between two touches', () => {
-    expect(touchDist([{ pageX: 10, pageY: 20 }, { pageX: 40, pageY: 60 }])).toBe(50);
+    expect(
+      touchDist([
+        { pageX: 10, pageY: 20 },
+        { pageX: 40, pageY: 60 },
+      ]),
+    ).toBe(50);
   });
 
   it('recognizes a deliberate horizontal right swipe and ignores vertical scrolling or left swipes', () => {
