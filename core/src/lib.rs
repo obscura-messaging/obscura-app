@@ -192,7 +192,9 @@ impl SpikeClient {
                         KYBER_PRE_KEY_ID.into(),
                         identity.private_key(),
                     )?;
-                    store.put("kyber_pre_keys", KYBER_PRE_KEY_ID, &record.serialize()?)?;
+                    // Last-resort, so a bundle fetched twice still works; the kits also hand out
+                    // one-time Kyber keys, which `SqlStore::import_kyber_pre_key` can hold.
+                    store.put_kyber(KYBER_PRE_KEY_ID, &record.serialize()?, true)?;
                     record
                 }
             };

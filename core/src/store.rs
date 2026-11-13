@@ -55,7 +55,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE TABLE IF NOT EXISTS pre_keys (id INTEGER PRIMARY KEY, record BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS signed_pre_keys (id INTEGER PRIMARY KEY, record BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS kyber_pre_keys (id INTEGER PRIMARY KEY, record BLOB NOT NULL);
+-- One-time and last-resort Kyber prekeys share one id space, as in the kits and libsignal.
+CREATE TABLE IF NOT EXISTS kyber_pre_keys (
+    id INTEGER PRIMARY KEY, record BLOB NOT NULL, last_resort INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS kyber_base_keys_seen (
     kyber_pre_key_id INTEGER NOT NULL, signed_pre_key_id INTEGER NOT NULL, base_key BLOB NOT NULL,
     PRIMARY KEY (kyber_pre_key_id, signed_pre_key_id, base_key)
@@ -144,13 +147,29 @@ impl SqlStore {
         self.put("signed_pre_keys", id, record)
     }
 
-    /// Stores `KyberPreKeyRecord::serialize()` bytes under the record's own id.
-    pub fn import_kyber_pre_key(&self, record: &[u8]) -> Result<(), CoreError> {
+    /// Stores `KyberPreKeyRecord::serialize()` bytes under the record's own id. A one-time
+    /// key is deleted once a session is started with it; a last-resort key is kept.
+    pub fn import_kyber_pre_key(&self, record: &[u8], last_resort: bool) -> Result<(), CoreError> {
         let id: u32 = KyberPreKeyRecord::deserialize(record)
             .and_then(|r| r.id())
             .map_err(protocol)?
             .into();
-        self.put("kyber_pre_keys", id, record)
+        self.put_kyber(id, record, last_resort)
+    }
+
+    pub(crate) fn put_kyber(
+        &self,
+        id: u32,
+        record: &[u8],
+        last_resort: bool,
+    ) -> Result<(), CoreError> {
+        self.conn()
+            .execute(
+                "INSERT OR REPLACE INTO kyber_pre_keys (id, record, last_resort) VALUES (?1, ?2, ?3)",
+                params![id, record, last_resort],
+            )
+            .map_err(storage)?;
+        Ok(())
     }
 
     /// Stores `PreKeyRecord::serialize()` bytes under the record's own id.
@@ -356,6 +375,7 @@ impl KyberPreKeyStore for SqlStore {
         KyberPreKeyRecord::deserialize(&raw)
     }
 
+    /// Stores a one-time key, as the kits' `storeKyberPreKey` does.
     async fn save_kyber_pre_key(
         &mut self,
         id: KyberPreKeyId,
@@ -363,21 +383,40 @@ impl KyberPreKeyStore for SqlStore {
     ) -> SignalResult<()> {
         self.conn()
             .execute(
-                "INSERT OR REPLACE INTO kyber_pre_keys (id, record) VALUES (?1, ?2)",
+                "INSERT OR REPLACE INTO kyber_pre_keys (id, record, last_resort) VALUES (?1, ?2, 0)",
                 params![u32::from(id), record.serialize()?],
             )
             .map_err(cb_err("save_kyber_pre_key"))?;
         Ok(())
     }
 
-    /// The spike only has last-resort Kyber prekeys, which are kept after use; like
-    /// libsignal's in-memory store, reject a reused (kyber, signed, base key) triple.
+    /// As in both kits: a one-time key is deleted. A last-resort key stays, so each session
+    /// started with it is recorded instead, and one started again with the same keys and base
+    /// key is a replay.
     async fn mark_kyber_pre_key_used(
         &mut self,
         kyber_id: KyberPreKeyId,
         signed_id: SignedPreKeyId,
         base_key: &PublicKey,
     ) -> SignalResult<()> {
+        let last_resort: Option<bool> = self
+            .conn()
+            .query_row(
+                "SELECT last_resort FROM kyber_pre_keys WHERE id = ?1",
+                params![u32::from(kyber_id)],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(cb_err("mark_kyber_pre_key_used"))?;
+        if last_resort != Some(true) {
+            self.conn()
+                .execute(
+                    "DELETE FROM kyber_pre_keys WHERE id = ?1 AND last_resort = 0",
+                    params![u32::from(kyber_id)],
+                )
+                .map_err(cb_err("mark_kyber_pre_key_used"))?;
+            return Ok(());
+        }
         let inserted = self
             .conn()
             .execute(

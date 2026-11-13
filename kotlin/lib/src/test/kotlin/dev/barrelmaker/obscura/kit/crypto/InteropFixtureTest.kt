@@ -26,7 +26,8 @@ import java.io.File
  * Produces the Kotlin-to-Rust-core interop fixture: libsignal-client's wire format for a PQXDH
  * session as this kit uses it (Kyber-1024 prekeys signed by the identity key, as in [PreKeys]).
  * The round trip always runs; `OBSCURA_WRITE_FIXTURES=1` also writes the fixture to
- * `core/tests/fixtures/kotlin-to-core.json` for the Rust crate to decrypt without a JVM.
+ * `core/tests/fixtures/kotlin-to-core.json` for the Rust crate to decrypt without a JVM. The
+ * reverse fixture, `core-to-kotlin.json`, is written by the crate's `tests/interop.rs`.
  */
 class InteropFixtureTest {
 
@@ -42,6 +43,12 @@ class InteropFixtureTest {
             file.parentFile.mkdirs()
             file.writeText(fixture)
         }
+    }
+
+    /** The reverse direction: records and messages from the Rust core (`core/tests/interop.rs`). */
+    @Test
+    fun `a fixture from the Rust core decrypts with libsignal-client`() {
+        assertDecrypts(JSONObject(File("../../core/tests/fixtures/core-to-kotlin.json").readText()))
     }
 
     private fun buildFixture(): String {
@@ -113,7 +120,7 @@ class InteropFixtureTest {
         val aliceIdentity = IdentityKey(s.getString("identityKey").fromBase64())
         val cipher = SessionCipher(bobStore, bob, alice)
         val messages = fixture.getJSONArray("messages")
-        assertEquals(plaintexts.size, messages.length())
+        assertEquals(2, messages.length())
         for (i in 0 until messages.length()) {
             val m = messages.getJSONObject(i)
             assertEquals("prekey", m.getString("kind"))
