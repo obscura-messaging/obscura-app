@@ -3,7 +3,7 @@ import { useNavigation } from '@react-navigation/native';
 import { toast } from '../components/Toast';
 import { QRScanner } from '../components/QRScanner';
 import { addFriend } from '../state/store';
-import { errorMessage } from '../utils/log';
+import { errorMessage } from '../domain/errors';
 
 export function ScanFriendScreen() {
   const nav = useNavigation();
