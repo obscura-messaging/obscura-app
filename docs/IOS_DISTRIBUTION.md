@@ -72,5 +72,4 @@ Deployments are allowed only from `main` and require approval from the
 The build job loads the identity into a temporary keychain. It checks the
 profile's team, bundle ID and App Group, and the exported IPA's bundle ID,
 version and build. The upload job gets only the artifact, its checksum and the
-API key. These builds run in the foreground only against the live server; push
-is not implemented ([`IOS_PARITY.md`](IOS_PARITY.md)).
+API key. iOS builds do not have push yet ([`IOS_PARITY.md`](IOS_PARITY.md)).

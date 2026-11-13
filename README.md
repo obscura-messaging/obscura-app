@@ -1,8 +1,8 @@
 # Obscura
 
 End-to-end encrypted messaging over ObscuraKit ([`kotlin/`](kotlin/), [`swift/`](swift/)).
-Android is the release target; iOS ships internal TestFlight builds and works in
-the foreground without push ([`docs/IOS_PARITY.md`](docs/IOS_PARITY.md)).
+Android and iOS both ship. iOS does not have push yet
+([`docs/IOS_PARITY.md`](docs/IOS_PARITY.md)).
 
 A **pix** is a direct, disappearing photo or video message, not the app's name.
 
@@ -35,5 +35,5 @@ Code and tests are the authority on behaviour; Markdown documents explain only
   rationale.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): setup, `just check`, and native pin.
 - [`docs/ANDROID_DISTRIBUTION.md`](docs/ANDROID_DISTRIBUTION.md),
-  [`docs/IOS_DISTRIBUTION.md`](docs/IOS_DISTRIBUTION.md): tester builds.
+  [`docs/IOS_DISTRIBUTION.md`](docs/IOS_DISTRIBUTION.md): release builds.
 - [`ROADMAP.md`](ROADMAP.md): product direction.
