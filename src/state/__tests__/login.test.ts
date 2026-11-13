@@ -1,6 +1,12 @@
 import {
-  MIN_PASSWORD_LENGTH, cancelLink, cancelPendingLinkOnUnmount,
-  credentialsProblem, linkThisDevice, logIn, register, resetAccount,
+  MIN_PASSWORD_LENGTH,
+  cancelLink,
+  cancelPendingLinkOnUnmount,
+  credentialsProblem,
+  linkThisDevice,
+  logIn,
+  register,
+  resetAccount,
 } from '../login';
 import { resetSession } from '../store';
 import { sessionStatus, signInAs } from './support';
@@ -76,7 +82,7 @@ describe('logIn', () => {
 describe('linkThisDevice', () => {
   it('shows the code, then signs in once the primary approves', async () => {
     const codes: string[] = [];
-    const linking = linkThisDevice('alice', 'password-1234', (code) => codes.push(code));
+    const linking = linkThisDevice('alice', 'password-1234', code => codes.push(code));
     await waitForCall('completeLink');
 
     expect(codes).toHaveLength(1);
@@ -115,7 +121,7 @@ describe('linkThisDevice', () => {
 
   it('does not wait for approval when cancelled while the session opens', async () => {
     const codes: string[] = [];
-    const linking = linkThisDevice('alice', 'password-1234', (code) => codes.push(code));
+    const linking = linkThisDevice('alice', 'password-1234', code => codes.push(code));
 
     await cancelPendingLinkOnUnmount();
 
@@ -143,7 +149,9 @@ describe('resetAccount', () => {
   it('connects nothing when the reset fails', async () => {
     bridge.__failNext('resetAccount', 'HTTP_ERROR');
 
-    await expect(resetAccount('alice', 'password-1234')).rejects.toMatchObject({ code: 'HTTP_ERROR' });
+    await expect(resetAccount('alice', 'password-1234')).rejects.toMatchObject({
+      code: 'HTTP_ERROR',
+    });
 
     expect(sessionStatus()).toBe('signedOut');
     expect(bridge.connectionState).toBe('disconnected');
@@ -154,10 +162,10 @@ describe('resetAccount', () => {
 async function waitForCall(method: string, count = 1): Promise<void> {
   const maxTicks = 50;
   for (let tick = 0; tick < maxTicks; tick += 1) {
-    if (bridge.__calls.filter((call) => call === method).length >= count) return;
-    await new Promise((resolve) => setImmediate(resolve));
+    if (bridge.__calls.filter(call => call === method).length >= count) return;
+    await new Promise(resolve => setImmediate(resolve));
   }
-  if (bridge.__calls.filter((call) => call === method).length < count) {
+  if (bridge.__calls.filter(call => call === method).length < count) {
     throw new Error(`Timed out waiting for ${method} (#${count})`);
   }
 }

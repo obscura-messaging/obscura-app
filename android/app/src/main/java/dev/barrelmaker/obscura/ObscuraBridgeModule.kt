@@ -92,6 +92,17 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         if (t is ObscuraError) reject(t.code, t.message, t) else reject(fallbackCode, t.message, t)
     }
 
+    /**
+     * Run [block] on [scope] and settle the promise with its result, rejecting through [rejectKit]
+     * with [fallbackCode] if it throws.
+     */
+    private fun Promise.settle(fallbackCode: String, block: suspend () -> Any?) {
+        scope.launch {
+            try { resolve(block()) }
+            catch (t: Throwable) { rejectKit(fallbackCode, t) }
+        }
+    }
+
     private fun authenticate(promise: Promise, code: String, operation: suspend () -> Any?): Job? {
         if (!authMutex.tryLock()) {
             promise.rejectKit(code, ObscuraError.InvalidArgument("Authentication already in progress"))
@@ -277,17 +288,11 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun connect(promise: Promise) {
-        scope.launch {
-            try {
-                Log.d(TAG, "connect")
-                // Kit's connect() refreshes the token and persists the rotated
-                // session itself — no app-side pre/post steps needed.
-                requireClient().connect()
-                promise.resolve(null)
-            } catch (e: Exception) {
-                Log.e(TAG, "connect failed: ${e.message}")
-                promise.rejectKit("CONNECT_ERROR", e)
-            }
+        promise.settle("CONNECT_ERROR") {
+            // Kit's connect() refreshes the token and persists the rotated
+            // session itself — no app-side pre/post steps needed.
+            requireClient().connect()
+            null
         }
     }
 
@@ -324,13 +329,9 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun getFriends(promise: Promise) {
-        scope.launch {
-            try {
-                val arr = Arguments.createArray()
-                for (f in client?.getFriends().orEmpty()) arr.pushMap(friendToMap(f, f.status.value))
-                promise.resolve(arr)
-            } catch (e: Exception) {
-                promise.rejectKit("GET_FRIENDS_ERROR", e)
+        promise.settle("GET_FRIENDS_ERROR") {
+            Arguments.createArray().apply {
+                for (f in client?.getFriends().orEmpty()) pushMap(friendToMap(f, f.status.value))
             }
         }
     }
@@ -372,10 +373,9 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun isPrimary(promise: Promise) {
-        scope.launch {
+        promise.settle("IS_PRIMARY_ERROR") {
             ObscuraSession.waitForRestore()
-            try { promise.resolve(client?.isPrimary() ?: false) }
-            catch (e: Exception) { promise.rejectKit("IS_PRIMARY_ERROR", e) }
+            client?.isPrimary() ?: false
         }
     }
 
@@ -389,25 +389,17 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun approveLink(code: String, promise: Promise) {
-        scope.launch {
-            try {
-                requireClient().approveLink(code)
-                promise.resolve(null)
-            } catch (e: Exception) {
-                promise.rejectKit("APPROVE_LINK_ERROR", e)
-            }
+        promise.settle("APPROVE_LINK_ERROR") {
+            requireClient().approveLink(code)
+            null
         }
     }
 
     @ReactMethod
     fun getDevices(promise: Promise) {
-        scope.launch {
-            try {
-                val arr = Arguments.createArray()
-                for (d in requireClient().devices()) arr.pushMap(deviceToMap(d))
-                promise.resolve(arr)
-            } catch (e: Exception) {
-                promise.rejectKit("GET_DEVICES_ERROR", e)
+        promise.settle("GET_DEVICES_ERROR") {
+            Arguments.createArray().apply {
+                for (d in requireClient().devices()) pushMap(deviceToMap(d))
             }
         }
     }
@@ -429,27 +421,17 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     /** Forget a friend: the friendship and their devices. Nothing is sent to them. */
     @ReactMethod
     fun removeFriend(userId: String, promise: Promise) {
-        scope.launch {
-            try {
-                requireClient().removeFriend(userId)
-                promise.resolve(null)
-            } catch (e: Exception) {
-                promise.rejectKit("REMOVE_FRIEND_ERROR", e)
-            }
+        promise.settle("REMOVE_FRIEND_ERROR") {
+            requireClient().removeFriend(userId)
+            null
         }
     }
 
     @ReactMethod
     fun acceptFriend(userId: String, promise: Promise) {
-        scope.launch {
-            try {
-                Log.d(TAG, "acceptFriend: $userId")
-                requireClient().acceptFriend(userId)
-                promise.resolve(null)
-            } catch (e: Exception) {
-                Log.e(TAG, "acceptFriend failed: ${e.message}")
-                promise.rejectKit("ACCEPT_ERROR", e)
-            }
+        promise.settle("ACCEPT_ERROR") {
+            requireClient().acceptFriend(userId)
+            null
         }
     }
 
@@ -458,32 +440,18 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         // Delegates rather than re-encoding. The format is the kit's (`FriendCode`), it is what
         // `addFriendByCode` decodes on the other side, and it is covered by the kit's tests — a
         // second copy here was one edit away from producing codes this app could not read back.
-        scope.launch {
-            try {
-                val code = requireClient().friendCode()
-                Log.d(TAG, "getFriendCode: ${code.take(20)}...")
-                promise.resolve(code)
-            } catch (e: Exception) {
-                promise.rejectKit("NOT_AUTHED", e)
-            }
-        }
+        promise.settle("FRIEND_CODE_ERROR") { requireClient().friendCode() }
     }
 
     @ReactMethod
     fun addFriendByCode(code: String, promise: Promise) {
-        scope.launch {
-            try {
-                Log.d(TAG, "addFriendByCode: ${code.take(20)}...")
-                // Delegates rather than re-decoding, and this direction was the strictly worse copy:
-                // the kit additionally normalises url-safe base64 and rejects a code whose fields are
-                // present but empty. Both halves of the format now live in `FriendCode`, where the
-                // tests are.
-                requireClient().addFriendByCode(code)
-                promise.resolve(null)
-            } catch (e: Exception) {
-                Log.e(TAG, "addFriendByCode failed: ${e.message}")
-                promise.rejectKit("ADD_FRIEND_ERROR", e)
-            }
+        // Delegates rather than re-decoding, and this direction was the strictly worse copy:
+        // the kit additionally normalises url-safe base64 and rejects a code whose fields are
+        // present but empty. Both halves of the format now live in `FriendCode`, where the
+        // tests are.
+        promise.settle("ADD_FRIEND_ERROR") {
+            requireClient().addFriendByCode(code)
+            null
         }
     }
 
@@ -491,25 +459,17 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun sendTyping(peerUserId: String, promise: Promise) {
-        scope.launch {
-            try {
-                requireClient().sendTyping(peerUserId, TypingState.STARTED)
-                promise.resolve(null)
-            } catch (e: Exception) {
-                promise.rejectKit("TYPING_ERROR", e)
-            }
+        promise.settle("TYPING_ERROR") {
+            requireClient().sendTyping(peerUserId, TypingState.STARTED)
+            null
         }
     }
 
     @ReactMethod
     fun stopTyping(peerUserId: String, promise: Promise) {
-        scope.launch {
-            try {
-                requireClient().sendTyping(peerUserId, TypingState.STOPPED)
-                promise.resolve(null)
-            } catch (e: Exception) {
-                promise.rejectKit("STOP_TYPING_ERROR", e)
-            }
+        promise.settle("STOP_TYPING_ERROR") {
+            requireClient().sendTyping(peerUserId, TypingState.STOPPED)
+            null
         }
     }
 
@@ -547,40 +507,32 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun sendCapture(capture: ReadableMap, promise: Promise) {
-        scope.launch {
-            try {
-                // Absent keys fall back like the iOS bridge does.
-                fun string(key: String) = if (capture.hasKey(key) && !capture.isNull(key)) capture.getString(key) else null
-                val recipients = if (capture.hasKey("recipientUserIds")) {
-                    capture.getArray("recipientUserIds")?.toArrayList()?.map { it as String }.orEmpty()
-                } else emptyList()
-                val result = requireClient().sendCapture(
-                    file = java.io.File(string("path") ?: ""),
-                    mediaType = MediaType.of(string("mediaType")),
-                    caption = string("caption") ?: "",
-                    captionMeta = string("captionMeta"),
-                    displayDuration = if (capture.hasKey("displayDuration")) capture.getDouble("displayDuration").toInt() else 0,
-                    peerUserIds = recipients,
-                    toStory = capture.hasKey("toStory") && capture.getBoolean("toStory"),
-                )
-                promise.resolve(Arguments.createMap().apply {
-                    putArray("undeliveredUserIds", Arguments.fromList(result.undeliveredPeerUserIds))
-                    putBoolean("storyUndelivered", result.storyUndelivered)
-                })
-            } catch (e: Exception) {
-                promise.rejectKit("SEND_CAPTURE_ERROR", e)
+        promise.settle("SEND_CAPTURE_ERROR") {
+            // Absent keys fall back like the iOS bridge does.
+            fun string(key: String) = if (capture.hasKey(key) && !capture.isNull(key)) capture.getString(key) else null
+            val recipients = if (capture.hasKey("recipientUserIds")) {
+                capture.getArray("recipientUserIds")?.toArrayList()?.map { it as String }.orEmpty()
+            } else emptyList()
+            val result = requireClient().sendCapture(
+                file = java.io.File(string("path") ?: ""),
+                mediaType = MediaType.of(string("mediaType")),
+                caption = string("caption") ?: "",
+                captionMeta = string("captionMeta"),
+                displayDuration = if (capture.hasKey("displayDuration")) capture.getDouble("displayDuration").toInt() else 0,
+                peerUserIds = recipients,
+                toStory = capture.hasKey("toStory") && capture.getBoolean("toStory"),
+            )
+            Arguments.createMap().apply {
+                putArray("undeliveredUserIds", Arguments.fromList(result.undeliveredPeerUserIds))
+                putBoolean("storyUndelivered", result.storyUndelivered)
             }
         }
     }
 
     @ReactMethod
     fun downloadAttachment(entryId: String, promise: Promise) {
-        scope.launch {
-            try {
-                promise.resolve(requireClient().downloadAttachmentToCache(entryId).absolutePath)
-            } catch (t: Throwable) {
-                promise.rejectKit("DOWNLOAD_ERROR", t)
-            }
+        promise.settle("DOWNLOAD_ERROR") {
+            requireClient().downloadAttachmentToCache(entryId).absolutePath
         }
     }
 
@@ -588,34 +540,15 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun resizeImage(srcPath: String, maxDim: Int, quality: Int, promise: Promise) {
-        scope.launch {
-            try {
-                val res = ImageProcessor.resize(reactApplicationContext.cacheDir, srcPath, maxDim, quality)
-                promise.resolve(Arguments.createMap().apply {
-                    putString("path", res.path)
-                    putInt("width", res.width)
-                    putInt("height", res.height)
-                })
-            } catch (t: Throwable) {
-                Log.e(TAG, "resizeImage failed: ${t.message}")
-                promise.rejectKit("RESIZE_ERROR", t)
-            }
+        promise.settle("RESIZE_ERROR") {
+            imageToMap(ImageProcessor.resize(reactApplicationContext.cacheDir, srcPath, maxDim, quality))
         }
     }
 
     @ReactMethod
     fun writeTestImage(width: Int, height: Int, promise: Promise) {
-        scope.launch {
-            try {
-                val res = ImageProcessor.writeTestImage(reactApplicationContext.cacheDir, width, height)
-                promise.resolve(Arguments.createMap().apply {
-                    putString("path", res.path)
-                    putInt("width", res.width)
-                    putInt("height", res.height)
-                })
-            } catch (t: Throwable) {
-                promise.rejectKit("TEST_IMAGE_ERROR", t)
-            }
+        promise.settle("TEST_IMAGE_ERROR") {
+            imageToMap(ImageProcessor.writeTestImage(reactApplicationContext.cacheDir, width, height))
         }
     }
 
@@ -711,7 +644,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
                 .addOnCompleteListener { task ->
                     if (task.isSuccessful) {
                         val token = task.result
-                        Log.d(TAG, "FCM token: ${token.take(20)}...")
                         ObscuraSession.deliverPushToken(token)
                         promise.resolve(true)
                     } else {
@@ -726,15 +658,9 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun registerPushToken(token: String, promise: Promise) {
-        scope.launch {
-            try {
-                requireClient().registerPushToken(token)
-                Log.d(TAG, "registerPushToken OK")
-                promise.resolve(null)
-            } catch (e: Exception) {
-                Log.e(TAG, "registerPushToken failed: ${e.message}")
-                promise.rejectKit("REGISTER_TOKEN_ERROR", e)
-            }
+        promise.settle("REGISTER_TOKEN_ERROR") {
+            requireClient().registerPushToken(token)
+            null
         }
     }
 
@@ -794,6 +720,13 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     // ─── Marshallers ────────────────────────────────────────────────────────
 
+    private fun imageToMap(res: ImageProcessor.Result): WritableMap =
+        Arguments.createMap().apply {
+            putString("path", res.path)
+            putInt("width", res.width)
+            putInt("height", res.height)
+        }
+
     private fun deviceToMap(d: DeviceInfo): WritableMap =
         Arguments.createMap().apply {
             putString("deviceId", d.deviceId)
@@ -815,99 +748,66 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun getMessages(promise: Promise) {
-        scope.launch {
-            try {
-                val arr = Arguments.createArray()
-                for (m in requireClient().getMessages()) arr.pushMap(messageToMap(m))
-                promise.resolve(arr)
-            } catch (e: Exception) {
-                promise.rejectKit("GET_MESSAGES_ERROR", e)
+        promise.settle("GET_MESSAGES_ERROR") {
+            Arguments.createArray().apply {
+                for (m in requireClient().getMessages()) pushMap(messageToMap(m))
             }
         }
     }
 
     @ReactMethod
     fun sendMessage(peerUserId: String, content: String, promise: Promise) {
-        scope.launch {
-            try {
-                promise.resolve(requireClient().sendMessage(peerUserId, content))
-            } catch (e: Exception) {
-                promise.rejectKit("SEND_MESSAGE_ERROR", e)
-            }
+        promise.settle("SEND_MESSAGE_ERROR") {
+            requireClient().sendMessage(peerUserId, content)
         }
     }
 
     @ReactMethod
     fun markSeen(entryId: String, promise: Promise) {
-        scope.launch {
-            try {
-                requireClient().markSeen(entryId)
-                promise.resolve(null)
-            } catch (e: Exception) {
-                promise.rejectKit("MARK_SEEN_ERROR", e)
-            }
+        promise.settle("MARK_SEEN_ERROR") {
+            requireClient().markSeen(entryId)
+            null
         }
     }
 
     @ReactMethod
     fun getStories(promise: Promise) {
-        scope.launch {
-            try {
-                val arr = Arguments.createArray()
-                for (s in requireClient().getStories()) arr.pushMap(storyToMap(s))
-                promise.resolve(arr)
-            } catch (e: Exception) {
-                promise.rejectKit("GET_STORIES_ERROR", e)
+        promise.settle("GET_STORIES_ERROR") {
+            Arguments.createArray().apply {
+                for (s in requireClient().getStories()) pushMap(storyToMap(s))
             }
         }
     }
 
     @ReactMethod
     fun getProfiles(promise: Promise) {
-        scope.launch {
-            try {
-                val arr = Arguments.createArray()
-                for (p in requireClient().getProfiles()) arr.pushMap(profileToMap(p))
-                promise.resolve(arr)
-            } catch (e: Exception) {
-                promise.rejectKit("GET_PROFILES_ERROR", e)
+        promise.settle("GET_PROFILES_ERROR") {
+            Arguments.createArray().apply {
+                for (p in requireClient().getProfiles()) pushMap(profileToMap(p))
             }
         }
     }
 
     @ReactMethod
     fun updateProfile(displayName: String, bio: String, promise: Promise) {
-        scope.launch {
-            try {
-                requireClient().updateProfile(displayName, bio)
-                promise.resolve(null)
-            } catch (e: Exception) {
-                promise.rejectKit("UPDATE_PROFILE_ERROR", e)
-            }
+        promise.settle("UPDATE_PROFILE_ERROR") {
+            requireClient().updateProfile(displayName, bio)
+            null
         }
     }
 
     @ReactMethod
     fun flushOutbox(promise: Promise) {
-        scope.launch {
-            try {
-                promise.resolve(requireClient().flushOutbox())
-            } catch (e: Exception) {
-                promise.rejectKit("FLUSH_OUTBOX_ERROR", e)
-            }
+        promise.settle("FLUSH_OUTBOX_ERROR") {
+            requireClient().flushOutbox()
         }
     }
 
     @ReactMethod
     fun sweepExpired(promise: Promise) {
-        scope.launch {
-            try {
-                val touched = requireClient().sweepExpired()
-                val arr = Arguments.createArray()
-                for (model in touched) arr.pushString(model.value)
-                promise.resolve(arr)
-            } catch (e: Exception) {
-                promise.rejectKit("SWEEP_EXPIRED_ERROR", e)
+        promise.settle("SWEEP_EXPIRED_ERROR") {
+            Arguments.createArray().apply {
+                for (model in requireClient().sweepExpired()) pushString(model.value)
             }
         }
     }

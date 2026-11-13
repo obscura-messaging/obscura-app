@@ -1,5 +1,10 @@
 import {
-  createTestCapture, discardCapture, loadAttachmentUri, prewarmAudio, sendCapture, type Capture,
+  createTestCapture,
+  discardCapture,
+  loadAttachmentUri,
+  prewarmAudio,
+  sendCapture,
+  type Capture,
 } from '../sendMedia';
 import { toPath } from '../../utils/files';
 import { resetSession, useStore } from '../store';
@@ -10,9 +15,22 @@ import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 const bridge = getFakeBridge();
 
 const SELF = '11111111-1111-4111-8111-111111111111';
-const BOB: Friend = { userId: '22222222-2222-4222-8222-222222222222', username: 'bob', status: 'accepted' };
-const CAROL: Friend = { userId: '33333333-3333-4333-8333-333333333333', username: 'carol', status: 'accepted' };
-const CAPTURE: Capture = { path: '/fake/capture.jpg', mediaType: 'photo', caption: 'hi', displayDuration: 3 };
+const BOB: Friend = {
+  userId: '22222222-2222-4222-8222-222222222222',
+  username: 'bob',
+  status: 'accepted',
+};
+const CAROL: Friend = {
+  userId: '33333333-3333-4333-8333-333333333333',
+  username: 'carol',
+  status: 'accepted',
+};
+const CAPTURE: Capture = {
+  path: '/fake/capture.jpg',
+  mediaType: 'photo',
+  caption: 'hi',
+  displayDuration: 3,
+};
 
 beforeEach(() => {
   resetSession();
@@ -25,7 +43,7 @@ describe('sendCapture', () => {
   it('uploads once, sends a pix per recipient and a story, then deletes the capture', async () => {
     expect(await sendCapture(CAPTURE, [BOB, CAROL], true)).toEqual([]);
 
-    expect(bridge.__calls.filter((c) => c === 'sendCapture')).toHaveLength(1);
+    expect(bridge.__calls.filter(c => c === 'sendCapture')).toHaveLength(1);
     expect(await Obscura.getMessages()).toEqual([
       expect.objectContaining({
         kind: 'pix',
@@ -44,9 +62,7 @@ describe('sendCapture', () => {
         attachment: expect.objectContaining({ mediaType: 'photo' }),
       }),
     ]);
-    expect(await Obscura.getStories()).toEqual([
-      expect.objectContaining({ content: 'hi' }),
-    ]);
+    expect(await Obscura.getStories()).toEqual([expect.objectContaining({ content: 'hi' })]);
     expect(useStore.getState().messages).toHaveLength(2);
     expect(useStore.getState().stories).toHaveLength(1);
     expect(bridge.deletedFiles).toContain(CAPTURE.path);
@@ -105,7 +121,7 @@ describe('sendCapture', () => {
     expect(uri1).toBe(`file:///fake/cache/${msg.id}`);
     expect(uri1).toBe(uri2);
     expect(uri1).toBe(uri3);
-    expect(bridge.__calls.filter((c) => c === 'downloadAttachment')).toHaveLength(1);
+    expect(bridge.__calls.filter(c => c === 'downloadAttachment')).toHaveLength(1);
   });
 
   it('falls back to the original path if resizeImage fails, and supports capture helpers', async () => {

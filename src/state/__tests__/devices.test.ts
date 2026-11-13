@@ -1,4 +1,10 @@
-import { approveLink, linkCodeDeviceName, loadDevices, primaryOnly, unlinkDevice } from '../devices';
+import {
+  approveLink,
+  linkCodeDeviceName,
+  loadDevices,
+  primaryOnly,
+  unlinkDevice,
+} from '../devices';
 import { confirm, confirmAndApproveLink } from '../../components/confirm';
 import { subscribeToast, toast, type ToastItem } from '../toast';
 import { resetSession } from '../store';
@@ -9,8 +15,18 @@ import { Alert, getFakeBridge } from '../../native/__fixtures__/reactNativeMock'
 
 const bridge = getFakeBridge();
 
-const PRIMARY: DeviceInfo = { deviceId: 'device_self', name: 'Phone', isPrimary: true, isThisDevice: true };
-const TABLET: DeviceInfo = { deviceId: 'device_tablet', name: 'Tablet', isPrimary: false, isThisDevice: false };
+const PRIMARY: DeviceInfo = {
+  deviceId: 'device_self',
+  name: 'Phone',
+  isPrimary: true,
+  isThisDevice: true,
+};
+const TABLET: DeviceInfo = {
+  deviceId: 'device_tablet',
+  name: 'Tablet',
+  isPrimary: false,
+  isThisDevice: false,
+};
 
 beforeEach(() => {
   resetSession();
@@ -22,7 +38,7 @@ describe('loadDevices', () => {
   it('lists the primary first', async () => {
     bridge.__setDevices([TABLET, PRIMARY]);
 
-    expect((await loadDevices()).map((d) => d.deviceId)).toEqual(['device_self', 'device_tablet']);
+    expect((await loadDevices()).map(d => d.deviceId)).toEqual(['device_self', 'device_tablet']);
   });
 });
 
@@ -66,7 +82,9 @@ describe('primaryOnly', () => {
   it('leaves the session alone on other failures', async () => {
     bridge.__failNext('addFriendByCode', 'INVALID_FRIEND_CODE');
 
-    await expect(primaryOnly(() => Obscura.addFriendByCode('x'))).rejects.toMatchObject({ code: 'INVALID_FRIEND_CODE' });
+    await expect(primaryOnly(() => Obscura.addFriendByCode('x'))).rejects.toMatchObject({
+      code: 'INVALID_FRIEND_CODE',
+    });
 
     expect(role()).toBe('primary');
   });
@@ -74,7 +92,9 @@ describe('primaryOnly', () => {
   it('refuses friend changes on a linked device', async () => {
     bridge.__setPrimary(false);
 
-    await expect(primaryOnly(() => Obscura.acceptFriend('u'))).rejects.toMatchObject({ code: 'NOT_PRIMARY' });
+    await expect(primaryOnly(() => Obscura.acceptFriend('u'))).rejects.toMatchObject({
+      code: 'NOT_PRIMARY',
+    });
 
     expect(role()).toBe('linked');
   });
@@ -83,7 +103,9 @@ describe('primaryOnly', () => {
     bridge.__setPrimary(false);
     resetSession();
 
-    await expect(primaryOnly(() => Obscura.acceptFriend('u'))).rejects.toMatchObject({ code: 'NOT_PRIMARY' });
+    await expect(primaryOnly(() => Obscura.acceptFriend('u'))).rejects.toMatchObject({
+      code: 'NOT_PRIMARY',
+    });
 
     expect(sessionStatus()).toBe('signedOut');
   });
@@ -95,7 +117,7 @@ describe('unlinkDevice', () => {
 
     await unlinkDevice(TABLET);
 
-    expect((await loadDevices()).map((d) => d.deviceId)).toEqual(['device_self']);
+    expect((await loadDevices()).map(d => d.deviceId)).toEqual(['device_self']);
     expect(sessionStatus()).toBe('signedIn');
   });
 
@@ -113,7 +135,9 @@ describe('unlinkDevice', () => {
     bridge.__setPrimary(false);
     bridge.__failNext('unlinkDevice', 'HTTP_ERROR');
 
-    await expect(unlinkDevice({ ...PRIMARY, isPrimary: false })).rejects.toMatchObject({ code: 'HTTP_ERROR' });
+    await expect(unlinkDevice({ ...PRIMARY, isPrimary: false })).rejects.toMatchObject({
+      code: 'HTTP_ERROR',
+    });
 
     expect(sessionStatus()).toBe('signedIn');
   });
@@ -150,11 +174,14 @@ describe('confirm & confirmAndApproveLink', () => {
 
   it('handles invalid codes, lookup errors, cancellation, approval success, and approval errors in confirmAndApproveLink', async () => {
     const toasts: ToastItem[] = [];
-    const unsubscribe = subscribeToast((t) => toasts.push(t));
+    const unsubscribe = subscribeToast(t => toasts.push(t));
 
     // 1. Invalid code -> toast.error
     await expect(confirmAndApproveLink('not-a-code')).resolves.toBe(false);
-    expect(toasts[toasts.length - 1]).toMatchObject({ type: 'error', message: 'That is not a device link code' });
+    expect(toasts[toasts.length - 1]).toMatchObject({
+      type: 'error',
+      message: 'That is not a device link code',
+    });
 
     // 2. linkCodeDeviceName error -> toast.error
     bridge.__failNext('linkCodeDeviceName', 'STORAGE_ERROR', 'db broken');
@@ -170,7 +197,10 @@ describe('confirm & confirmAndApproveLink', () => {
     Alert.__enqueue((_t, _m, buttons) => buttons?.[1]?.onPress?.());
     await expect(confirmAndApproveLink('link_1')).resolves.toBe(true);
     expect(bridge.__approved).toEqual(['link_1']);
-    expect(toasts[toasts.length - 1]).toMatchObject({ type: 'success', message: `${FAKE_LINK_DEVICE_NAME} linked` });
+    expect(toasts[toasts.length - 1]).toMatchObject({
+      type: 'success',
+      message: `${FAKE_LINK_DEVICE_NAME} linked`,
+    });
 
     // 5. User confirms and approveLink fails -> toast.error; empty toast messages are ignored
     Alert.__enqueue((_t, _m, buttons) => buttons?.[1]?.onPress?.());

@@ -82,7 +82,7 @@ xcrun devicectl device install app --device <DEVICE_ID> \
 
 ## Checks
 
-`just check` runs Jest, both typechecks, and ESLint; `just release-script-test` tests
+`just check` runs Jest, both typechecks, ESLint, and a Prettier check (`just format` fixes it); `just release-script-test` tests
 `scripts/verify-release-build.sh`;
 `just kotlin-check` runs protocol conformance and the Kotlin kit unit/coverage suite;
 `just swift-unit` runs the Swift kit unit and coverage suite.

@@ -7,8 +7,19 @@ import { errorMessage } from '../domain/errors';
 
 export function ScanFriendScreen() {
   const nav = useNavigation();
-  const onCode = useCallback((code: string) => addFriend(code)
-    .then(() => { toast.success('Friend request sent'); nav.goBack(); return true; })
-    .catch((e) => { toast.error(errorMessage(e)); return false; }), [nav]);
+  const onCode = useCallback(
+    (code: string) =>
+      addFriend(code)
+        .then(() => {
+          toast.success('Friend request sent');
+          nav.goBack();
+          return true;
+        })
+        .catch(e => {
+          toast.error(errorMessage(e));
+          return false;
+        }),
+    [nav],
+  );
   return <QRScanner kind="friend" hint="Point at a friend's QR code" onCode={onCode} />;
 }

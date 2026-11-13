@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { create } from 'zustand';
 import {
-  Obscura, onObscuraEvent,
-  type Friend, type ConnectionState, type ObscuraEvent, type EntryModel,
-  type ConversationItem, type StoryItem, type ProfileItem,
+  Obscura,
+  onObscuraEvent,
+  type Friend,
+  type ConnectionState,
+  type ObscuraEvent,
+  type EntryModel,
+  type ConversationItem,
+  type StoryItem,
+  type ProfileItem,
 } from '../native/ObscuraModule';
 import { primaryOnly } from './devices';
 import { requestStartupPermissions } from './permissions';
@@ -12,7 +18,15 @@ import { acceptedFriends, pendingFriends, type Identity } from '../domain/friend
 import { deviceRole, toMe, type DeviceRole, type Session, type SignedIn } from '../domain/session';
 import { cleanCode } from '../domain/qr';
 
-export type { Friend, ConnectionState, ConversationItem, StoryItem, ProfileItem, DeviceRole, SignedIn };
+export type {
+  Friend,
+  ConnectionState,
+  ConversationItem,
+  StoryItem,
+  ProfileItem,
+  DeviceRole,
+  SignedIn,
+};
 
 interface State {
   session: Session;
@@ -45,7 +59,11 @@ export function resetSession(): void {
 
 /** Signs out locally even when the kit call fails. */
 export async function logout(): Promise<void> {
-  try { await Obscura.logout(); } catch (e) { logError('logout', e); }
+  try {
+    await Obscura.logout();
+  } catch (e) {
+    logError('logout', e);
+  }
   resetSession();
 }
 
@@ -53,12 +71,12 @@ export async function logout(): Promise<void> {
 
 /* istanbul ignore next */
 export function useSessionStatus(): Session['status'] {
-  return useStore((s) => s.session.status);
+  return useStore(s => s.session.status);
 }
 
 /* istanbul ignore next */
 export function useConnState(): ConnectionState {
-  return useStore((s) => s.connState);
+  return useStore(s => s.connState);
 }
 
 /**
@@ -67,7 +85,7 @@ export function useConnState(): ConnectionState {
  */
 /* istanbul ignore next */
 export function useSignedIn(): SignedIn {
-  const session = useStore((s) => s.session);
+  const session = useStore(s => s.session);
   const last = useRef<SignedIn | null>(null);
   if (session.status === 'signedIn') last.current = session;
   if (last.current === null) throw new Error('useSignedIn() used outside a signed-in session');
@@ -77,7 +95,7 @@ export function useSignedIn(): SignedIn {
 /* istanbul ignore next */
 export function useIdentity(): Identity {
   const { me } = useSignedIn();
-  const friends = useStore((s) => s.friends);
+  const friends = useStore(s => s.friends);
   return useMemo(
     () => ({ myUserId: me.userId, myUsername: me.username, friends }),
     [me.userId, me.username, friends],
@@ -86,29 +104,29 @@ export function useIdentity(): Identity {
 
 /* istanbul ignore next */
 export function useAcceptedFriends(): Friend[] {
-  const friends = useStore((s) => s.friends);
+  const friends = useStore(s => s.friends);
   return useMemo(() => acceptedFriends(friends), [friends]);
 }
 
 /* istanbul ignore next */
 export function usePendingFriends(): Friend[] {
-  const friends = useStore((s) => s.friends);
+  const friends = useStore(s => s.friends);
   return useMemo(() => pendingFriends(friends), [friends]);
 }
 
 /* istanbul ignore next */
 export function useMessages(): ConversationItem[] {
-  return useStore((s) => s.messages);
+  return useStore(s => s.messages);
 }
 
 /* istanbul ignore next */
 export function useStories(): StoryItem[] {
-  return useStore((s) => s.stories);
+  return useStore(s => s.stories);
 }
 
 /* istanbul ignore next */
 export function useProfiles(): ProfileItem[] {
-  return useStore((s) => s.profiles);
+  return useStore(s => s.profiles);
 }
 
 // ─── Slice refresh & sync ────────────────────────────────
@@ -143,7 +161,10 @@ function coalesce(task: () => Promise<void>): () => Promise<void> {
 type Slice = 'messages' | 'stories' | 'profiles';
 
 /** A coalesced, never-rejecting refresh of one slice that drops results from a previous session. */
-function sliceRefresher<K extends Slice>(key: K, read: () => Promise<State[K]>): () => Promise<void> {
+function sliceRefresher<K extends Slice>(
+  key: K,
+  read: () => Promise<State[K]>,
+): () => Promise<void> {
   return coalesce(async () => {
     const epoch = sessionEpoch;
     try {
@@ -170,16 +191,12 @@ const REFRESH_FOR_MODEL: Record<EntryModel, () => Promise<void>> = {
 
 /** Refresh each slice the given models live in, once. */
 async function refreshSlicesForModels(models: Iterable<EntryModel>): Promise<void> {
-  const refreshers = new Set(Array.from(models, (model) => REFRESH_FOR_MODEL[model]));
-  await Promise.all(Array.from(refreshers, (refresh) => refresh()));
+  const refreshers = new Set(Array.from(models, model => REFRESH_FOR_MODEL[model]));
+  await Promise.all(Array.from(refreshers, refresh => refresh()));
 }
 
 export async function refreshAll(): Promise<void> {
-  await Promise.all([
-    refreshMessages(),
-    refreshStories(),
-    refreshProfiles(),
-  ]);
+  await Promise.all([refreshMessages(), refreshStories(), refreshProfiles()]);
 }
 
 /** Retry entries whose send reached nobody. */
@@ -202,11 +219,7 @@ export const sweepAndRefresh: () => Promise<void> = coalesce(async () => {
 
 /** Everything "the network or the app came back" means: receive, retry and expire. */
 async function syncAll(): Promise<void> {
-  await Promise.all([
-    refreshAll(),
-    flushOutboxFromStore(),
-    sweepAndRefresh(),
-  ]);
+  await Promise.all([refreshAll(), flushOutboxFromStore(), sweepAndRefresh()]);
 }
 
 const SWEEP_INTERVAL_MS = 30 * 1000;
@@ -275,9 +288,11 @@ export async function loadDebugLog(): Promise<string[]> {
 
 export function subscribeToLaunchScreen(onScreen: (screen: string) => void): () => void {
   Obscura.getLaunchIntent()
-    .then((intent) => { if (intent) onScreen(intent.screen); })
-    .catch((e) => logError('launchIntent', e));
-  return onObscuraEvent((event) => {
+    .then(intent => {
+      if (intent) onScreen(intent.screen);
+    })
+    .catch(e => logError('launchIntent', e));
+  return onObscuraEvent(event => {
     if (event.type === 'launchedFrom') onScreen(event.screen);
   });
 }
@@ -285,7 +300,7 @@ export function subscribeToLaunchScreen(onScreen: (screen: string) => void): () 
 export async function applyObscuraEvent(event: ObscuraEvent): Promise<void> {
   switch (event.type) {
     case 'friendsChanged':
-      await refreshFriends().catch((e) => logError('friends.refresh', e));
+      await refreshFriends().catch(e => logError('friends.refresh', e));
       return;
     case 'connectionChanged':
       useStore.setState({ connState: event.state });
@@ -301,14 +316,16 @@ export async function applyObscuraEvent(event: ObscuraEvent): Promise<void> {
       if (event.state === 'active') {
         await Promise.all([
           refreshAll(),
-          useStore.getState().connState === 'connected' ? flushOutboxFromStore() : Promise.resolve(),
+          useStore.getState().connState === 'connected'
+            ? flushOutboxFromStore()
+            : Promise.resolve(),
           sweepAndRefresh(),
         ]);
       }
       return;
     case 'pushTokenReceived':
       if (useStore.getState().session.status === 'signedIn') {
-        await Obscura.registerPushToken(event.token).catch((e) => logError('push.register', e));
+        await Obscura.registerPushToken(event.token).catch(e => logError('push.register', e));
       }
       return;
     case 'messageReceived':
@@ -325,7 +342,10 @@ export async function applyObscuraEvent(event: ObscuraEvent): Promise<void> {
 export async function loadSession(): Promise<boolean> {
   const epoch = sessionEpoch;
   const pull = <T>(p: Promise<T>, fallback: T): Promise<T> =>
-    p.catch((e) => { logError('session.load', e); return fallback; });
+    p.catch(e => {
+      logError('session.load', e);
+      return fallback;
+    });
   const [userId, username, deviceId, isPrimary, connState, friends] = await Promise.all([
     pull(Obscura.getUserId(), null),
     pull(Obscura.getUsername(), null),
@@ -383,23 +403,34 @@ export function ObscuraBootstrap(): null {
     bootstrapAuthState();
   }, []);
 
-  useEffect(() => onObscuraEvent((e) => { applyObscuraEvent(e); }), []);
+  useEffect(
+    () =>
+      onObscuraEvent(e => {
+        applyObscuraEvent(e);
+      }),
+    [],
+  );
 
-  const signedIn = useStore((s) => s.session.status === 'signedIn');
+  const signedIn = useStore(s => s.session.status === 'signedIn');
   useEffect(() => {
     if (!signedIn) return;
-    const timer = setInterval(() => { sweepAndRefresh(); }, SWEEP_INTERVAL_MS);
+    const timer = setInterval(() => {
+      sweepAndRefresh();
+    }, SWEEP_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [signedIn]);
 
   // Once per session, after the first connect. Android drops concurrent permission prompts.
-  const connState = useStore((s) => s.connState);
+  const connState = useStore(s => s.connState);
   const permissionsRequested = useRef(false);
   useEffect(() => {
-    if (!signedIn) { permissionsRequested.current = false; return; }
+    if (!signedIn) {
+      permissionsRequested.current = false;
+      return;
+    }
     if (!shouldRequestStartupPermissions(signedIn, connState, permissionsRequested.current)) return;
     permissionsRequested.current = true;
-    requestStartupPermissions().catch((e) => logError('permissions.startup', e));
+    requestStartupPermissions().catch(e => logError('permissions.startup', e));
   }, [signedIn, connState]);
 
   return null;

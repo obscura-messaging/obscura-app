@@ -36,7 +36,9 @@ export function MainHeaderOverlay({ camera }: MainHeaderOverlayProps) {
       >
         <Avatar name={me.username} size={32} />
       </TouchableOpacity>
-      <Text style={s.title} pointerEvents="none">obscura</Text>
+      <Text style={s.title} pointerEvents="none">
+        obscura
+      </Text>
       <TouchableOpacity
         onPress={() => nav.navigate('AddFriend')}
         style={s.action}

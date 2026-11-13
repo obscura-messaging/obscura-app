@@ -1,10 +1,16 @@
 import React, { useEffect } from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { createMaterialTopTabNavigator, type MaterialTopTabBarProps } from '@react-navigation/material-top-tabs';
+import {
+  createMaterialTopTabNavigator,
+  type MaterialTopTabBarProps,
+} from '@react-navigation/material-top-tabs';
 import { View, TouchableOpacity, StyleSheet } from 'react-native';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { NativeStackNavigationOptions, NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type {
+  NativeStackNavigationOptions,
+  NativeStackNavigationProp,
+} from '@react-navigation/native-stack';
 
 import { useSessionStatus, subscribeToLaunchScreen } from '../state/store';
 import { useAppActive } from '../hooks/useAppActive';
@@ -44,13 +50,22 @@ function BottomTabBar({ state, navigation }: MaterialTopTabBarProps) {
       {state.routes.map((route, i) => {
         const focused = state.index === i;
         const onPress = () => {
-          const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+          const event = navigation.emit({
+            type: 'tabPress',
+            target: route.key,
+            canPreventDefault: true,
+          });
           if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
         };
         const tint = focused ? colors.accent : colors.textDim;
         const Icon = route.name === 'Camera' ? CameraIcon : ChatIcon;
         return (
-          <TouchableOpacity key={route.key} style={tabStyles.tab} onPress={onPress} accessibilityLabel={route.name}>
+          <TouchableOpacity
+            key={route.key}
+            style={tabStyles.tab}
+            onPress={onPress}
+            accessibilityLabel={route.name}
+          >
             <Icon size={27} color={tint} strokeWidth={focused ? 2.4 : 2} />
           </TouchableOpacity>
         );
@@ -103,13 +118,15 @@ export function RootNavigator() {
   // Notification taps: pulled once on cold start, and as an event while running.
   useEffect(() => {
     if (!signedIn) return;
-    return subscribeToLaunchScreen((screen) => {
+    return subscribeToLaunchScreen(screen => {
       if (screen === 'chat') nav.navigate('MainTabs', { screen: 'Chats' });
     });
   }, [signedIn, nav]);
 
   return (
-    <RootStack.Navigator screenOptions={{ headerShown: false, headerBackButtonDisplayMode: 'minimal' }}>
+    <RootStack.Navigator
+      screenOptions={{ headerShown: false, headerBackButtonDisplayMode: 'minimal' }}
+    >
       {status === 'booting' ? (
         // Avoids flashing the auth screen at a signed-in user.
         <RootStack.Screen name="Splash" component={SplashScreen} />

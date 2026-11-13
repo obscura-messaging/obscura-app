@@ -1,11 +1,26 @@
 import { Platform } from 'react-native';
 import { Camera } from 'react-native-vision-camera';
 import {
-  useStore, refreshMessages, refreshStories, refreshProfiles,
-  markSeen, saveOwnProfile, applyObscuraEvent, loadSession,
-  refreshFriends, resetSession, logout, flushOutboxFromStore, sweepAndRefresh,
-  subscribeToLaunchScreen, loadDebugLog, copyToClipboard, getFriendCode,
-  bootstrapAuthState, startSession, shouldRequestStartupPermissions,
+  useStore,
+  refreshMessages,
+  refreshStories,
+  refreshProfiles,
+  markSeen,
+  saveOwnProfile,
+  applyObscuraEvent,
+  loadSession,
+  refreshFriends,
+  resetSession,
+  logout,
+  flushOutboxFromStore,
+  sweepAndRefresh,
+  subscribeToLaunchScreen,
+  loadDebugLog,
+  copyToClipboard,
+  getFriendCode,
+  bootstrapAuthState,
+  startSession,
+  shouldRequestStartupPermissions,
 } from '../store';
 import { myUserId, sessionStatus, signInAs } from './support';
 import { canPromptFor, requestStartupPermissions } from '../permissions';
@@ -30,11 +45,9 @@ const DEVICE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const BOB = '22222222-2222-4222-8222-222222222222';
 
 function session() {
-  signInAs(
-    { userId: SELF, username: 'me', deviceId: DEVICE },
-    'primary',
-    [{ userId: BOB, username: 'bob', status: 'accepted' }],
-  );
+  signInAs({ userId: SELF, username: 'me', deviceId: DEVICE }, 'primary', [
+    { userId: BOB, username: 'bob', status: 'accepted' },
+  ]);
 }
 
 beforeEach(() => {
@@ -51,7 +64,7 @@ describe('refreshFriends', () => {
 
     await refreshFriends();
 
-    expect(useStore.getState().friends.map((f) => f.username)).toEqual(['bob', 'carol']);
+    expect(useStore.getState().friends.map(f => f.username)).toEqual(['bob', 'carol']);
   });
 });
 
@@ -59,16 +72,27 @@ describe('logout & sessionEpoch race protection', () => {
   it('clears the session and tells the kit', async () => {
     session();
     useStore.setState({
-      messages: [{
-        kind: 'message', id: 'm1', peerUserId: BOB, authorUserId: BOB, sentAt: 1,
-        viewedAt: null, content: 'hi',
-      }],
+      messages: [
+        {
+          kind: 'message',
+          id: 'm1',
+          peerUserId: BOB,
+          authorUserId: BOB,
+          sentAt: 1,
+          viewedAt: null,
+          content: 'hi',
+        },
+      ],
     });
 
     await logout();
 
     expect(useStore.getState()).toMatchObject({
-      session: { status: 'signedOut' }, friends: [], messages: [], stories: [], profiles: [],
+      session: { status: 'signedOut' },
+      friends: [],
+      messages: [],
+      stories: [],
+      profiles: [],
     });
     expect(bridge.__calls).toContain('logout');
   });
@@ -85,7 +109,12 @@ describe('logout & sessionEpoch race protection', () => {
 
   it('discards stale in-flight getMessages, getStories, and getProfiles responses across resetSession/logout', async () => {
     session();
-    bridge.__deliverMessage({ id: 'stale_m', peerUserId: BOB, authorUserId: BOB, content: 'stale' });
+    bridge.__deliverMessage({
+      id: 'stale_m',
+      peerUserId: BOB,
+      authorUserId: BOB,
+      content: 'stale',
+    });
     bridge.__deliverStory({ id: 'stale_s', authorUserId: BOB, content: 'stale' });
     bridge.__deliverProfile({ userId: BOB, displayName: 'Stale', bio: '' });
 
@@ -137,7 +166,7 @@ describe('logout & sessionEpoch race protection', () => {
     const release = bridge.__deferNext('getFriends');
 
     const inflight = bootstrapAuthState();
-    await new Promise((r) => setImmediate(r));
+    await new Promise(r => setImmediate(r));
     resetSession();
     release();
     await inflight;
@@ -182,9 +211,9 @@ describe('slice refresh & coalescing', () => {
 
     await Promise.all([refreshMessages(), refreshStories(), refreshProfiles()]);
 
-    expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_1']);
-    expect(useStore.getState().stories.map((s) => s.id)).toEqual(['s_1']);
-    expect(useStore.getState().profiles.map((p) => p.userId)).toEqual([BOB]);
+    expect(useStore.getState().messages.map(m => m.id)).toEqual(['dm_1']);
+    expect(useStore.getState().stories.map(s => s.id)).toEqual(['s_1']);
+    expect(useStore.getState().profiles.map(p => p.userId)).toEqual([BOB]);
   });
 
   it('coalesces concurrent refreshStories, refreshProfiles, flushOutboxFromStore, and sweepAndRefresh calls into at most one in-flight + one trailing pass', async () => {
@@ -192,19 +221,19 @@ describe('slice refresh & coalescing', () => {
     bridge.__calls.length = 0;
 
     await Promise.all([refreshStories(), refreshStories(), refreshStories()]);
-    expect(bridge.__calls.filter((c) => c === 'getStories')).toHaveLength(2);
+    expect(bridge.__calls.filter(c => c === 'getStories')).toHaveLength(2);
 
     bridge.__calls.length = 0;
     await Promise.all([refreshProfiles(), refreshProfiles(), refreshProfiles()]);
-    expect(bridge.__calls.filter((c) => c === 'getProfiles')).toHaveLength(2);
+    expect(bridge.__calls.filter(c => c === 'getProfiles')).toHaveLength(2);
 
     bridge.__calls.length = 0;
     await Promise.all([flushOutboxFromStore(), flushOutboxFromStore(), flushOutboxFromStore()]);
-    expect(bridge.__calls.filter((c) => c === 'flushOutbox')).toHaveLength(2);
+    expect(bridge.__calls.filter(c => c === 'flushOutbox')).toHaveLength(2);
 
     bridge.__calls.length = 0;
     await Promise.all([sweepAndRefresh(), sweepAndRefresh(), sweepAndRefresh()]);
-    expect(bridge.__calls.filter((c) => c === 'sweepExpired')).toHaveLength(2);
+    expect(bridge.__calls.filter(c => c === 'sweepExpired')).toHaveLength(2);
   });
 
   it('swallows refresh, flushOutbox, sweepExpired, event handler, and bootstrap failures rather than rejecting', async () => {
@@ -215,13 +244,15 @@ describe('slice refresh & coalescing', () => {
     bridge.__failNext('flushOutbox', 'STORAGE_ERROR');
     bridge.__failNext('sweepExpired', 'STORAGE_ERROR');
 
-    await expect(Promise.all([
-      refreshMessages(),
-      refreshStories(),
-      refreshProfiles(),
-      flushOutboxFromStore(),
-      sweepAndRefresh(),
-    ])).resolves.toBeDefined();
+    await expect(
+      Promise.all([
+        refreshMessages(),
+        refreshStories(),
+        refreshProfiles(),
+        flushOutboxFromStore(),
+        sweepAndRefresh(),
+      ]),
+    ).resolves.toBeDefined();
 
     bridge.__failNext('getFriends', 'STORAGE_ERROR');
     await applyObscuraEvent({ type: 'friendsChanged' });
@@ -249,7 +280,7 @@ describe('event and lifecycle sync triggers', () => {
     await applyObscuraEvent({ type: 'connectionChanged', state: 'connected' });
 
     expect(useStore.getState().connState).toBe('connected');
-    expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_1']);
+    expect(useStore.getState().messages.map(m => m.id)).toEqual(['dm_1']);
     expect(bridge.__calls).toContain('flushOutbox');
     expect(bridge.__calls).toContain('sweepExpired');
   });
@@ -271,7 +302,7 @@ describe('event and lifecycle sync triggers', () => {
 
     await applyObscuraEvent({ type: 'appStateChanged', state: 'active' });
 
-    expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_1']);
+    expect(useStore.getState().messages.map(m => m.id)).toEqual(['dm_1']);
     expect(bridge.__calls).toContain('flushOutbox');
     expect(bridge.__calls).toContain('sweepExpired');
   });
@@ -289,15 +320,15 @@ describe('event and lifecycle sync triggers', () => {
     session();
     bridge.__deliverMessage({ id: 'dm_1', peerUserId: BOB, authorUserId: BOB, content: 'hello' });
     await applyObscuraEvent({ type: 'messageReceived', model: 'directMessage' });
-    expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_1']);
+    expect(useStore.getState().messages.map(m => m.id)).toEqual(['dm_1']);
 
     bridge.__deliverStory({ id: 's_1', authorUserId: BOB, content: 'story' });
     await applyObscuraEvent({ type: 'messageReceived', model: 'story' });
-    expect(useStore.getState().stories.map((s) => s.id)).toEqual(['s_1']);
+    expect(useStore.getState().stories.map(s => s.id)).toEqual(['s_1']);
 
     bridge.__deliverProfile({ userId: BOB, displayName: 'Bobby' });
     await applyObscuraEvent({ type: 'messageReceived', model: 'profile' });
-    expect(useStore.getState().profiles.map((p) => p.displayName)).toEqual(['Bobby']);
+    expect(useStore.getState().profiles.map(p => p.displayName)).toEqual(['Bobby']);
   });
 
   it('loads identity, friends, and all slices on cold start, falling back on individual pull failures', async () => {
@@ -309,7 +340,7 @@ describe('event and lifecycle sync triggers', () => {
 
     expect(myUserId()).toBe(SELF);
     expect(useStore.getState().friends).toEqual([]);
-    expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_1']);
+    expect(useStore.getState().messages.map(m => m.id)).toEqual(['dm_1']);
   });
 
   it('loads the session on `authStateChanged: authenticated` and clears it on `loggedOut`', async () => {
@@ -338,7 +369,7 @@ describe('event and lifecycle sync triggers', () => {
 
     await applyObscuraEvent({ type: 'friendsChanged' });
 
-    expect(useStore.getState().friends.map((f) => f.username)).toEqual(['bob']);
+    expect(useStore.getState().friends.map(f => f.username)).toEqual(['bob']);
   });
 
   it('registers a push token when one arrives while authenticated and ignores it when signed out', async () => {
@@ -356,7 +387,7 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
     bridge.launchIntent = { screen: 'ChatList' };
     const screens: string[] = [];
 
-    const off = subscribeToLaunchScreen((s) => screens.push(s));
+    const off = subscribeToLaunchScreen(s => screens.push(s));
     await Promise.resolve();
     expect(screens).toEqual(['ChatList']);
 
@@ -369,7 +400,7 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
     expect(screens).toEqual(['ChatList', 'Profile']);
 
     bridge.launchIntent = null;
-    const offNull = subscribeToLaunchScreen((s) => screens.push(s));
+    const offNull = subscribeToLaunchScreen(s => screens.push(s));
     await Promise.resolve();
     expect(screens).toEqual(['ChatList', 'Profile']);
     offNull();
@@ -385,7 +416,7 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
 
     const lines = await loadDebugLog();
     expect(lines[0]).toBe('00:00:01 Native boot');
-    expect(lines.some((l) => l.includes('[test.tag] boom'))).toBe(true);
+    expect(lines.some(l => l.includes('[test.tag] boom'))).toBe(true);
 
     await copyToClipboard('copied-text');
     expect(bridge.clipboard).toBe('copied-text');
@@ -422,11 +453,10 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
     const navigate = jest.fn();
     openPixViewer({ navigate } as any, { userId: BOB, username: 'bob' }, []);
     expect(navigate).not.toHaveBeenCalled();
-    openPixViewer(
-      { navigate } as any,
-      { userId: BOB, username: 'bob' },
-      [{ id: 'p2', sentAt: 200 }, { id: 'p1', sentAt: 100 }],
-    );
+    openPixViewer({ navigate } as any, { userId: BOB, username: 'bob' }, [
+      { id: 'p2', sentAt: 200 },
+      { id: 'p1', sentAt: 100 },
+    ]);
     expect(navigate).toHaveBeenCalledWith('StoryViewer', {
       mode: 'pix',
       userId: BOB,
@@ -479,4 +509,3 @@ describe('permissions', () => {
     expect(bridge.__calls).toContain('requestPushPermission');
   });
 });
-

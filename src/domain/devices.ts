@@ -10,10 +10,12 @@ export interface DeviceInfo {
 
 /** Primary first, then by name, so the list does not reorder between loads. */
 export function orderDevices(devices: readonly DeviceInfo[]): DeviceInfo[] {
-  return [...devices].sort((a, b) =>
-    Number(b.isPrimary) - Number(a.isPrimary)
-    || deviceLabel(a).localeCompare(deviceLabel(b))
-    || a.deviceId.localeCompare(b.deviceId));
+  return [...devices].sort(
+    (a, b) =>
+      Number(b.isPrimary) - Number(a.isPrimary) ||
+      deviceLabel(a).localeCompare(deviceLabel(b)) ||
+      a.deviceId.localeCompare(b.deviceId),
+  );
 }
 
 export function deviceLabel(device: Pick<DeviceInfo, 'name'>): string {
@@ -25,8 +27,11 @@ export type LinkProblem = { kind: 'expired' } | { kind: 'failed'; message: strin
 
 export function linkProblem(e: unknown): LinkProblem | null {
   switch (errorCode(e)) {
-    case 'CANCELLED': return null;
-    case 'LINK_FAILED': return { kind: 'expired' };
-    default: return { kind: 'failed', message: errorMessage(e) };
+    case 'CANCELLED':
+      return null;
+    case 'LINK_FAILED':
+      return { kind: 'expired' };
+    default:
+      return { kind: 'failed', message: errorMessage(e) };
   }
 }

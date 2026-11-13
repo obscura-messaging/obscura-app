@@ -1,7 +1,14 @@
 import {
-  acceptedFriends, displayNameFor, friendProfileEntries, pendingFriends,
-  pendingFriendSubtitle, removeFriendPrompt, sendButtonLabel, sendOutcomeToast,
-  type Friend, type ProfileItem,
+  acceptedFriends,
+  displayNameFor,
+  friendProfileEntries,
+  pendingFriends,
+  pendingFriendSubtitle,
+  removeFriendPrompt,
+  sendButtonLabel,
+  sendOutcomeToast,
+  type Friend,
+  type ProfileItem,
 } from '../friends';
 
 const ME = 'uMe';
@@ -39,9 +46,7 @@ describe('friendProfileEntries', () => {
       { userId: 'uStranger', authorDeviceId: 'd', updatedAt: 1, displayName: 'Who', bio: '' },
     ];
 
-    expect(friendProfileEntries(profiles, identity)).toEqual([
-      { entry: profiles[1], name: 'bob' },
-    ]);
+    expect(friendProfileEntries(profiles, identity)).toEqual([{ entry: profiles[1], name: 'bob' }]);
   });
 });
 
@@ -50,7 +55,9 @@ describe('pendingFriendSubtitle, removeFriendPrompt, sendOutcomeToast & sendButt
     expect(pendingFriendSubtitle(SENT, 'primary')).toBe('Request sent');
     expect(pendingFriendSubtitle(DAVE, 'primary')).toBe('Wants to be friends');
     expect(pendingFriendSubtitle(DAVE, 'unknown')).toBe('Wants to be friends');
-    expect(pendingFriendSubtitle(DAVE, 'linked')).toBe('Wants to be friends · accept on your primary');
+    expect(pendingFriendSubtitle(DAVE, 'linked')).toBe(
+      'Wants to be friends · accept on your primary',
+    );
   });
 
   it('derives confirmation dialog copy for declining, cancelling, or removing a friend', () => {

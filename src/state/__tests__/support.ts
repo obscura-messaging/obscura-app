@@ -2,7 +2,11 @@ import type { DeviceRole, Me } from '../../domain/session';
 import { useStore, type Friend } from '../store';
 
 /** Put the store in a signed-in session without going through the kit. */
-export function signInAs(me: Partial<Me> = {}, as: DeviceRole = 'primary', friends: Friend[] = []): void {
+export function signInAs(
+  me: Partial<Me> = {},
+  as: DeviceRole = 'primary',
+  friends: Friend[] = [],
+): void {
   useStore.setState({
     session: {
       status: 'signedIn',

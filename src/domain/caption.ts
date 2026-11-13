@@ -10,7 +10,13 @@ import { clamp } from '../utils/gesture';
 export const CAPTION_FONT_LABELS = ['Clean', 'Comic', 'Serif', 'Script', 'Mono'] as const;
 
 export const CAPTION_COLORS = [
-  '#ffffff', '#000000', '#ff2d55', '#ffcc00', '#34c759', '#0a84ff', '#af52de',
+  '#ffffff',
+  '#000000',
+  '#ff2d55',
+  '#ffcc00',
+  '#34c759',
+  '#0a84ff',
+  '#af52de',
 ] as const;
 
 export type CaptionStyle = 'bar' | 'bold';
@@ -64,11 +70,13 @@ export function parseCaptionMeta(raw?: string | null): CaptionMeta | null {
   if (m.style === 'bold') {
     const x = typeof m.x === 'number' && Number.isFinite(m.x) ? clamp01(m.x) : 0.5;
     const rot = typeof m.rot === 'number' && Number.isFinite(m.rot) ? m.rot : 0;
-    const scale = typeof m.scale === 'number' && Number.isFinite(m.scale) && m.scale > 0 ? m.scale : 1;
+    const scale =
+      typeof m.scale === 'number' && Number.isFinite(m.scale) && m.scale > 0 ? m.scale : 1;
     const color = typeof m.color === 'string' && m.color !== '' ? m.color : CAPTION_COLORS[0];
-    const font = typeof m.font === 'number' && (CAPTION_FONT_LABELS as readonly string[])[m.font] !== undefined
-      ? m.font
-      : 0;
+    const font =
+      typeof m.font === 'number' && (CAPTION_FONT_LABELS as readonly string[])[m.font] !== undefined
+        ? m.font
+        : 0;
     return { style: 'bold', x, y, rot, scale, color, font };
   }
   return null;
@@ -100,9 +108,10 @@ export function buildCaptionMeta(input: {
   const rot = input.rot ?? 0;
   const scale = input.scale !== undefined && input.scale > 0 ? input.scale : 1;
   const color = (CAPTION_COLORS as readonly string[])[input.colorIdx ?? 0] ?? CAPTION_COLORS[0];
-  const font = input.fontIdx !== undefined && (CAPTION_FONT_LABELS as readonly string[])[input.fontIdx] !== undefined
-    ? input.fontIdx
-    : 0;
+  const font =
+    input.fontIdx !== undefined &&
+    (CAPTION_FONT_LABELS as readonly string[])[input.fontIdx] !== undefined
+      ? input.fontIdx
+      : 0;
   return { style: 'bold', x, y, rot, scale, color, font };
 }
-

@@ -6,7 +6,8 @@ export const MIN_PASSWORD_LENGTH = 12;
 /** Why these credentials cannot be submitted, or `null` when they can. */
 export function credentialsProblem(username: string, password: string): string | null {
   if (username === '') return 'Enter a username';
-  if (password.length < MIN_PASSWORD_LENGTH) return `Password must be ${MIN_PASSWORD_LENGTH}+ chars`;
+  if (password.length < MIN_PASSWORD_LENGTH)
+    return `Password must be ${MIN_PASSWORD_LENGTH}+ chars`;
   return null;
 }
 
@@ -53,7 +54,9 @@ let linkAttempt = 0;
  * for its approval. The kit provisions and connects; rejects `CANCELLED` after `cancelLink`.
  */
 export async function linkThisDevice(
-  username: string, password: string, onCode: (code: string) => void,
+  username: string,
+  password: string,
+  onCode: (code: string) => void,
 ): Promise<void> {
   const attempt = ++linkAttempt;
   const code = await Obscura.beginLink(username, password);

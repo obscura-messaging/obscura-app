@@ -32,7 +32,10 @@ export type ConversationItem = DirectMessageItem | PixItem;
 /** How a pix looks from this user's side of the conversation. */
 export type PixStatus = 'received_new' | 'received_viewed' | 'sent_pending' | 'sent_opened';
 
-export function pixStatus(pix: { authorUserId: string; viewedAt: number | null }, myUserId: string): PixStatus {
+export function pixStatus(
+  pix: { authorUserId: string; viewedAt: number | null },
+  myUserId: string,
+): PixStatus {
   const viewed = pix.viewedAt !== null;
   if (pix.authorUserId === myUserId) return viewed ? 'sent_opened' : 'sent_pending';
   return viewed ? 'received_viewed' : 'received_new';
@@ -67,7 +70,7 @@ export function conversationItems<T extends { peerUserId: string; sentAt: number
   items: readonly T[],
   friendUserId: string,
 ): T[] {
-  return items.filter((item) => item.peerUserId === friendUserId).sort((a, b) => a.sentAt - b.sentAt);
+  return items.filter(item => item.peerUserId === friendUserId).sort((a, b) => a.sentAt - b.sentAt);
 }
 
 /**
@@ -104,23 +107,27 @@ export function chatTimeline(
 ): ChatTimelineItem[] {
   return conversationItems(items, friendUserId).flatMap((item): ChatTimelineItem[] => {
     if (item.kind === 'message') {
-      return [{
-        kind: 'message',
-        id: item.id,
-        sentAt: item.sentAt,
-        authorUserId: item.authorUserId,
-        content: item.content,
-      }];
+      return [
+        {
+          kind: 'message',
+          id: item.id,
+          sentAt: item.sentAt,
+          authorUserId: item.authorUserId,
+          content: item.content,
+        },
+      ];
     }
     const status = pixStatus(item, myUserId);
     if (status === 'received_viewed') return [];
-    return [{
-      kind: 'pix',
-      id: item.id,
-      sentAt: item.sentAt,
-      authorUserId: item.authorUserId,
-      status,
-    }];
+    return [
+      {
+        kind: 'pix',
+        id: item.id,
+        sentAt: item.sentAt,
+        authorUserId: item.authorUserId,
+        status,
+      },
+    ];
   });
 }
 
@@ -150,23 +157,27 @@ export function friendActivities(
   myUserId: string,
   items: readonly ConversationItem[],
 ): FriendActivity[] {
-  return friends.map((friend) => {
-    const peerItems = conversationItems(items, friend.userId);
-    const messages = peerItems.filter((item): item is DirectMessageItem => item.kind === 'message');
-    const pix = peerItems.filter((item): item is PixItem => item.kind === 'pix');
-    const lastMessage = messages.at(-1);
-    const latest = pix.at(-1);
-    const unopenedPix = pix.filter((p) => pixStatus(p, myUserId) === 'received_new');
-    const latestPix = latest && pixStatus(latest, myUserId);
-    return {
-      friend,
-      lastMessage,
-      unopenedPix,
-      latestPix,
-      latestAt: Math.max(lastMessage?.sentAt ?? 0, latest?.sentAt ?? 0),
-      badge: pixBadgeFor(unopenedPix.length, latestPix),
-    };
-  }).sort((a, b) => b.latestAt - a.latestAt);
+  return friends
+    .map(friend => {
+      const peerItems = conversationItems(items, friend.userId);
+      const messages = peerItems.filter(
+        (item): item is DirectMessageItem => item.kind === 'message',
+      );
+      const pix = peerItems.filter((item): item is PixItem => item.kind === 'pix');
+      const lastMessage = messages.at(-1);
+      const latest = pix.at(-1);
+      const unopenedPix = pix.filter(p => pixStatus(p, myUserId) === 'received_new');
+      const latestPix = latest && pixStatus(latest, myUserId);
+      return {
+        friend,
+        lastMessage,
+        unopenedPix,
+        latestPix,
+        latestAt: Math.max(lastMessage?.sentAt ?? 0, latest?.sentAt ?? 0),
+        badge: pixBadgeFor(unopenedPix.length, latestPix),
+      };
+    })
+    .sort((a, b) => b.latestAt - a.latestAt);
 }
 
 /** Subtitle and emphasis for a conversation row in the chat list. */

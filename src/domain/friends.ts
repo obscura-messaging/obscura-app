@@ -15,7 +15,7 @@ export function acceptedFriends(friends: readonly Friend[]): Friend[] {
 }
 
 export function pendingFriends(friends: readonly Friend[]): Friend[] {
-  return friends.filter((f) => !isAccepted(f));
+  return friends.filter(f => !isAccepted(f));
 }
 
 export interface Identity {
@@ -29,10 +29,13 @@ export interface Identity {
  * The name to show for a transport-attributed user, or `null` when they are neither me nor an
  * accepted friend; callers hide such content rather than label it "unknown".
  */
-export function displayNameFor(userId: string, { myUserId, myUsername, friends }: Identity): string | null {
+export function displayNameFor(
+  userId: string,
+  { myUserId, myUsername, friends }: Identity,
+): string | null {
   if (userId === '') return null;
   if (userId === myUserId) return myUsername;
-  return friends.find((f) => f.userId === userId && isAccepted(f))?.username ?? null;
+  return friends.find(f => f.userId === userId && isAccepted(f))?.username ?? null;
 }
 
 export interface ProfileItem {
@@ -47,7 +50,7 @@ export function friendProfileEntries<P extends { userId: string }>(
   profiles: readonly P[],
   identity: Identity,
 ): Array<{ entry: P; name: string }> {
-  return profiles.flatMap((entry) => {
+  return profiles.flatMap(entry => {
     const name = entry.userId === identity.myUserId ? null : displayNameFor(entry.userId, identity);
     return name === null ? [] : [{ entry, name }];
   });
@@ -98,7 +101,11 @@ export function sendOutcomeToast(
   return { kind: 'success', message: `Sent to ${recipientCount} friend${suffix}${storyPart}` };
 }
 
-export function sendButtonLabel(selectedCount: number, includeStory: boolean, sending: boolean): string {
+export function sendButtonLabel(
+  selectedCount: number,
+  includeStory: boolean,
+  sending: boolean,
+): string {
   if (sending) return 'Sending…';
   const total = selectedCount + (includeStory ? 1 : 0);
   return total === 0 ? 'Select recipients' : `Send to ${total}`;

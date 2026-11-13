@@ -20,7 +20,9 @@ export function AddFriendScreen() {
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
-    getFriendCode().then(setMyCode).catch((e) => logError('getFriendCode', e));
+    getFriendCode()
+      .then(setMyCode)
+      .catch(e => logError('getFriendCode', e));
   }, []);
 
   const addByCode = async () => {
@@ -39,34 +41,48 @@ export function AddFriendScreen() {
 
   return (
     <View style={[afs.container, { paddingBottom: insets.bottom + 24 }]}>
-      <CodeCard kind="friend" code={myCode} caption="Friends can scan this to add you" copiedMessage="Friend code copied" />
+      <CodeCard
+        kind="friend"
+        code={myCode}
+        caption="Friends can scan this to add you"
+        copiedMessage="Friend code copied"
+      />
 
       <View style={afs.divider} />
 
       {role === 'linked' && (
         <Text style={afs.note}>Friends are added and accepted on your primary device.</Text>
       )}
-      {role === 'primary' && (<>
-        <Text style={[s.sectionTitle, afs.sectionLabel]}>add by code</Text>
-        <View style={afs.enterRow}>
-          <TextInput
-            style={[s.input, afs.input]}
-            placeholder="Paste friend code"
-            placeholderTextColor={colors.textDim}
-            value={codeInput}
-            onChangeText={setCodeInput}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <TouchableOpacity style={[s.primaryBtn, adding && s.btnDisabled]} onPress={addByCode} disabled={adding}>
-            <Text style={s.primaryBtnText}>{adding ? '…' : 'Add'}</Text>
-          </TouchableOpacity>
-        </View>
+      {role === 'primary' && (
+        <>
+          <Text style={[s.sectionTitle, afs.sectionLabel]}>add by code</Text>
+          <View style={afs.enterRow}>
+            <TextInput
+              style={[s.input, afs.input]}
+              placeholder="Paste friend code"
+              placeholderTextColor={colors.textDim}
+              value={codeInput}
+              onChangeText={setCodeInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TouchableOpacity
+              style={[s.primaryBtn, adding && s.btnDisabled]}
+              onPress={addByCode}
+              disabled={adding}
+            >
+              <Text style={s.primaryBtnText}>{adding ? '…' : 'Add'}</Text>
+            </TouchableOpacity>
+          </View>
 
-        <TouchableOpacity style={[s.secondaryBtn, afs.scanBtn]} onPress={() => nav.navigate('ScanFriend')}>
-          <Text style={s.secondaryBtnText}>Scan a friend's QR</Text>
-        </TouchableOpacity>
-      </>)}
+          <TouchableOpacity
+            style={[s.secondaryBtn, afs.scanBtn]}
+            onPress={() => nav.navigate('ScanFriend')}
+          >
+            <Text style={s.secondaryBtnText}>Scan a friend's QR</Text>
+          </TouchableOpacity>
+        </>
+      )}
     </View>
   );
 }

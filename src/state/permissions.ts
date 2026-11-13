@@ -12,6 +12,7 @@ export async function requestStartupPermissions(): Promise<void> {
   // Imported lazily so the store stays loadable without the camera module (in tests).
   const { Camera } = await import('react-native-vision-camera');
   if (canPromptFor(Camera.getCameraPermissionStatus())) await Camera.requestCameraPermission();
-  if (canPromptFor(Camera.getMicrophonePermissionStatus())) await Camera.requestMicrophonePermission();
+  if (canPromptFor(Camera.getMicrophonePermissionStatus()))
+    await Camera.requestMicrophonePermission();
   await Obscura.requestPushPermission();
 }
