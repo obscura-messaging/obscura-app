@@ -182,6 +182,41 @@ android {
     }
 }
 
+// Rust core spike, opt-in: -PobscuraRustCore=debug (or debug,release) builds ../core with
+// cargo-ndk for the selected ABIs and packages the library, its generated Kotlin bindings
+// and a startup smoke test into those build types only. The generated code and libraries
+// live under build/ and are never committed.
+def obscuraRustCoreBuildTypes =
+    (findProperty("obscuraRustCore") ?: "").toString().split(",")*.trim().findAll { it }
+if (obscuraRustCoreBuildTypes) {
+    def coreOut = new File(buildDir, "generated/obscura-core")
+    def coreJniLibs = new File(coreOut, "jniLibs")
+    def coreKotlin = new File(coreOut, "kotlin")
+    def buildObscuraCore = tasks.register("buildObscuraCore", Exec) {
+        description = "Builds obscura-core for Android and generates its Kotlin bindings."
+        commandLine(
+            rootProject.file("../core/scripts/build-android.sh").path,
+            coreJniLibs.path,
+            coreKotlin.path,
+            *targetArchitectures
+        )
+        // Cargo does its own up-to-date checks.
+        outputs.upToDateWhen { false }
+    }
+    obscuraRustCoreBuildTypes.each { buildType ->
+        android.sourceSets.getByName(buildType) {
+            java.srcDirs += [file("src/rustCore/java"), coreKotlin]
+            jniLibs.srcDirs += [coreJniLibs]
+            manifest.srcFile "src/rustCore/AndroidManifest.xml"
+        }
+        // The AAR carries libjnidispatch.so per ABI; the plain JAR's desktop natives would not load.
+        dependencies.add("${buildType}Implementation", "net.java.dev.jna:jna:5.18.1@aar")
+    }
+    tasks.matching { task ->
+        obscuraRustCoreBuildTypes.any { buildType -> task.name ==~ /pre\w*${buildType.capitalize()}Build/ }
+    }.configureEach { dependsOn buildObscuraCore }
+}
+
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
