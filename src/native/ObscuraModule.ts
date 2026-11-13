@@ -226,6 +226,8 @@ function toStoryItem(raw: RawStoryItem): StoryItem {
 
 const rawBridge = TurboModuleRegistry.getEnforcing<ObscuraBridge>('ObscuraBridge');
 
+// A Proxy, not a spread or a prototype: the TurboModule is a JSI host object whose methods are not
+// enumerable own properties, and they must be called with the module itself as `this`.
 export const Obscura: ObscuraClient = new Proxy(rawBridge, {
   get(target, prop, receiver) {
     switch (prop) {
