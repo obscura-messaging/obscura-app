@@ -27,7 +27,12 @@ const SIGNED_PRE_KEY_ID: u32 = 1;
 const KYBER_PRE_KEY_ID: u32 = 1;
 const PRE_KEY_ID: u32 = 1;
 
+// Flat: UniFFI's Kotlin bindings turn a variant field named `message` into a `val message`
+// that clashes with `Throwable.message` and does not compile. A flat error crosses as the
+// variant plus its Display string, which Kotlin exposes as `message` and Swift as
+// `case storage(message:)`, so both hosts keep the same shape.
 #[derive(uniffi::Error, Debug, thiserror::Error)]
+#[uniffi(flat_error)]
 pub enum CoreError {
     #[error("storage: {message}")]
     Storage { message: String },
