@@ -63,8 +63,16 @@ typecheck:
 lint:
     npm run lint
 
+# Check JavaScript and TypeScript formatting.
+format-check:
+    npm run format:check
+
+# Format JavaScript and TypeScript with Prettier.
+format:
+    npm run format
+
 # Run every JavaScript CI gate.
-check: test typecheck lint
+check: test typecheck lint format-check
 
 # Format-check, lint and test the Rust core (docs/RUST_CORE.md).
 core-check:

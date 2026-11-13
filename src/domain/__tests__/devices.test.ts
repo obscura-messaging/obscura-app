@@ -1,7 +1,11 @@
 import { deviceLabel, linkProblem, orderDevices, type DeviceInfo } from '../devices';
 
-const device = (deviceId: string, name: string | null, isPrimary = false): DeviceInfo =>
-  ({ deviceId, name, isPrimary, isThisDevice: false });
+const device = (deviceId: string, name: string | null, isPrimary = false): DeviceInfo => ({
+  deviceId,
+  name,
+  isPrimary,
+  isThisDevice: false,
+});
 
 describe('orderDevices', () => {
   it('puts the primary first, then sorts by name and breaks ties by deviceId', () => {
@@ -11,7 +15,7 @@ describe('orderDevices', () => {
       device('b', null),
       device('a', 'Phone', true),
     ]);
-    expect(ordered.map((d) => d.deviceId)).toEqual(['a', 'c', 'b', 'd']);
+    expect(ordered.map(d => d.deviceId)).toEqual(['a', 'c', 'b', 'd']);
   });
 
   it('labels a nameless device', () => {

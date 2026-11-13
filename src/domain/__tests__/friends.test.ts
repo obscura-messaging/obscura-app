@@ -1,7 +1,14 @@
 import {
-  acceptedFriends, displayNameFor, friendProfileEntries, pendingFriends,
-  pendingFriendSubtitle, removeFriendPrompt, sendButtonLabel, sendOutcomeToast,
-  type Friend, type ProfileItem,
+  acceptedFriends,
+  displayNameFor,
+  friendProfileEntries,
+  pendingFriends,
+  pendingFriendSubtitle,
+  removeFriendPrompt,
+  sendButtonLabel,
+  sendOutcomeToast,
+  type Friend,
+  type ProfileItem,
 } from '../friends';
 
 const ME = 'uMe';
@@ -39,9 +46,7 @@ describe('friendProfileEntries', () => {
       { userId: 'uStranger', authorDeviceId: 'd', updatedAt: 1, displayName: 'Who', bio: '' },
     ];
 
-    expect(friendProfileEntries(profiles, identity)).toEqual([
-      { entry: profiles[1], name: 'bob' },
-    ]);
+    expect(friendProfileEntries(profiles, identity)).toEqual([{ entry: profiles[1], name: 'bob' }]);
   });
 });
 

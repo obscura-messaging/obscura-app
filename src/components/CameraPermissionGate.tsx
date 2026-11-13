@@ -1,7 +1,9 @@
 import React, { type ReactNode, useCallback, useEffect, useState } from 'react';
 import { AppState, Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import {
-  Camera, type CameraPermissionStatus, useCameraPermission,
+  Camera,
+  type CameraPermissionStatus,
+  useCameraPermission,
 } from 'react-native-vision-camera';
 import { canPromptFor } from '../state/permissions';
 import { colors } from '../styles';
@@ -21,7 +23,7 @@ export function CameraPermissionGate({ children, message }: CameraPermissionGate
 
   useEffect(() => {
     refresh();
-    const subscription = AppState.addEventListener('change', (next) => {
+    const subscription = AppState.addEventListener('change', next => {
       if (next === 'active') refresh();
     });
     return () => subscription.remove();
