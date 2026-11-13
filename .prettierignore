@@ -1,0 +1,14 @@
+# Prettier formats the app's JavaScript and TypeScript only. The native kits, the protocol
+# submodules, and generated or vendored output have their own conventions.
+*
+!*/
+!*.js
+!*.ts
+!*.tsx
+android/
+ios/
+kotlin/
+swift/
+server-proto/
+client-protocol/
+coverage/

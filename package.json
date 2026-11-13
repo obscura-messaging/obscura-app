@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "android": "react-native run-android",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "lint": "eslint .",
     "start": "react-native start",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
