@@ -1,7 +1,19 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Pressable, StyleSheet, PanResponder, Animated, Platform } from 'react-native';
 import {
-  Camera, useCameraDevice, useCameraFormat, useMicrophonePermission,
+  View,
+  Text,
+  TouchableOpacity,
+  Pressable,
+  StyleSheet,
+  PanResponder,
+  Animated,
+  Platform,
+} from 'react-native';
+import {
+  Camera,
+  useCameraDevice,
+  useCameraFormat,
+  useMicrophonePermission,
 } from 'react-native-vision-camera';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -44,7 +56,9 @@ export function CameraScreen() {
   ]);
 
   // Re-warmed after each recording, because VisionCamera deactivates the audio session.
-  useEffect(() => { prewarmAudio(); }, []);
+  useEffect(() => {
+    prewarmAudio();
+  }, []);
 
   // Read by the PanResponder, which is created once.
   const zoomRef = useRef(1);
@@ -57,8 +71,8 @@ export function CameraScreen() {
   const pan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (e) => e.nativeEvent.touches.length === 2,
-      onPanResponderMove: (e) => {
+      onMoveShouldSetPanResponder: e => e.nativeEvent.touches.length === 2,
+      onPanResponderMove: e => {
         const touches = e.nativeEvent.touches;
         if (touches.length !== 2) return;
         const dev = deviceRef.current;
@@ -71,8 +85,12 @@ export function CameraScreen() {
         const ratio = touchDist(touches) / gesture.current.startDist;
         setZoom(clamp(gesture.current.startZoom * ratio, dev.minZoom, dev.maxZoom));
       },
-      onPanResponderRelease: () => { gesture.current.startDist = 0; },
-      onPanResponderTerminate: () => { gesture.current.startDist = 0; },
+      onPanResponderRelease: () => {
+        gesture.current.startDist = 0;
+      },
+      onPanResponderTerminate: () => {
+        gesture.current.startDist = 0;
+      },
     }),
   ).current;
 
@@ -91,11 +109,17 @@ export function CameraScreen() {
 
   // Native-driven so the press shows while the capture is still running.
   const shutterScale = useRef(new Animated.Value(1)).current;
-  const animateShutter = useCallback((to: number) => {
-    Animated.spring(shutterScale, {
-      toValue: to, useNativeDriver: true, speed: 40, bounciness: 6,
-    }).start();
-  }, [shutterScale]);
+  const animateShutter = useCallback(
+    (to: number) => {
+      Animated.spring(shutterScale, {
+        toValue: to,
+        useNativeDriver: true,
+        speed: 40,
+        bounciness: 6,
+      }).start();
+    },
+    [shutterScale],
+  );
 
   const startRecording = useCallback(() => {
     if (!camera.current) return;
@@ -103,36 +127,50 @@ export function CameraScreen() {
     camera.current.startRecording({
       // iOS defaults to HEVC, which Android does not reliably decode.
       videoCodec: 'h264',
-      onRecordingFinished: (video) => {
+      onRecordingFinished: video => {
         setRecording(false);
         prewarmAudio();
         nav.navigate('PhotoPreview', { path: toPath(video.path), mediaType: 'video' });
       },
-      onRecordingError: (e) => { setRecording(false); prewarmAudio(); logError('record', e); },
+      onRecordingError: e => {
+        setRecording(false);
+        prewarmAudio();
+        logError('record', e);
+      },
     });
   }, [nav]);
 
   const stopRecording = useCallback(async () => {
-    try { await camera.current?.stopRecording(); } catch (e) { logError('stopRecording', e); }
+    try {
+      await camera.current?.stopRecording();
+    } catch (e) {
+      logError('stopRecording', e);
+    }
   }, []);
 
   const onShutterPressIn = () => {
     animateShutter(0.88);
     didRecord.current = false;
-    holdTimer.current = setTimeout(() => { didRecord.current = true; startRecording(); }, HOLD_TO_RECORD_MS);
+    holdTimer.current = setTimeout(() => {
+      didRecord.current = true;
+      startRecording();
+    }, HOLD_TO_RECORD_MS);
   };
   const onShutterPressOut = () => {
     animateShutter(1);
-    if (holdTimer.current) { clearTimeout(holdTimer.current); holdTimer.current = null; }
+    if (holdTimer.current) {
+      clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
     if (didRecord.current) stopRecording();
     else takePhoto();
   };
 
   const flipCamera = () => {
-    setFacing(f => f === 'back' ? 'front' : 'back');
+    setFacing(f => (f === 'back' ? 'front' : 'back'));
     setZoom(1);
   };
-  const toggleFlash = () => setFlash(f => f === 'off' ? 'on' : 'off');
+  const toggleFlash = () => setFlash(f => (f === 'off' ? 'on' : 'off'));
 
   // Emulators without a camera get a synthesized JPEG.
   const takeTestPhoto = useCallback(async () => {
@@ -149,60 +187,81 @@ export function CameraScreen() {
   const simulator = !device;
 
   const screen = (
-      <View style={cs.container}>
-        {device ? (
-          <Camera
-            ref={camera}
-            style={StyleSheet.absoluteFill}
-            device={device}
-            format={format}
-            isActive={cameraActive}
-            photo={true}
-            video={true}
-            audio={hasMic}
-            fps={30}
-            videoBitRate="low"
-            photoQualityBalance="speed"
-            zoom={zoom}
-          />
-        ) : (
-          <View style={[StyleSheet.absoluteFill, cs.simPreview]}>
-            <Text style={cs.simPreviewText}>No camera on this simulator</Text>
-          </View>
-        )}
-        <MainHeaderOverlay camera={true} />
+    <View style={cs.container}>
+      {device ? (
+        <Camera
+          ref={camera}
+          style={StyleSheet.absoluteFill}
+          device={device}
+          format={format}
+          isActive={cameraActive}
+          photo={true}
+          video={true}
+          audio={hasMic}
+          fps={30}
+          videoBitRate="low"
+          photoQualityBalance="speed"
+          zoom={zoom}
+        />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, cs.simPreview]}>
+          <Text style={cs.simPreviewText}>No camera on this simulator</Text>
+        </View>
+      )}
+      <MainHeaderOverlay camera={true} />
 
-        <View style={StyleSheet.absoluteFill} {...pan.panHandlers} />
+      <View style={StyleSheet.absoluteFill} {...pan.panHandlers} />
 
-        <View style={cs.overlay} pointerEvents="box-none">
-          <View style={[cs.bottomControls, { paddingBottom: insets.bottom + TAB_BAR_CLEARANCE }]}>
-            <View style={cs.controlsRow}>
-              <TouchableOpacity style={cs.flashBtn} onPress={toggleFlash} accessibilityLabel="Toggle flash">
-                <FlashIcon size={26} color={flash === 'on' ? colors.accent : '#fff'} on={flash === 'on'} />
-              </TouchableOpacity>
+      <View style={cs.overlay} pointerEvents="box-none">
+        <View style={[cs.bottomControls, { paddingBottom: insets.bottom + TAB_BAR_CLEARANCE }]}>
+          <View style={cs.controlsRow}>
+            <TouchableOpacity
+              style={cs.flashBtn}
+              onPress={toggleFlash}
+              accessibilityLabel="Toggle flash"
+            >
+              <FlashIcon
+                size={26}
+                color={flash === 'on' ? colors.accent : '#fff'}
+                on={flash === 'on'}
+              />
+            </TouchableOpacity>
 
-              <Animated.View style={{ transform: [{ scale: shutterScale }] }}>
-                <Pressable
-                  onPressIn={simulator ? () => animateShutter(0.88) : onShutterPressIn}
-                  onPressOut={simulator ? () => { animateShutter(1); takeTestPhoto(); } : onShutterPressOut}
-                  style={[cs.captureBtn, recording && cs.captureBtnActive]}
-                  accessibilityLabel="Capture"
-                >
-                  <View style={[cs.captureBtnInner, recording && cs.captureBtnInnerActive]} />
-                </Pressable>
-              </Animated.View>
+            <Animated.View style={{ transform: [{ scale: shutterScale }] }}>
+              <Pressable
+                onPressIn={simulator ? () => animateShutter(0.88) : onShutterPressIn}
+                onPressOut={
+                  simulator
+                    ? () => {
+                        animateShutter(1);
+                        takeTestPhoto();
+                      }
+                    : onShutterPressOut
+                }
+                style={[cs.captureBtn, recording && cs.captureBtnActive]}
+                accessibilityLabel="Capture"
+              >
+                <View style={[cs.captureBtnInner, recording && cs.captureBtnInnerActive]} />
+              </Pressable>
+            </Animated.View>
 
-              <TouchableOpacity style={cs.flipBtn} onPress={flipCamera} accessibilityLabel="Flip camera">
-                <FlipCameraIcon size={30} color="#fff" />
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              style={cs.flipBtn}
+              onPress={flipCamera}
+              accessibilityLabel="Flip camera"
+            >
+              <FlipCameraIcon size={30} color="#fff" />
+            </TouchableOpacity>
           </View>
         </View>
       </View>
+    </View>
   );
 
   // The permission gate only makes sense when there is a camera to ask for.
-  return simulator ? screen : (
+  return simulator ? (
+    screen
+  ) : (
     <CameraPermissionGate message="Camera access needed">{screen}</CameraPermissionGate>
   );
 }
@@ -213,18 +272,33 @@ const cs = StyleSheet.create({
   bottomControls: { paddingBottom: 16, paddingHorizontal: 24 },
   controlsRow: { alignItems: 'center', justifyContent: 'center' },
   flashBtn: {
-    position: 'absolute', left: 8, width: 52, height: 52,
-    borderRadius: 26, justifyContent: 'center', alignItems: 'center',
+    position: 'absolute',
+    left: 8,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    justifyContent: 'center',
+    alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.28)',
   },
   flipBtn: {
-    position: 'absolute', right: 8, width: 52, height: 52,
-    borderRadius: 26, justifyContent: 'center', alignItems: 'center',
+    position: 'absolute',
+    right: 8,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    justifyContent: 'center',
+    alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.28)',
   },
   captureBtn: {
-    width: 84, height: 84, borderRadius: 42, borderWidth: 5,
-    borderColor: '#fff', justifyContent: 'center', alignItems: 'center',
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    borderWidth: 5,
+    borderColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   captureBtnActive: { borderColor: colors.error },
   captureBtnInner: { width: 68, height: 68, borderRadius: 34, backgroundColor: '#fff' },

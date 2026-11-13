@@ -1,14 +1,27 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, FlatList,
-  KeyboardAvoidingView, Platform, Animated, PanResponder, StyleSheet, type ListViewToken,
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Animated,
+  PanResponder,
+  StyleSheet,
+  type ListViewToken,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  chatTimeline, conversationItems, pixStatus, unseenVisibleMessageIds, type ChatTimelineItem,
+  chatTimeline,
+  conversationItems,
+  pixStatus,
+  unseenVisibleMessageIds,
+  type ChatTimelineItem,
 } from '../domain/chats';
 import { useSession, useMessages, useAcceptedFriends, markSeen } from '../state/store';
 import { usePeerTyping, notifyTyping, sendChatMessage } from '../state/chat';
@@ -28,18 +41,24 @@ function TypingBubble() {
   const dots = useRef([0, 1, 2].map(() => new Animated.Value(0.3))).current;
 
   useEffect(() => {
-    const loops = dots.map((dot, i) => Animated.loop(Animated.sequence([
-      Animated.delay(i * DOT_STEP_MS),
-      Animated.timing(dot, { toValue: 1, duration: 2 * DOT_STEP_MS, useNativeDriver: true }),
-      Animated.timing(dot, { toValue: 0.3, duration: 2 * DOT_STEP_MS, useNativeDriver: true }),
-    ])));
-    loops.forEach((l) => l.start());
-    return () => loops.forEach((l) => l.stop());
+    const loops = dots.map((dot, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * DOT_STEP_MS),
+          Animated.timing(dot, { toValue: 1, duration: 2 * DOT_STEP_MS, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0.3, duration: 2 * DOT_STEP_MS, useNativeDriver: true }),
+        ]),
+      ),
+    );
+    loops.forEach(l => l.start());
+    return () => loops.forEach(l => l.stop());
   }, [dots]);
 
   return (
     <View style={cs.typingBubble}>
-      {dots.map((opacity, i) => <Animated.View key={i} style={[cs.typingDot, { opacity }]} />)}
+      {dots.map((opacity, i) => (
+        <Animated.View key={i} style={[cs.typingDot, { opacity }]} />
+      ))}
     </View>
   );
 }
@@ -52,8 +71,11 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { myUserId } = useSession();
   const friends = useAcceptedFriends();
-  const friend = friends.find((f) => f.userId === route.params.userId)
-    ?? { userId: route.params.userId, username: route.params.username, status: 'accepted' as const };
+  const friend = friends.find(f => f.userId === route.params.userId) ?? {
+    userId: route.params.userId,
+    username: route.params.username,
+    status: 'accepted' as const,
+  };
   const headerHeight = useHeaderHeight();
   const allItems = useMessages();
   const [text, setText] = useState('');
@@ -61,10 +83,13 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const prevCountRef = useRef(0);
   const peerTyping = usePeerTyping(friend.userId);
 
-  const peerItems = useMemo(() => conversationItems(allItems, friend.userId), [allItems, friend.userId]);
-  const messages = useMemo(() => peerItems.filter((item) => item.kind === 'message'), [peerItems]);
+  const peerItems = useMemo(
+    () => conversationItems(allItems, friend.userId),
+    [allItems, friend.userId],
+  );
+  const messages = useMemo(() => peerItems.filter(item => item.kind === 'message'), [peerItems]);
   const unopenedPix = useMemo(
-    () => peerItems.filter((p) => p.kind === 'pix' && pixStatus(p, myUserId) === 'received_new'),
+    () => peerItems.filter(p => p.kind === 'pix' && pixStatus(p, myUserId) === 'received_new'),
     [peerItems, myUserId],
   );
   const timeline = useMemo(
@@ -98,14 +123,14 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const appActive = useAppActive();
   const [visibleIds, setVisibleIds] = useState<ReadonlySet<string>>(new Set());
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ListViewToken[] }) => {
-    setVisibleIds(new Set(viewableItems.map((v) => (v.item as TimelineItem).id)));
+    setVisibleIds(new Set(viewableItems.map(v => (v.item as TimelineItem).id)));
   }).current;
   const marked = useRef(new Set<string>());
   useEffect(() => {
     if (!isFocused || !appActive) return;
     for (const id of unseenVisibleMessageIds(messages, visibleIds, myUserId, marked.current)) {
       marked.current.add(id);
-      markSeen(id).catch((e) => {
+      markSeen(id).catch(e => {
         marked.current.delete(id);
         logError('seen.message:' + id, e);
       });
@@ -143,7 +168,10 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
       case 'received_new':
         return (
           <View style={[cs.msgRow, cs.msgRowLeft]}>
-            <TouchableOpacity style={cs.pixBarFilled} onPress={() => openPixViewer(nav, friend, unopenedPix)}>
+            <TouchableOpacity
+              style={cs.pixBarFilled}
+              onPress={() => openPixViewer(nav, friend, unopenedPix)}
+            >
               <Text style={cs.pixBarFilledText}>New pix · Tap to view</Text>
             </TouchableOpacity>
           </View>
@@ -178,7 +206,8 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
           <View style={cs.emptyContainer}>
             <View style={cs.emptyWrap}>
               <Text style={cs.emptyText}>
-                Messages and pix with {friend.username} are end-to-end encrypted and disappear after they are seen.
+                Messages and pix with {friend.username} are end-to-end encrypted and disappear after
+                they are seen.
               </Text>
             </View>
             {peerTyping && (
@@ -192,7 +221,7 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
             ref={listRef}
             inverted
             data={invertedTimeline}
-            keyExtractor={(item) => item.id}
+            keyExtractor={item => item.id}
             style={cs.messageList}
             contentContainerStyle={cs.listContent}
             keyboardShouldPersistTaps="handled"
@@ -201,17 +230,24 @@ export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
             onViewableItemsChanged={onViewableItemsChanged}
             viewabilityConfig={VIEWABILITY}
             // In an inverted FlatList, ListHeaderComponent renders at the visual bottom (offset 0).
-            ListHeaderComponent={peerTyping ? (
-              <View style={[cs.msgRow, cs.msgRowLeft]}>
-                <TypingBubble />
-              </View>
-            ) : undefined}
+            ListHeaderComponent={
+              peerTyping ? (
+                <View style={[cs.msgRow, cs.msgRowLeft]}>
+                  <TypingBubble />
+                </View>
+              ) : undefined
+            }
           />
         )}
 
         <View style={cs.composer}>
-          <TextInput style={cs.composerInput} placeholder="Message" placeholderTextColor={colors.textDim}
-            value={text} onChangeText={onChangeText} />
+          <TextInput
+            style={cs.composerInput}
+            placeholder="Message"
+            placeholderTextColor={colors.textDim}
+            value={text}
+            onChangeText={onChangeText}
+          />
           <TouchableOpacity
             style={[cs.sendBtn, !text.trim() && s.btnDisabled]}
             onPress={send}
@@ -229,7 +265,12 @@ const cs = StyleSheet.create({
   messageList: { flex: 1, paddingHorizontal: 12 },
   // In an inverted FlatList, flex-end aligns short conversations to the visual top of the screen.
   listContent: { flexGrow: 1, justifyContent: 'flex-end', paddingVertical: 8 },
-  emptyContainer: { flex: 1, paddingHorizontal: 12, paddingVertical: 8, justifyContent: 'space-between' },
+  emptyContainer: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    justifyContent: 'space-between',
+  },
   msgRow: { marginVertical: 3 },
   msgRowRight: { alignItems: 'flex-end' },
   msgRowLeft: { alignItems: 'flex-start' },
@@ -239,26 +280,61 @@ const cs = StyleSheet.create({
   myBubbleText: { color: colors.onAccent, fontSize: 16 },
   theirBubbleText: { color: colors.text, fontSize: 16 },
   typingBubble: {
-    flexDirection: 'row', backgroundColor: colors.surface, borderRadius: 18,
-    paddingHorizontal: 14, paddingVertical: 10, gap: 4, marginVertical: 2,
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 4,
+    marginVertical: 2,
   },
   typingDot: {
-    width: 8, height: 8, borderRadius: 4, backgroundColor: colors.textDim,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.textDim,
   },
-  composer: { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
   composerInput: {
-    flex: 1, backgroundColor: colors.surface, borderRadius: 20,
-    paddingHorizontal: 16, paddingVertical: 10, color: colors.text, fontSize: 16,
-    borderWidth: 1, borderColor: colors.border,
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    color: colors.text,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  sendBtn: { backgroundColor: colors.accent, borderRadius: 20, width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
+  sendBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   pixBarFilled: {
-    backgroundColor: colors.accent, borderRadius: 16, paddingHorizontal: 16, paddingVertical: 12,
+    backgroundColor: colors.accent,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
   pixBarFilledText: { color: colors.onAccent, fontWeight: '700', fontSize: 15 },
   pixSentPill: {
-    borderRadius: 16, paddingHorizontal: 14, paddingVertical: 8,
-    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   pixSentText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
   emptyWrap: { paddingHorizontal: 32, paddingTop: 48, alignItems: 'center' },

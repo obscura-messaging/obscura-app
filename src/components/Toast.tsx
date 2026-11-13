@@ -28,10 +28,15 @@ export function ToastHost() {
     Animated.timing(anim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
-      Animated.timing(anim, { toValue: 0, duration: 220, useNativeDriver: true })
-        .start(({ finished }) => { if (finished) setItem(null); });
+      Animated.timing(anim, { toValue: 0, duration: 220, useNativeDriver: true }).start(
+        ({ finished }) => {
+          if (finished) setItem(null);
+        },
+      );
     }, VISIBLE_MS);
-    return () => { if (hideTimer.current) clearTimeout(hideTimer.current); };
+    return () => {
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+    };
   }, [item, anim]);
 
   if (!item) return null;
@@ -41,19 +46,39 @@ export function ToastHost() {
   return (
     <View pointerEvents="none" style={[styles.host, { paddingTop: insets.top + 8 }]}>
       <Animated.View
-        style={[styles.banner, { backgroundColor: COLORS[item.type], opacity: anim, transform: [{ translateY }] }]}
+        style={[
+          styles.banner,
+          { backgroundColor: COLORS[item.type], opacity: anim, transform: [{ translateY }] },
+        ]}
       >
-        <Text style={styles.text} numberOfLines={3}>{item.message}</Text>
+        <Text style={styles.text} numberOfLines={3}>
+          {item.message}
+        </Text>
       </Animated.View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  host: { position: 'absolute', top: 0, left: 0, right: 0, alignItems: 'center', paddingHorizontal: 16, zIndex: 9999 },
+  host: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    zIndex: 9999,
+  },
   banner: {
-    width: '100%', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16,
-    shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 6,
+    width: '100%',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 6,
   },
   text: { color: '#fff', fontSize: 14, fontWeight: '600', textAlign: 'center' },
 });

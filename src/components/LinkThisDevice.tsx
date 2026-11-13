@@ -3,12 +3,18 @@ import { Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { CodeCard } from './CodeCard';
 import { confirm } from './confirm';
 import { linkProblem, type LinkProblem } from '../domain/devices';
-import { cancelLink, cancelPendingLinkOnUnmount, linkThisDevice, resetAccount } from '../state/login';
+import {
+  cancelLink,
+  cancelPendingLinkOnUnmount,
+  linkThisDevice,
+  resetAccount,
+} from '../state/login';
 import { errorMessage } from '../domain/errors';
 import { logError } from '../utils/log';
 import { s, colors } from '../styles';
 
-type Phase = { kind: 'starting' } | { kind: 'waiting'; code: string } | { kind: 'resetting' } | LinkProblem;
+type Phase =
+  { kind: 'starting' } | { kind: 'waiting'; code: string } | { kind: 'resetting' } | LinkProblem;
 
 interface LinkThisDeviceProps {
   username: string;
@@ -22,25 +28,24 @@ export function LinkThisDevice({ username, password, onBack }: LinkThisDevicePro
 
   const start = useCallback(() => {
     setPhase({ kind: 'starting' });
-    linkThisDevice(username, password, (code) => setPhase({ kind: 'waiting', code }))
-      .catch((e) => {
-        const problem = linkProblem(e);
-        if (problem !== null) setPhase(problem);
-      });
+    linkThisDevice(username, password, code => setPhase({ kind: 'waiting', code })).catch(e => {
+      const problem = linkProblem(e);
+      if (problem !== null) setPhase(problem);
+    });
   }, [username, password]);
 
   useEffect(() => {
     start();
     return () => {
-      cancelPendingLinkOnUnmount().catch((e) => logError('link.cancel', e));
+      cancelPendingLinkOnUnmount().catch(e => logError('link.cancel', e));
     };
   }, [start]);
 
   const reset = async () => {
     const confirmed = await confirm(
       'Reset account?',
-      'Every device signed in to this account is signed out and this phone becomes your new primary. '
-        + 'Friends will see that your safety number changed. This cannot be undone.',
+      'Every device signed in to this account is signed out and this phone becomes your new primary. ' +
+        'Friends will see that your safety number changed. This cannot be undone.',
       'Reset',
       true,
     );
@@ -58,16 +63,23 @@ export function LinkThisDevice({ username, password, onBack }: LinkThisDevicePro
     <ScrollView contentContainerStyle={styles.box}>
       <Text style={styles.title}>Link this device</Text>
       <Text style={styles.body}>
-        {username} is already signed in on another device. On your primary device, open Profile → Devices and scan
-        this code.
+        {username} is already signed in on another device. On your primary device, open Profile →
+        Devices and scan this code.
       </Text>
 
       {phase.kind === 'waiting' && (
-        <CodeCard kind="link" code={phase.code} caption="Waiting for approval…" copiedMessage="Link code copied" />
+        <CodeCard
+          kind="link"
+          code={phase.code}
+          caption="Waiting for approval…"
+          copiedMessage="Link code copied"
+        />
       )}
       {phase.kind === 'starting' && <Text style={styles.status}>Creating a link code…</Text>}
       {phase.kind === 'resetting' && <Text style={styles.status}>Resetting account…</Text>}
-      {phase.kind === 'expired' && <Text style={styles.error}>The code expired or could not be used.</Text>}
+      {phase.kind === 'expired' && (
+        <Text style={styles.error}>The code expired or could not be used.</Text>
+      )}
       {phase.kind === 'failed' && <Text style={styles.error}>{phase.message}</Text>}
 
       {(phase.kind === 'expired' || phase.kind === 'failed') && (
@@ -79,7 +91,11 @@ export function LinkThisDevice({ username, password, onBack }: LinkThisDevicePro
       <TouchableOpacity style={[s.secondaryBtn, styles.stretch, styles.backBtn]} onPress={onBack}>
         <Text style={s.secondaryBtnText}>Back</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.resetBtn} onPress={reset} disabled={phase.kind === 'starting' || phase.kind === 'resetting'}>
+      <TouchableOpacity
+        style={styles.resetBtn}
+        onPress={reset}
+        disabled={phase.kind === 'starting' || phase.kind === 'resetting'}
+      >
         <Text style={styles.resetText}>Lost your primary device? Reset account</Text>
       </TouchableOpacity>
     </ScrollView>

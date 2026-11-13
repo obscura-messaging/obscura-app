@@ -78,11 +78,16 @@ export function storyGroups<E extends StoryItem = StoryItem>(
   identity: Identity,
 ): { mine: StoryGroup<E>; others: StoryGroup<E>[] } {
   const ordered = [...stories].sort((a, b) => a.sentAt - b.sentAt);
-  const groupOf = (userId: string, username: string): StoryGroup<E> =>
-    ({ userId, username, stories: ordered.filter((s) => s.authorUserId === userId) });
+  const groupOf = (userId: string, username: string): StoryGroup<E> => ({
+    userId,
+    username,
+    stories: ordered.filter(s => s.authorUserId === userId),
+  });
 
-  const authors = [...new Set(ordered.map((s) => s.authorUserId))].filter((id) => id !== identity.myUserId);
-  const others = authors.flatMap((userId) => {
+  const authors = [...new Set(ordered.map(s => s.authorUserId))].filter(
+    id => id !== identity.myUserId,
+  );
+  const others = authors.flatMap(userId => {
     const username = displayNameFor(userId, identity);
     return username === null ? [] : [groupOf(userId, username)];
   });
@@ -105,7 +110,7 @@ export function pixViewerGroups(
     .filter((p): p is PixItem => p.kind === 'pix' && wanted.has(p.id))
     .sort((a, b) => a.sentAt - b.sentAt)
     .map(pixToSlide);
-  const resolvedUsername = friends.find((f) => f.userId === userId)?.username ?? username;
+  const resolvedUsername = friends.find(f => f.userId === userId)?.username ?? username;
   return {
     groups: stories.length > 0 ? [{ userId, username: resolvedUsername, stories }] : [],
     initialGroupIdx: 0,
@@ -119,9 +124,9 @@ export function storyViewerGroups(
 ): { groups: StoryGroup<ViewerSlide>[]; initialGroupIdx: number } {
   const { mine, others } = storyGroups(allStories, identity);
   const populated = [mine, ...others]
-    .filter((g) => g.stories.length > 0)
-    .map((g) => ({ ...g, stories: g.stories.map(storyToSlide) }));
-  const idx = populated.findIndex((g) => g.userId === initialUserId);
+    .filter(g => g.stories.length > 0)
+    .map(g => ({ ...g, stories: g.stories.map(storyToSlide) }));
+  const idx = populated.findIndex(g => g.userId === initialUserId);
   return { groups: populated, initialGroupIdx: Math.max(0, idx) };
 }
 

@@ -1,7 +1,14 @@
 import type { ConversationItem, PixItem } from '../chats';
 import type { Friend } from '../friends';
 import {
-  displayMs, pixToSlide, pixViewerGroups, stepViewer, storyGroups, storyToSlide, storyViewerGroups, type StoryItem,
+  displayMs,
+  pixToSlide,
+  pixViewerGroups,
+  stepViewer,
+  storyGroups,
+  storyToSlide,
+  storyViewerGroups,
+  type StoryItem,
 } from '../viewer';
 
 describe('displayMs', () => {
@@ -97,8 +104,8 @@ describe('slide projections & viewer groups', () => {
     };
 
     const grouped = storyGroups([storyNewer, storyOlder, carolStory], identity);
-    expect(grouped.others.map((g) => g.userId)).toEqual([CAROL.userId, BOB.userId]);
-    expect(grouped.others[1].stories.map((s) => s.sentAt)).toEqual([100, 200]);
+    expect(grouped.others.map(g => g.userId)).toEqual([CAROL.userId, BOB.userId]);
+    expect(grouped.others[1].stories.map(s => s.sentAt)).toEqual([100, 200]);
 
     const pix1: PixItem = {
       kind: 'pix',
@@ -153,25 +160,37 @@ describe('slide projections & viewer groups', () => {
     expect(viewer).toEqual({
       groups: [
         { userId: CAROL.userId, username: 'carol', stories: [storyToSlide(carolStory)] },
-        { userId: BOB.userId, username: 'bob', stories: [storyToSlide(storyOlder), storyToSlide(storyNewer)] },
+        {
+          userId: BOB.userId,
+          username: 'bob',
+          stories: [storyToSlide(storyOlder), storyToSlide(storyNewer)],
+        },
       ],
       initialGroupIdx: 1,
     });
-    expect(storyViewerGroups([storyOlder, carolStory], identity, 'uUnknown').initialGroupIdx).toBe(0);
+    expect(storyViewerGroups([storyOlder, carolStory], identity, 'uUnknown').initialGroupIdx).toBe(
+      0,
+    );
     expect(storyGroups([{ ...storyOlder, authorUserId: 'uStranger' }], identity)).toEqual({
       mine: { userId: 'uMe', username: 'me', stories: [] },
       others: [],
     });
 
     expect(
-      pixViewerGroups([pix2, msgWithWantedId, unwantedPix, pix1], BOB.userId, 'fallback', ['p1', 'p2', 'm1'], [CAROL, BOB]),
+      pixViewerGroups(
+        [pix2, msgWithWantedId, unwantedPix, pix1],
+        BOB.userId,
+        'fallback',
+        ['p1', 'p2', 'm1'],
+        [CAROL, BOB],
+      ),
     ).toEqual({
-      groups: [{ userId: BOB.userId, username: 'bob', stories: [pixToSlide(pix1), pixToSlide(pix2)] }],
+      groups: [
+        { userId: BOB.userId, username: 'bob', stories: [pixToSlide(pix1), pixToSlide(pix2)] },
+      ],
       initialGroupIdx: 0,
     });
-    expect(
-      pixViewerGroups([pix1], 'uUnlisted', 'fallbackName', ['p1'], [BOB]),
-    ).toEqual({
+    expect(pixViewerGroups([pix1], 'uUnlisted', 'fallbackName', ['p1'], [BOB])).toEqual({
       groups: [{ userId: 'uUnlisted', username: 'fallbackName', stories: [pixToSlide(pix1)] }],
       initialGroupIdx: 0,
     });

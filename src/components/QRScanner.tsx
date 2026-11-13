@@ -22,20 +22,27 @@ export function QRScanner({ kind, hint, onCode }: QRScannerProps) {
   const device = useCameraDevice('back');
   const handled = useRef(false); // onCodeScanned keeps firing
 
-  const onCodeScanned = useCallback((codes: Code[]) => {
-    if (handled.current) return;
-    const code = codes.map((c) => parseQR(kind, c.value)).find((c) => c !== null);
-    if (!code) return;
-    handled.current = true;
-    onCode(code).then((done) => { handled.current = done; });
-  }, [kind, onCode]);
+  const onCodeScanned = useCallback(
+    (codes: Code[]) => {
+      if (handled.current) return;
+      const code = codes.map(c => parseQR(kind, c.value)).find(c => c !== null);
+      if (!code) return;
+      handled.current = true;
+      onCode(code).then(done => {
+        handled.current = done;
+      });
+    },
+    [kind, onCode],
+  );
 
   const codeScanner = useCodeScanner({ codeTypes: ['qr'], onCodeScanned });
 
   return (
     <CameraPermissionGate message="Camera access needed to scan">
       {!device ? (
-        <View style={ss.center}><Text style={ss.msg}>No camera available</Text></View>
+        <View style={ss.center}>
+          <Text style={ss.msg}>No camera available</Text>
+        </View>
       ) : (
         <View style={ss.container}>
           <Camera
@@ -49,7 +56,10 @@ export function QRScanner({ kind, hint, onCode }: QRScannerProps) {
             <View style={ss.frame} />
             <Text style={ss.hint}>{hint}</Text>
           </View>
-          <TouchableOpacity style={[ss.close, { top: insets.top + 12 }]} onPress={() => nav.goBack()}>
+          <TouchableOpacity
+            style={[ss.close, { top: insets.top + 12 }]}
+            onPress={() => nav.goBack()}
+          >
             <CloseIcon size={22} color="#fff" />
           </TouchableOpacity>
         </View>
@@ -60,16 +70,47 @@ export function QRScanner({ kind, hint, onCode }: QRScannerProps) {
 
 const ss = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  center: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', padding: 32 },
-  msg: { color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 16, textAlign: 'center' },
-  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' },
-  frame: {
-    width: 240, height: 240, borderRadius: 24,
-    borderWidth: 3, borderColor: 'rgba(255,255,255,0.9)',
+  center: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
   },
-  hint: { color: '#fff', fontSize: 15, fontWeight: '600', marginTop: 20, textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 4 },
+  msg: { color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 16, textAlign: 'center' },
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  frame: {
+    width: 240,
+    height: 240,
+    borderRadius: 24,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.9)',
+  },
+  hint: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 20,
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowRadius: 4,
+  },
   close: {
-    position: 'absolute', top: 48, left: 16, width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center',
+    position: 'absolute',
+    top: 48,
+    left: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

@@ -19,12 +19,11 @@ class ObscuraMessagingService : FirebaseMessagingService() {
 
     @Suppress("OVERRIDE_DEPRECATION")
     override fun onNewToken(token: String) {
-        Log.d(TAG, "onNewToken: ${token.take(20)}...")
         ObscuraSession.deliverPushToken(token)
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        Log.d(TAG, "Silent push received, data=${message.data}")
+        Log.d(TAG, "Silent push received")
         // OS gives us ~10 minutes; processPendingMessages internally caps at 25s.
         runBlocking { ObscuraSession.onPushWake() }
     }

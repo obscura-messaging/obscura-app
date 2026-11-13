@@ -37,7 +37,12 @@ export const Platform = { OS: 'ios', select: (o: Record<string, unknown>) => o.i
 
 type AlertButton = { text?: string; style?: string; onPress?: () => void };
 type AlertOptions = { cancelable?: boolean; onDismiss?: () => void };
-type AlertHandler = (title: string, message?: string, buttons?: AlertButton[], options?: AlertOptions) => void;
+type AlertHandler = (
+  title: string,
+  message?: string,
+  buttons?: AlertButton[],
+  options?: AlertOptions,
+) => void;
 
 const alertQueue: AlertHandler[] = [];
 
@@ -48,14 +53,7 @@ export const Alert = {
   __reset(): void {
     alertQueue.length = 0;
   },
-  alert(
-    title: string,
-    message?: string,
-    buttons?: AlertButton[],
-    options?: AlertOptions,
-  ): void {
+  alert(title: string, message?: string, buttons?: AlertButton[], options?: AlertOptions): void {
     alertQueue.shift()?.(title, message, buttons, options);
   },
 };
-
-

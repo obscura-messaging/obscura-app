@@ -26,8 +26,7 @@ type Env = keyof typeof environments;
 const envs = Object.keys(environments) as Env[];
 const fileName = (env: Env) => env[0].toUpperCase() + env.slice(1);
 
-const source = (path: string) =>
-  readFileSync(resolve(__dirname, '../../..', path), 'utf8');
+const source = (path: string) => readFileSync(resolve(__dirname, '../../..', path), 'utf8');
 
 const match = (text: string, pattern: RegExp, what: string) => {
   const found = text.match(pattern);
@@ -52,24 +51,19 @@ describe('dev and prod environments', () => {
       const block = flavor(env);
       const suffix = block.match(/applicationIdSuffix "([^"]+)"/)?.[1] ?? '';
       expect(baseId + suffix).toBe(environments[env].appId);
-      expect(match(block, /"app_name", "([^"]+)"/, 'app_name')).toBe(
-        environments[env].name,
+      expect(match(block, /"app_name", "([^"]+)"/, 'app_name')).toBe(environments[env].name);
+      expect(match(block, /"OBSCURA_API_URL", '"([^"]+)"'/, 'OBSCURA_API_URL')).toBe(
+        `https://${environments[env].host}`,
       );
-      expect(
-        match(block, /"OBSCURA_API_URL", '"([^"]+)"'/, 'OBSCURA_API_URL'),
-      ).toBe(`https://${environments[env].host}`);
     });
 
     it('ships a compile-only Firebase stub that covers every app id', () => {
       const stub = JSON.parse(source('android/app/google-services.stub.json'));
       const packages = stub.client.map(
-        (client: {
-          client_info: { android_client_info: { package_name: string } };
-        }) => client.client_info.android_client_info.package_name,
+        (client: { client_info: { android_client_info: { package_name: string } } }) =>
+          client.client_info.android_client_info.package_name,
       );
-      expect(packages.sort()).toEqual(
-        envs.map(env => environments[env].appId).sort(),
-      );
+      expect(packages.sort()).toEqual(envs.map(env => environments[env].appId).sort());
     });
   });
 
@@ -79,24 +73,17 @@ describe('dev and prod environments', () => {
         source(`ios/Config/${fileName(env)}.xcconfig`)
           .split('\n')
           .filter(line => line.includes(' = ') && !line.startsWith('//'))
-          .map(line => [
-            line.slice(0, line.indexOf(' = ')),
-            line.slice(line.indexOf(' = ') + 3),
-          ]),
+          .map(line => [line.slice(0, line.indexOf(' = ')), line.slice(line.indexOf(' = ') + 3)]),
       );
 
-    it.each(envs)(
-      '%s.xcconfig has the expected bundle id, name, server and profile',
-      env => {
-        expect(xcconfig(env)).toEqual({
-          PRODUCT_BUNDLE_IDENTIFIER: environments[env].appId,
-          OBSCURA_DISPLAY_NAME: environments[env].name,
-          OBSCURA_API_HOST: environments[env].host,
-          'PROVISIONING_PROFILE_SPECIFIER[config=Release][sdk=iphoneos*]':
-            environments[env].profile,
-        });
-      },
-    );
+    it.each(envs)('%s.xcconfig has the expected bundle id, name, server and profile', env => {
+      expect(xcconfig(env)).toEqual({
+        PRODUCT_BUNDLE_IDENTIFIER: environments[env].appId,
+        OBSCURA_DISPLAY_NAME: environments[env].name,
+        OBSCURA_API_HOST: environments[env].host,
+        'PROVISIONING_PROFILE_SPECIFIER[config=Release][sdk=iphoneos*]': environments[env].profile,
+      });
+    });
 
     it.each(envs)(
       '%s export options sign with its profile and restrict TestFlight as expected',
@@ -108,11 +95,10 @@ describe('dev and prod environments', () => {
           'profiles',
         );
         expect(
-          [
-            ...profiles.matchAll(
-              /<key>([^<]+)<\/key>\s*<string>([^<]+)<\/string>/g,
-            ),
-          ].map(m => [m[1], m[2]]),
+          [...profiles.matchAll(/<key>([^<]+)<\/key>\s*<string>([^<]+)<\/string>/g)].map(m => [
+            m[1],
+            m[2],
+          ]),
         ).toEqual([[environments[env].appId, environments[env].profile]]);
         expect(
           match(
@@ -164,23 +150,20 @@ describe('dev and prod environments', () => {
 });
 
 describe('Gradle builds', () => {
-  it.each(['android', 'kotlin'])(
-    '%s runs its build on the JDK in .java-version',
-    build => {
-      const daemon = match(
-        source(`${build}/gradle/gradle-daemon-jvm.properties`),
-        /toolchainVersion=(\S+)/,
-        'toolchainVersion',
-      );
-      expect(daemon).toBe(source('.java-version').trim());
-    },
-  );
+  it.each(['android', 'kotlin'])('%s runs its build on the JDK in .java-version', build => {
+    const daemon = match(
+      source(`${build}/gradle/gradle-daemon-jvm.properties`),
+      /toolchainVersion=(\S+)/,
+      'toolchainVersion',
+    );
+    expect(daemon).toBe(source('.java-version').trim());
+  });
 
   it('run the app and the Kotlin kit on the same Gradle version', () => {
     const distribution = (path: string) =>
       match(source(path), /distributionUrl=(\S+)/, `${path} distributionUrl`);
-    expect(
-      distribution('kotlin/gradle/wrapper/gradle-wrapper.properties'),
-    ).toBe(distribution('android/gradle/wrapper/gradle-wrapper.properties'));
+    expect(distribution('kotlin/gradle/wrapper/gradle-wrapper.properties')).toBe(
+      distribution('android/gradle/wrapper/gradle-wrapper.properties'),
+    );
   });
 });

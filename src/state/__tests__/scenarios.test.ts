@@ -1,6 +1,15 @@
 import {
-  useStore, loadSession, refreshMessages, flushOutboxFromStore, sweepAndRefresh,
-  applyObscuraEvent, addFriend, acceptFriend, removeFriend, markSeen, resetSession,
+  useStore,
+  loadSession,
+  refreshMessages,
+  flushOutboxFromStore,
+  sweepAndRefresh,
+  applyObscuraEvent,
+  addFriend,
+  acceptFriend,
+  removeFriend,
+  markSeen,
+  resetSession,
 } from '../store';
 import { logIn, linkThisDevice } from '../login';
 import { sendCapture, type Capture } from '../sendMedia';
@@ -12,7 +21,11 @@ const bridge = getFakeBridge();
 
 const ALICE = '11111111-1111-4111-8111-111111111111';
 const DEVICE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const BOB: Friend = { userId: '22222222-2222-4222-8222-222222222222', username: 'bob', status: 'accepted' };
+const BOB: Friend = {
+  userId: '22222222-2222-4222-8222-222222222222',
+  username: 'bob',
+  status: 'accepted',
+};
 
 beforeEach(() => {
   resetSession();
@@ -26,7 +39,7 @@ describe('Scenario 1: device relink + friend handshake', () => {
     expect(await logIn('alice', 'password-1234')).toBe('linkRequired');
 
     const codes: string[] = [];
-    const linking = linkThisDevice('alice', 'password-1234', (code) => codes.push(code));
+    const linking = linkThisDevice('alice', 'password-1234', code => codes.push(code));
     await Promise.resolve();
     expect(codes).toHaveLength(1);
     bridge.__approvePendingLink();
@@ -67,7 +80,12 @@ describe('Scenario 2: offline capture -> reconnect sync -> peer seen receipt -> 
 
     // 1. Alice captures a photo while Bob is unreachable.
     bridge.__setUnreachable([BOB.userId]);
-    const capture: Capture = { path: '/fake/shot.jpg', mediaType: 'photo', caption: 'secret', displayDuration: 5 };
+    const capture: Capture = {
+      path: '/fake/shot.jpg',
+      mediaType: 'photo',
+      caption: 'secret',
+      displayDuration: 5,
+    };
     const undelivered = await sendCapture(capture, [BOB], true);
 
     expect(undelivered).toEqual(['bob', 'My story']);
@@ -77,8 +95,15 @@ describe('Scenario 2: offline capture -> reconnect sync -> peer seen receipt -> 
 
     const [pixEntry] = useStore.getState().messages;
     if (pixEntry.kind !== 'pix') throw new Error('Expected pix entry');
-    let [bobActivity] = friendActivities(useStore.getState().friends, ALICE, useStore.getState().messages);
-    expect(activityPreview(bobActivity, ALICE)).toEqual({ text: 'Pix delivered', highlight: false });
+    let [bobActivity] = friendActivities(
+      useStore.getState().friends,
+      ALICE,
+      useStore.getState().messages,
+    );
+    expect(activityPreview(bobActivity, ALICE)).toEqual({
+      text: 'Pix delivered',
+      highlight: false,
+    });
 
     // 2. Network reconnects: store triggers flushOutbox and sweepExpired.
     bridge.__setUnreachable([]);
@@ -99,7 +124,11 @@ describe('Scenario 2: offline capture -> reconnect sync -> peer seen receipt -> 
     await applyObscuraEvent({ type: 'messageReceived', model: 'seen' });
 
     expect(useStore.getState().messages[0].viewedAt).toBe(viewedAt);
-    [bobActivity] = friendActivities(useStore.getState().friends, ALICE, useStore.getState().messages);
+    [bobActivity] = friendActivities(
+      useStore.getState().friends,
+      ALICE,
+      useStore.getState().messages,
+    );
     expect(activityPreview(bobActivity, ALICE)).toEqual({ text: 'Pix opened', highlight: false });
 
     // 4. Native sweep erases the expired pix and reports 'pix' as touched; sweepAndRefresh reloads the slice.
@@ -125,7 +154,7 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
     });
     await Promise.all([firstRefresh, refreshMessages()]);
 
-    expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_race']);
+    expect(useStore.getState().messages.map(m => m.id)).toEqual(['dm_race']);
   });
 
   it('highlights an incoming unopened pix in activityPreview until markSeen marks it viewed', async () => {
@@ -142,11 +171,24 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
     });
     await applyObscuraEvent({ type: 'messageReceived', model: 'pix' });
 
-    let [activity] = friendActivities(useStore.getState().friends, ALICE, useStore.getState().messages);
+    let [activity] = friendActivities(
+      useStore.getState().friends,
+      ALICE,
+      useStore.getState().messages,
+    );
     expect(activity.unopenedPix).toHaveLength(1);
-    expect(activityPreview(activity, ALICE)).toEqual({ text: 'New pix · tap to view', highlight: true });
+    expect(activityPreview(activity, ALICE)).toEqual({
+      text: 'New pix · tap to view',
+      highlight: true,
+    });
     expect(chatTimeline(useStore.getState().messages, BOB.userId, ALICE)).toEqual([
-      { kind: 'pix', id: 'pix_in_1', sentAt: expect.any(Number), authorUserId: BOB.userId, status: 'received_new' },
+      {
+        kind: 'pix',
+        id: 'pix_in_1',
+        sentAt: expect.any(Number),
+        authorUserId: BOB.userId,
+        status: 'received_new',
+      },
     ]);
 
     await markSeen(activity.unopenedPix[0].id);
@@ -171,7 +213,6 @@ describe('Scenario 3: incoming pix viewed locally + concurrent refresh & chat se
     // Concurrent outbox flushes coalesce into at most one in-flight + one trailing call.
     bridge.__calls.length = 0;
     await Promise.all([flushOutboxFromStore(), flushOutboxFromStore(), flushOutboxFromStore()]);
-    expect(bridge.__calls.filter((c) => c === 'flushOutbox')).toHaveLength(2);
+    expect(bridge.__calls.filter(c => c === 'flushOutbox')).toHaveLength(2);
   });
 });
-

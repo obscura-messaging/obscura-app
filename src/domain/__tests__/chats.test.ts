@@ -1,7 +1,14 @@
 import {
-  activityPreview, chatTimeline, conversationItems, friendActivities,
-  pixBadgeFor, pixStatus, unseenVisibleMessageIds,
-  type ConversationItem, type DirectMessageItem, type PixItem,
+  activityPreview,
+  chatTimeline,
+  conversationItems,
+  friendActivities,
+  pixBadgeFor,
+  pixStatus,
+  unseenVisibleMessageIds,
+  type ConversationItem,
+  type DirectMessageItem,
+  type PixItem,
 } from '../chats';
 import type { Friend } from '../friends';
 
@@ -68,7 +75,7 @@ describe('conversationItems', () => {
     const b = msg('b', 2, ME, BOB.userId);
     const a = msg('a', 1, ME, BOB.userId);
 
-    expect(conversationItems([b, other, a], BOB.userId).map((e) => e.id)).toEqual(['a', 'b']);
+    expect(conversationItems([b, other, a], BOB.userId).map(e => e.id)).toEqual(['a', 'b']);
   });
 });
 
@@ -85,7 +92,7 @@ describe('chatTimeline', () => {
 
     const timeline = chatTimeline(items, BOB.userId, ME);
 
-    expect(timeline.map((item) => [item.kind, item.id])).toEqual([
+    expect(timeline.map(item => [item.kind, item.id])).toEqual([
       ['message', 'm1'],
       ['pix', 'p_new'],
       ['pix', 'p_sent_pending'],
@@ -127,7 +134,7 @@ describe('friendActivities & activityPreview', () => {
 
     expect(bob.friend).toBe(BOB);
     expect(bob.lastMessage?.id).toBe('m2');
-    expect(bob.unopenedPix.map((p) => p.id)).toEqual(['p1', 'p3']);
+    expect(bob.unopenedPix.map(p => p.id)).toEqual(['p1', 'p3']);
     expect(bob.latestPix).toBe('received_viewed');
     expect(bob.latestAt).toBe(30);
     expect(bob.badge).toEqual({ kind: 'new', count: 2 });
@@ -142,30 +149,36 @@ describe('friendActivities & activityPreview', () => {
   });
 
   it('computes activityPreview and badge from unopened pix, latest message, or latest pix status', () => {
-    const [unopenedActivity] = friendActivities(
-      [BOB],
-      ME,
-      [pixItem('p1', 10, BOB.userId, BOB.userId), pixItem('p2', 20, BOB.userId, BOB.userId)],
-    );
-    expect(activityPreview(unopenedActivity, ME)).toEqual({ text: '2 new pix · tap to view', highlight: true });
+    const [unopenedActivity] = friendActivities([BOB], ME, [
+      pixItem('p1', 10, BOB.userId, BOB.userId),
+      pixItem('p2', 20, BOB.userId, BOB.userId),
+    ]);
+    expect(activityPreview(unopenedActivity, ME)).toEqual({
+      text: '2 new pix · tap to view',
+      highlight: true,
+    });
     expect(unopenedActivity.badge).toEqual({ kind: 'new', count: 2 });
 
     const [sentPixActivity] = friendActivities([BOB], ME, [pixItem('p3', 30, ME, BOB.userId)]);
-    expect(activityPreview(sentPixActivity, ME)).toEqual({ text: 'Pix delivered', highlight: false });
+    expect(activityPreview(sentPixActivity, ME)).toEqual({
+      text: 'Pix delivered',
+      highlight: false,
+    });
     expect(sentPixActivity.badge).toEqual({ kind: 'sent' });
 
-    const [msgActivity] = friendActivities(
-      [BOB],
-      ME,
-      [msg('m1', 40, ME, BOB.userId, 'yo'), pixItem('p3', 30, ME, BOB.userId)],
-    );
+    const [msgActivity] = friendActivities([BOB], ME, [
+      msg('m1', 40, ME, BOB.userId, 'yo'),
+      pixItem('p3', 30, ME, BOB.userId),
+    ]);
     expect(activityPreview(msgActivity, ME)).toEqual({ text: 'You: yo', highlight: false });
     expect(pixBadgeFor(0, 'sent_opened')).toEqual({ kind: 'opened' });
 
     const [emptyActivity] = friendActivities([BOB], ME, []);
     expect(activityPreview(emptyActivity, ME)).toEqual({ text: 'Tap to chat', highlight: false });
 
-    const [msgOnlyActivity] = friendActivities([BOB], ME, [msg('m2', 10, BOB.userId, BOB.userId, 'hey there')]);
+    const [msgOnlyActivity] = friendActivities([BOB], ME, [
+      msg('m2', 10, BOB.userId, BOB.userId, 'hey there'),
+    ]);
     expect(activityPreview(msgOnlyActivity, ME)).toEqual({
       text: 'hey there',
       highlight: false,
@@ -175,13 +188,17 @@ describe('friendActivities & activityPreview', () => {
       highlight: false,
     });
 
-    const [ownMsgOnlyActivity] = friendActivities([BOB], ME, [msg('m2_own', 10, ME, BOB.userId, 'from me')]);
+    const [ownMsgOnlyActivity] = friendActivities([BOB], ME, [
+      msg('m2_own', 10, ME, BOB.userId, 'from me'),
+    ]);
     expect(activityPreview({ ...ownMsgOnlyActivity, latestAt: 99 }, ME)).toEqual({
       text: 'You: from me',
       highlight: false,
     });
 
-    const [blankMsgActivity] = friendActivities([BOB], ME, [msg('m3', 10, BOB.userId, BOB.userId, '')]);
+    const [blankMsgActivity] = friendActivities([BOB], ME, [
+      msg('m3', 10, BOB.userId, BOB.userId, ''),
+    ]);
     expect(activityPreview(blankMsgActivity, ME)).toEqual({
       text: 'Tap to chat',
       highlight: false,
@@ -199,10 +216,19 @@ describe('unseenVisibleMessageIds', () => {
       msg('m_in_flight', 50, BOB.userId, BOB.userId, 'marking', null),
       pixItem('p_visible', 60, BOB.userId, BOB.userId, null, 'pix'),
     ];
-    const visible = new Set(['m_visible_unseen', 'm_own', 'm_already_viewed', 'm_in_flight', 'p_visible']);
+    const visible = new Set([
+      'm_visible_unseen',
+      'm_own',
+      'm_already_viewed',
+      'm_in_flight',
+      'p_visible',
+    ]);
     const marked = new Set(['m_in_flight']);
 
     expect(unseenVisibleMessageIds(items, visible, ME, marked)).toEqual(['m_visible_unseen']);
-    expect(unseenVisibleMessageIds(items, visible, ME)).toEqual(['m_visible_unseen', 'm_in_flight']);
+    expect(unseenVisibleMessageIds(items, visible, ME)).toEqual([
+      'm_visible_unseen',
+      'm_in_flight',
+    ]);
   });
 });

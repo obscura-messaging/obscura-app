@@ -23,24 +23,41 @@ export function AuthScreen() {
   const submit = async (label: string, action: () => Promise<void>) => {
     if (busy) return;
     const problem = credentialsProblem(username, password);
-    if (problem !== null) { setPhase({ kind: 'error', message: problem }); return; }
+    if (problem !== null) {
+      setPhase({ kind: 'error', message: problem });
+      return;
+    }
     setPhase({ kind: 'submitting', label });
-    try { await action(); } catch (e) { setPhase({ kind: 'error', message: errorMessage(e) }); }
+    try {
+      await action();
+    } catch (e) {
+      setPhase({ kind: 'error', message: errorMessage(e) });
+    }
   };
 
-  const onLogIn = () => submit('Logging in…', async () => {
-    switch (await logIn(username, password)) {
-      case 'invalidCredentials': setPhase({ kind: 'error', message: 'Wrong username or password' }); return;
-      case 'linkRequired': setPhase({ kind: 'linking' }); return;
-      case 'signedIn': return;
-    }
-  });
+  const onLogIn = () =>
+    submit('Logging in…', async () => {
+      switch (await logIn(username, password)) {
+        case 'invalidCredentials':
+          setPhase({ kind: 'error', message: 'Wrong username or password' });
+          return;
+        case 'linkRequired':
+          setPhase({ kind: 'linking' });
+          return;
+        case 'signedIn':
+          return;
+      }
+    });
   const onRegister = () => submit('Registering…', () => register(username, password));
 
   if (phase.kind === 'linking') {
     return (
       <SafeAreaView style={s.container}>
-        <LinkThisDevice username={username} password={password} onBack={() => setPhase({ kind: 'idle' })} />
+        <LinkThisDevice
+          username={username}
+          password={password}
+          onBack={() => setPhase({ kind: 'idle' })}
+        />
       </SafeAreaView>
     );
   }
@@ -53,15 +70,38 @@ export function AuthScreen() {
           <Text style={a.subtitle}>Encrypted everything</Text>
           {phase.kind === 'error' && <Text style={a.error}>{phase.message}</Text>}
           {phase.kind === 'submitting' && <Text style={a.progress}>{phase.label}</Text>}
-          <TextInput style={s.input} placeholder="Username" placeholderTextColor={colors.textDim}
-            value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} editable={!busy} />
-          <TextInput style={s.input} placeholder={`Password (${MIN_PASSWORD_LENGTH}+ chars)`}
-            placeholderTextColor={colors.textDim} value={password} onChangeText={setPassword} secureTextEntry editable={!busy} />
+          <TextInput
+            style={s.input}
+            placeholder="Username"
+            placeholderTextColor={colors.textDim}
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!busy}
+          />
+          <TextInput
+            style={s.input}
+            placeholder={`Password (${MIN_PASSWORD_LENGTH}+ chars)`}
+            placeholderTextColor={colors.textDim}
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            editable={!busy}
+          />
           <View style={a.buttons}>
-            <TouchableOpacity style={[s.primaryBtn, busy && s.btnDisabled]} onPress={onLogIn} disabled={busy}>
+            <TouchableOpacity
+              style={[s.primaryBtn, busy && s.btnDisabled]}
+              onPress={onLogIn}
+              disabled={busy}
+            >
               <Text style={s.primaryBtnText}>Log in</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[s.secondaryBtn, busy && s.btnDisabled]} onPress={onRegister} disabled={busy}>
+            <TouchableOpacity
+              style={[s.secondaryBtn, busy && s.btnDisabled]}
+              onPress={onRegister}
+              disabled={busy}
+            >
               <Text style={s.secondaryBtnText}>Sign up</Text>
             </TouchableOpacity>
           </View>

@@ -15,7 +15,12 @@ export function Avatar({
   color?: string;
 }) {
   const initial = name[0]?.toUpperCase() ?? '?';
-  const discStyle = { width: size, height: size, borderRadius: size / 2, backgroundColor: background };
+  const discStyle = {
+    width: size,
+    height: size,
+    borderRadius: size / 2,
+    backgroundColor: background,
+  };
   const textStyle = { color, fontSize: Math.round(size * 0.42) };
   return (
     <View style={[styles.base, discStyle]}>

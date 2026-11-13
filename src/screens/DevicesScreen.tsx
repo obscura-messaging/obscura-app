@@ -23,11 +23,16 @@ export function DevicesScreen() {
 
   const refresh = useCallback(() => {
     loadDevices()
-      .then((list) => { setDevices(list); setLoadError(null); })
-      .catch((e) => setLoadError(errorMessage(e)));
+      .then(list => {
+        setDevices(list);
+        setLoadError(null);
+      })
+      .catch(e => setLoadError(errorMessage(e)));
   }, []);
 
-  useEffect(() => { if (focused) refresh(); }, [focused, refresh]);
+  useEffect(() => {
+    if (focused) refresh();
+  }, [focused, refresh]);
 
   const linkPasted = async () => {
     if (await confirmAndApproveLink(codeInput)) {
@@ -38,8 +43,18 @@ export function DevicesScreen() {
 
   const unlink = async (device: DeviceInfo) => {
     const confirmed = device.isThisDevice
-      ? await confirm('Unlink this device?', 'This phone is signed out and everything Obscura stored on it is erased.', 'Unlink', true)
-      : await confirm(`Unlink “${deviceLabel(device)}”?`, 'It is signed out of your account.', 'Unlink', true);
+      ? await confirm(
+          'Unlink this device?',
+          'This phone is signed out and everything Obscura stored on it is erased.',
+          'Unlink',
+          true,
+        )
+      : await confirm(
+          `Unlink “${deviceLabel(device)}”?`,
+          'It is signed out of your account.',
+          'Unlink',
+          true,
+        );
     if (!confirmed) return;
     try {
       await unlinkDevice(device);
@@ -49,7 +64,7 @@ export function DevicesScreen() {
     }
   };
 
-  const thisDevice = devices?.find((d) => d.isThisDevice);
+  const thisDevice = devices?.find(d => d.isThisDevice);
 
   return (
     <ScrollView
@@ -60,7 +75,7 @@ export function DevicesScreen() {
       <Text style={s.sectionTitle}>your devices</Text>
       {loadError !== null && <Text style={dv.error}>{loadError}</Text>}
       {devices === null && loadError === null && <Text style={dv.hint}>Loading…</Text>}
-      {devices?.map((device) => (
+      {devices?.map(device => (
         <View key={device.deviceId} style={dv.row}>
           <View style={dv.info}>
             <Text style={dv.name}>{deviceLabel(device)}</Text>
@@ -77,36 +92,48 @@ export function DevicesScreen() {
         </View>
       ))}
 
-      {isPrimary === true && (<>
-        <Text style={s.sectionTitle}>link a device</Text>
-        <Text style={dv.hint}>On the new device, log in to this account, then scan the code it shows.</Text>
-        <TouchableOpacity style={[s.primaryBtn, dv.scanBtn]} onPress={() => nav.navigate('ScanLink')}>
-          <Text style={s.primaryBtnText}>Scan link code</Text>
-        </TouchableOpacity>
-        <View style={dv.enterRow}>
-          <TextInput
-            style={[s.input, dv.input]}
-            placeholder="Or paste the code"
-            placeholderTextColor={colors.textDim}
-            value={codeInput}
-            onChangeText={setCodeInput}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <TouchableOpacity style={s.secondaryBtn} onPress={linkPasted}>
-            <Text style={s.secondaryBtnText}>Link</Text>
+      {isPrimary === true && (
+        <>
+          <Text style={s.sectionTitle}>link a device</Text>
+          <Text style={dv.hint}>
+            On the new device, log in to this account, then scan the code it shows.
+          </Text>
+          <TouchableOpacity
+            style={[s.primaryBtn, dv.scanBtn]}
+            onPress={() => nav.navigate('ScanLink')}
+          >
+            <Text style={s.primaryBtnText}>Scan link code</Text>
           </TouchableOpacity>
-        </View>
-      </>)}
+          <View style={dv.enterRow}>
+            <TextInput
+              style={[s.input, dv.input]}
+              placeholder="Or paste the code"
+              placeholderTextColor={colors.textDim}
+              value={codeInput}
+              onChangeText={setCodeInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TouchableOpacity style={s.secondaryBtn} onPress={linkPasted}>
+              <Text style={s.secondaryBtnText}>Link</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
 
-      {isPrimary === false && (<>
-        <Text style={dv.hint}>Devices are linked and unlinked from your primary device.</Text>
-        {thisDevice && (
-          <TouchableOpacity style={[s.dangerBtn, dv.dangerMargin]} onPress={() => unlink(thisDevice)}>
-            <Text style={s.dangerBtnText}>Unlink this device</Text>
-          </TouchableOpacity>
-        )}
-      </>)}
+      {isPrimary === false && (
+        <>
+          <Text style={dv.hint}>Devices are linked and unlinked from your primary device.</Text>
+          {thisDevice && (
+            <TouchableOpacity
+              style={[s.dangerBtn, dv.dangerMargin]}
+              onPress={() => unlink(thisDevice)}
+            >
+              <Text style={s.dangerBtnText}>Unlink this device</Text>
+            </TouchableOpacity>
+          )}
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -115,13 +142,28 @@ const dv = StyleSheet.create({
   screen: { padding: 16 },
   hint: { color: colors.textDim, fontSize: 14, marginBottom: 12 },
   error: { color: colors.error, fontSize: 14, marginBottom: 12 },
-  row: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: colors.border },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   info: { flex: 1 },
   name: { color: colors.text, fontSize: 16, fontWeight: '600' },
   badges: { flexDirection: 'row', gap: 6, marginTop: 4 },
   badge: { color: colors.textSecondary, fontSize: 12, fontWeight: '700' },
   primaryBadge: { color: colors.accent },
-  unlinkBtn: { borderWidth: 1, borderColor: colors.error, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+  unlinkBtn: {
+    borderWidth: 1,
+    borderColor: colors.error,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
   unlinkText: { color: colors.error, fontWeight: '700', fontSize: 13 },
   scanBtn: { marginBottom: 12 },
   enterRow: { flexDirection: 'row', gap: 8 },

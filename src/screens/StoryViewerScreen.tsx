@@ -1,7 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet,
-  Animated, Easing, Image, ActivityIndicator, useWindowDimensions,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Animated,
+  Easing,
+  Image,
+  ActivityIndicator,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Video from 'react-native-video';
@@ -9,8 +16,12 @@ import { CaptionView } from '../components/Caption';
 import { CloseIcon } from '../components/icons';
 import { Avatar } from '../components/Avatar';
 import {
-  displayMs, pixViewerGroups, stepViewer, storyViewerGroups,
-  type StoryGroup, type ViewerSlide,
+  displayMs,
+  pixViewerGroups,
+  stepViewer,
+  storyViewerGroups,
+  type StoryGroup,
+  type ViewerSlide,
 } from '../domain/viewer';
 import { loadAttachmentUri } from '../state/sendMedia';
 import { useIdentity, useMessages, useStories, markSeen } from '../state/store';
@@ -42,8 +53,15 @@ function cubeFace(width: number, angle: Animated.AnimatedInterpolation<string>) 
 }
 
 /** A group's story as it was when the cube started turning. */
-interface Face { group: StoryGroup<ViewerSlide>; storyIdx: number; mediaUri: string | null }
-interface Transition { outgoing: Face; direction: 1 | -1 }
+interface Face {
+  group: StoryGroup<ViewerSlide>;
+  storyIdx: number;
+  mediaUri: string | null;
+}
+interface Transition {
+  outgoing: Face;
+  direction: 1 | -1;
+}
 
 interface StoryFaceProps {
   group: StoryGroup<ViewerSlide>;
@@ -59,7 +77,15 @@ interface StoryFaceProps {
 }
 
 function StoryFace({
-  group, storyIdx, mediaUri, mediaLoading, progress, paused, onVideoEnd, onClose, style,
+  group,
+  storyIdx,
+  mediaUri,
+  mediaLoading,
+  progress,
+  paused,
+  onVideoEnd,
+  onClose,
+  style,
 }: StoryFaceProps) {
   const { width: W, height: H } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -69,18 +95,19 @@ function StoryFace({
 
   return (
     <Animated.View style={[styles.face, style]}>
-      {mediaUri && (isVideo ? (
-        <Video
-          source={{ uri: mediaUri, type: 'mp4' }}
-          style={StyleSheet.absoluteFill}
-          resizeMode="cover"
-          paused={paused}
-          onEnd={onVideoEnd}
-          onError={(e) => logError('storyVideo', e)}
-        />
-      ) : (
-        <Image source={{ uri: mediaUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-      ))}
+      {mediaUri &&
+        (isVideo ? (
+          <Video
+            source={{ uri: mediaUri, type: 'mp4' }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            paused={paused}
+            onEnd={onVideoEnd}
+            onError={e => logError('storyVideo', e)}
+          />
+        ) : (
+          <Image source={{ uri: mediaUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        ))}
 
       {/* Progress bars — only the currently-playing segment is Animated. */}
       <View style={[styles.progressRow, { paddingTop: insets.top + 8 }]}>
@@ -89,17 +116,29 @@ function StoryFace({
             {i < storyIdx || (i === storyIdx && progress === null) ? (
               <View style={[styles.progressFill, styles.progressFillFull]} />
             ) : i === storyIdx && progress !== null ? (
-              <Animated.View style={[
-                styles.progressFill,
-                { width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) },
-              ]} />
+              <Animated.View
+                style={[
+                  styles.progressFill,
+                  {
+                    width: progress.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0%', '100%'],
+                    }),
+                  },
+                ]}
+              />
             ) : null}
           </View>
         ))}
       </View>
 
       <View style={styles.header}>
-        <Avatar name={group.username} size={32} background={colors.surfaceMuted} color={colors.text} />
+        <Avatar
+          name={group.username}
+          size={32}
+          background={colors.surfaceMuted}
+          color={colors.text}
+        />
         <Text style={styles.headerName}>{group.username}</Text>
         <Text style={styles.headerTime}>{timeAgo(slide.sentAt)}</Text>
         <TouchableOpacity onPress={onClose} disabled={!onClose} style={styles.closeBtn}>
@@ -116,9 +155,11 @@ function StoryFace({
       </View>
 
       {mediaUri && text !== '' ? (
-        captionMeta
-          ? <CaptionView meta={captionMeta} text={text} width={W} height={H} />
-          : <Text style={[styles.captionOverlay, { bottom: insets.bottom + 48 }]}>{text}</Text>
+        captionMeta ? (
+          <CaptionView meta={captionMeta} text={text} width={W} height={H} />
+        ) : (
+          <Text style={[styles.captionOverlay, { bottom: insets.bottom + 48 }]}>{text}</Text>
+        )
       ) : null}
     </Animated.View>
   );
@@ -133,9 +174,16 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const allMessages = useMessages();
 
   const { groups, initialGroupIdx } = useMemo(
-    () => (params.mode === 'pix'
-      ? pixViewerGroups(allMessages, params.userId, params.username, params.entryIds, identity.friends)
-      : storyViewerGroups(allStories, identity, params.initialUserId)),
+    () =>
+      params.mode === 'pix'
+        ? pixViewerGroups(
+            allMessages,
+            params.userId,
+            params.username,
+            params.entryIds,
+            identity.friends,
+          )
+        : storyViewerGroups(allStories, identity, params.initialUserId),
     [params, allStories, allMessages, identity],
   );
 
@@ -155,13 +203,16 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const mediaEntryId = slide?.attachment ? slide.id : undefined;
   const attMediaType = slide?.attachment?.mediaType;
   const attachment = useMemo(
-    () => (mediaEntryId !== undefined && attMediaType !== undefined
-      ? { entryId: mediaEntryId, mediaType: attMediaType }
-      : null),
+    () =>
+      mediaEntryId !== undefined && attMediaType !== undefined
+        ? { entryId: mediaEntryId, mediaType: attMediaType }
+        : null,
     [mediaEntryId, attMediaType],
   );
   const mediaUri = attachment
-    ? (loadedMedia?.id === attachment.entryId ? loadedMedia.uri : mediaUris.get(attachment.entryId) ?? null)
+    ? loadedMedia?.id === attachment.entryId
+      ? loadedMedia.uri
+      : (mediaUris.get(attachment.entryId) ?? null)
     : null;
 
   useEffect(() => {
@@ -172,43 +223,65 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
   const markCurrentViewed = useCallback(() => {
     if (!slide || !markViewed || viewedIds.current.has(slide.id)) return;
     viewedIds.current.add(slide.id);
-    markSeen(slide.id).catch((e) => logError('seen.pix:' + slide.id, e));
+    markSeen(slide.id).catch(e => logError('seen.pix:' + slide.id, e));
   }, [markViewed, slide]);
 
-  useEffect(() => navigation.addListener('beforeRemove', markCurrentViewed), [navigation, markCurrentViewed]);
+  useEffect(
+    () => navigation.addListener('beforeRemove', markCurrentViewed),
+    [navigation, markCurrentViewed],
+  );
 
-  const turnTo = useCallback((nextGroupIdx: number, direction: 1 | -1) => {
-    if (!group) return;
-    setTransition({ outgoing: { group, storyIdx, mediaUri }, direction });
-    setGroupIdx(nextGroupIdx);
-    setStoryIdx(0);
-    cube.setValue(0);
-    Animated.timing(cube, {
-      toValue: 1, duration: CUBE_MS, easing: Easing.out(Easing.cubic), useNativeDriver: true,
-    }).start(() => setTransition(null));
-  }, [group, storyIdx, mediaUri, cube]);
+  const turnTo = useCallback(
+    (nextGroupIdx: number, direction: 1 | -1) => {
+      if (!group) return;
+      setTransition({ outgoing: { group, storyIdx, mediaUri }, direction });
+      setGroupIdx(nextGroupIdx);
+      setStoryIdx(0);
+      cube.setValue(0);
+      Animated.timing(cube, {
+        toValue: 1,
+        duration: CUBE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start(() => setTransition(null));
+    },
+    [group, storyIdx, mediaUri, cube],
+  );
 
-  const groupLengths = useMemo(() => groups.map((g) => g.stories.length), [groups]);
+  const groupLengths = useMemo(() => groups.map(g => g.stories.length), [groups]);
 
-  const applyStep = useCallback((action: 'advance' | 'rewind') => {
-    if (!group || transition) return;
-    if (action === 'advance') markCurrentViewed();
-    const step = stepViewer({ groupIdx, storyIdx }, groupLengths, action, markViewed);
-    switch (step.kind) {
-      case 'stay':
-        return;
-      case 'step':
-        setGroupIdx(step.cursor.groupIdx);
-        setStoryIdx(step.cursor.storyIdx);
-        return;
-      case 'turnCube':
-        turnTo(step.cursor.groupIdx, step.direction);
-        return;
-      case 'close':
-        navigation.goBack();
-        return;
-    }
-  }, [group, transition, markCurrentViewed, groupIdx, storyIdx, groupLengths, markViewed, turnTo, navigation]);
+  const applyStep = useCallback(
+    (action: 'advance' | 'rewind') => {
+      if (!group || transition) return;
+      if (action === 'advance') markCurrentViewed();
+      const step = stepViewer({ groupIdx, storyIdx }, groupLengths, action, markViewed);
+      switch (step.kind) {
+        case 'stay':
+          return;
+        case 'step':
+          setGroupIdx(step.cursor.groupIdx);
+          setStoryIdx(step.cursor.storyIdx);
+          return;
+        case 'turnCube':
+          turnTo(step.cursor.groupIdx, step.direction);
+          return;
+        case 'close':
+          navigation.goBack();
+          return;
+      }
+    },
+    [
+      group,
+      transition,
+      markCurrentViewed,
+      groupIdx,
+      storyIdx,
+      groupLengths,
+      markViewed,
+      turnTo,
+      navigation,
+    ],
+  );
 
   const advance = useCallback(() => applyStep('advance'), [applyStep]);
   const rewind = useCallback(() => applyStep('rewind'), [applyStep]);
@@ -230,7 +303,9 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
         if (!cancelled) setMediaLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [attachment, mediaUris]);
 
   useEffect(() => {
@@ -241,7 +316,7 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
     ];
     for (const candidate of candidates) {
       if (candidate?.attachment && !mediaUris.has(candidate.id)) {
-        loadAttachmentUri(candidate.id, mediaUris).catch((e) => logError('storyMedia.prefetch', e));
+        loadAttachmentUri(candidate.id, mediaUris).catch(e => logError('storyMedia.prefetch', e));
       }
     }
   }, [group, storyIdx, groups, groupIdx, mediaUris]);
@@ -256,32 +331,50 @@ export function StoryViewerScreen({ route, navigation }: RootStackScreenProps<'S
     if (!readyToPlay) return;
     if (isVideo) {
       const anim = Animated.timing(progress, {
-        toValue: 1, duration: 15000, easing: Easing.linear, useNativeDriver: false,
+        toValue: 1,
+        duration: 15000,
+        easing: Easing.linear,
+        useNativeDriver: false,
       });
       anim.start();
       return () => anim.stop();
     }
     const anim = Animated.timing(progress, {
-      toValue: 1, duration: durationMs, easing: Easing.linear, useNativeDriver: false,
+      toValue: 1,
+      duration: durationMs,
+      easing: Easing.linear,
+      useNativeDriver: false,
     });
-    anim.start(({ finished }) => { if (finished) advance(); });
+    anim.start(({ finished }) => {
+      if (finished) advance();
+    });
     return () => anim.stop();
   }, [groupIdx, storyIdx, readyToPlay, isVideo, durationMs, advance, progress]);
 
   if (!group || !slide) return <View style={styles.container} />;
 
-  const incomingTransform = transition ? {
-    transform: cubeFace(W, cube.interpolate({
-      inputRange: [0, 1],
-      outputRange: [transition.direction === 1 ? '90deg' : '-90deg', '0deg'],
-    })),
-  } : undefined;
-  const outgoingTransform = transition ? {
-    transform: cubeFace(W, cube.interpolate({
-      inputRange: [0, 1],
-      outputRange: ['0deg', transition.direction === 1 ? '-90deg' : '90deg'],
-    })),
-  } : undefined;
+  const incomingTransform = transition
+    ? {
+        transform: cubeFace(
+          W,
+          cube.interpolate({
+            inputRange: [0, 1],
+            outputRange: [transition.direction === 1 ? '90deg' : '-90deg', '0deg'],
+          }),
+        ),
+      }
+    : undefined;
+  const outgoingTransform = transition
+    ? {
+        transform: cubeFace(
+          W,
+          cube.interpolate({
+            inputRange: [0, 1],
+            outputRange: ['0deg', transition.direction === 1 ? '-90deg' : '90deg'],
+          }),
+        ),
+      }
+    : undefined;
 
   return (
     <View style={styles.container}>
@@ -320,7 +413,13 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000', overflow: 'hidden' },
   face: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000' },
   progressRow: { flexDirection: 'row', paddingHorizontal: 8, gap: 4 },
-  progressTrack: { flex: 1, height: 2, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 1, overflow: 'hidden' },
+  progressTrack: {
+    flex: 1,
+    height: 2,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    borderRadius: 1,
+    overflow: 'hidden',
+  },
   progressFill: { height: '100%', backgroundColor: '#fff', borderRadius: 1 },
   progressFillFull: { width: '100%' },
   header: { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8 },
@@ -331,9 +430,17 @@ const styles = StyleSheet.create({
   contentText: { color: '#fff', fontSize: 24, fontWeight: '600', textAlign: 'center' },
   unavailableText: { color: colors.textSecondary, fontSize: 16, textAlign: 'center' },
   captionOverlay: {
-    color: '#fff', fontSize: 18, fontWeight: '600', textAlign: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 16, paddingVertical: 8,
-    borderRadius: 12, position: 'absolute', left: 16, right: 16,
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+    textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 12,
+    position: 'absolute',
+    left: 16,
+    right: 16,
   },
   tapZones: { ...StyleSheet.absoluteFill, flexDirection: 'row', top: 100 },
   tapLeft: { flex: 1 },

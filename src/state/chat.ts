@@ -5,11 +5,15 @@ import { refreshMessages } from './store';
 
 /** Real-time typing indicator and message sending for a 1:1 conversation. */
 
-export async function notifyTyping(friendUserId: string, prevText: string, nextText: string): Promise<void> {
+export async function notifyTyping(
+  friendUserId: string,
+  prevText: string,
+  nextText: string,
+): Promise<void> {
   if (nextText.length > 0) {
-    await Obscura.sendTyping(friendUserId).catch((e) => logError('typing.send', e));
+    await Obscura.sendTyping(friendUserId).catch(e => logError('typing.send', e));
   } else if (prevText.length > 0) {
-    await Obscura.stopTyping(friendUserId).catch((e) => logError('typing.stop', e));
+    await Obscura.stopTyping(friendUserId).catch(e => logError('typing.stop', e));
   }
 }
 
@@ -41,13 +45,13 @@ export function usePeerTyping(friendUserId: string): boolean {
   const [peerTyping, setPeerTyping] = useState(false);
   useEffect(() => {
     setPeerTyping(false);
-    const unsubscribe = onObscuraEvent((event) => {
-      setPeerTyping((current) => nextPeerTypingState(current, friendUserId, event));
+    const unsubscribe = onObscuraEvent(event => {
+      setPeerTyping(current => nextPeerTypingState(current, friendUserId, event));
     });
-    Obscura.observeTyping(friendUserId).catch((e) => logError('typing.observe', e));
+    Obscura.observeTyping(friendUserId).catch(e => logError('typing.observe', e));
     return () => {
       unsubscribe();
-      Obscura.stopObservingTyping(friendUserId).catch((e) => logError('typing.unobserve', e));
+      Obscura.stopObservingTyping(friendUserId).catch(e => logError('typing.unobserve', e));
     };
   }, [friendUserId]);
   return peerTyping;
