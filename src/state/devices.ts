@@ -1,5 +1,6 @@
 import { Obscura, type DeviceInfo } from '../native/ObscuraModule';
-import { errorCode, orderDevices } from '../domain/devices';
+import { orderDevices } from '../domain/devices';
+import { errorCode } from '../domain/errors';
 import { cleanCode } from '../domain/qr';
 import { resetSession, useStore } from './store';
 
