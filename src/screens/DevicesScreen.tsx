@@ -8,7 +8,7 @@ import { confirm, confirmAndApproveLink } from '../components/confirm';
 import { deviceLabel } from '../domain/devices';
 import { errorMessage } from '../domain/errors';
 import { loadDevices, unlinkDevice, type DeviceInfo } from '../state/devices';
-import { useSession } from '../state/store';
+import { useSignedIn } from '../state/store';
 import type { RootStackParamList } from '../navigation/types';
 import { s, colors } from '../styles';
 
@@ -16,7 +16,7 @@ export function DevicesScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
   const focused = useIsFocused();
-  const { isPrimary } = useSession();
+  const { role } = useSignedIn();
   const [devices, setDevices] = useState<DeviceInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState('');
@@ -69,7 +69,7 @@ export function DevicesScreen() {
               {device.isThisDevice && <Text style={dv.badge}>This device</Text>}
             </View>
           </View>
-          {isPrimary === true && !device.isThisDevice && (
+          {role === 'primary' && !device.isThisDevice && (
             <TouchableOpacity style={dv.unlinkBtn} onPress={() => unlink(device)}>
               <Text style={dv.unlinkText}>Unlink</Text>
             </TouchableOpacity>
@@ -77,7 +77,7 @@ export function DevicesScreen() {
         </View>
       ))}
 
-      {isPrimary === true && (<>
+      {role === 'primary' && (<>
         <Text style={s.sectionTitle}>link a device</Text>
         <Text style={dv.hint}>On the new device, log in to this account, then scan the code it shows.</Text>
         <TouchableOpacity style={[s.primaryBtn, dv.scanBtn]} onPress={() => nav.navigate('ScanLink')}>
@@ -99,7 +99,7 @@ export function DevicesScreen() {
         </View>
       </>)}
 
-      {isPrimary === false && (<>
+      {role === 'linked' && (<>
         <Text style={dv.hint}>Devices are linked and unlinked from your primary device.</Text>
         {thisDevice && (
           <TouchableOpacity style={[s.dangerBtn, dv.dangerMargin]} onPress={() => unlink(thisDevice)}>

@@ -47,10 +47,10 @@ describe('friendProfileEntries', () => {
 
 describe('pendingFriendSubtitle, removeFriendPrompt, sendOutcomeToast & sendButtonLabel', () => {
   it('derives pending row subtitles from relationship status and primary authority', () => {
-    expect(pendingFriendSubtitle(SENT, true)).toBe('Request sent');
-    expect(pendingFriendSubtitle(DAVE, true)).toBe('Wants to be friends');
-    expect(pendingFriendSubtitle(DAVE, null)).toBe('Wants to be friends');
-    expect(pendingFriendSubtitle(DAVE, false)).toBe('Wants to be friends · accept on your primary');
+    expect(pendingFriendSubtitle(SENT, 'primary')).toBe('Request sent');
+    expect(pendingFriendSubtitle(DAVE, 'primary')).toBe('Wants to be friends');
+    expect(pendingFriendSubtitle(DAVE, 'unknown')).toBe('Wants to be friends');
+    expect(pendingFriendSubtitle(DAVE, 'linked')).toBe('Wants to be friends · accept on your primary');
   });
 
   it('derives confirmation dialog copy for declining, cancelling, or removing a friend', () => {

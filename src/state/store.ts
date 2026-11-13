@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { create } from 'zustand';
-import { useShallow } from 'zustand/react/shallow';
 import {
   Obscura, onObscuraEvent,
   type Friend, type ConnectionState, type ObscuraEvent, type EntryModel,
@@ -10,19 +9,13 @@ import { primaryOnly } from './devices';
 import { requestStartupPermissions } from './permissions';
 import { getJsLog, logError } from '../utils/log';
 import { acceptedFriends, pendingFriends, type Identity } from '../domain/friends';
+import { deviceRole, toMe, type DeviceRole, type Session, type SignedIn } from '../domain/session';
 import { cleanCode } from '../domain/qr';
 
-export type { Friend, ConnectionState, ConversationItem, StoryItem, ProfileItem };
+export type { Friend, ConnectionState, ConversationItem, StoryItem, ProfileItem, DeviceRole, SignedIn };
 
-interface Session {
-  /** The cold-start auth check has finished, so `authed` can be trusted. */
-  bootstrapped: boolean;
-  authed: boolean;
-  myUserId: string;
-  myUsername: string;
-  myDeviceId: string;
-  /** Whether this device is the account's primary; null until the session loads. */
-  isPrimary: boolean | null;
+interface State {
+  session: Session;
   /** Every relationship, any status. */
   friends: Friend[];
   connState: ConnectionState;
@@ -32,19 +25,15 @@ interface Session {
 }
 
 const SIGNED_OUT = {
-  authed: false,
-  myUserId: '',
-  myUsername: '',
-  myDeviceId: '',
-  isPrimary: null,
+  session: { status: 'signedOut' },
   friends: [],
   connState: 'disconnected',
   messages: [],
   stories: [],
   profiles: [],
-} as const satisfies Omit<Session, 'bootstrapped'>;
+} as const satisfies State;
 
-export const useStore = create<Session>(() => ({ bootstrapped: false, ...SIGNED_OUT }));
+export const useStore = create<State>(() => ({ ...SIGNED_OUT, session: { status: 'booting' } }));
 
 /** Incremented on every `resetSession()` so in-flight reads from a signed-out session never write into the next one. */
 let sessionEpoch = 0;
@@ -63,19 +52,36 @@ export async function logout(): Promise<void> {
 // ─── Selectors ───────────────────────────────────────────
 
 /* istanbul ignore next */
-export function useSession() {
-  return useStore(useShallow((s) => ({
-    authed: s.authed,
-    myUserId: s.myUserId,
-    myUsername: s.myUsername,
-    isPrimary: s.isPrimary,
-    connState: s.connState,
-  })));
+export function useSessionStatus(): Session['status'] {
+  return useStore((s) => s.session.status);
+}
+
+/* istanbul ignore next */
+export function useConnState(): ConnectionState {
+  return useStore((s) => s.connState);
+}
+
+/**
+ * The signed-in session, for screens that only mount while signed in. After sign-out it keeps
+ * returning the last session, so a screen still animating out renders rather than throws.
+ */
+/* istanbul ignore next */
+export function useSignedIn(): SignedIn {
+  const session = useStore((s) => s.session);
+  const last = useRef<SignedIn | null>(null);
+  if (session.status === 'signedIn') last.current = session;
+  if (last.current === null) throw new Error('useSignedIn() used outside a signed-in session');
+  return last.current;
 }
 
 /* istanbul ignore next */
 export function useIdentity(): Identity {
-  return useStore(useShallow((s) => ({ myUserId: s.myUserId, myUsername: s.myUsername, friends: s.friends })));
+  const { me } = useSignedIn();
+  const friends = useStore((s) => s.friends);
+  return useMemo(
+    () => ({ myUserId: me.userId, myUsername: me.username, friends }),
+    [me.userId, me.username, friends],
+  );
 }
 
 /* istanbul ignore next */
@@ -137,13 +143,13 @@ function coalesce(task: () => Promise<void>): () => Promise<void> {
 type Slice = 'messages' | 'stories' | 'profiles';
 
 /** A coalesced, never-rejecting refresh of one slice that drops results from a previous session. */
-function sliceRefresher<K extends Slice>(key: K, read: () => Promise<Session[K]>): () => Promise<void> {
+function sliceRefresher<K extends Slice>(key: K, read: () => Promise<State[K]>): () => Promise<void> {
   return coalesce(async () => {
     const epoch = sessionEpoch;
     try {
       const value = await read();
       if (epoch !== sessionEpoch) return;
-      useStore.setState({ [key]: value } as Pick<Session, K>);
+      useStore.setState({ [key]: value } as Pick<State, K>);
     } catch (e) {
       logError(`${key}.refresh`, e);
     }
@@ -226,6 +232,12 @@ export async function saveOwnProfile(displayName: string, bio: string): Promise<
 
 // ─── Session & Friends ───────────────────────────────────
 
+/** Correct the role of the signed-in session, e.g. when the kit rejects a primary-only action. */
+export function setDeviceRole(role: DeviceRole): void {
+  const { session } = useStore.getState();
+  if (session.status === 'signedIn') useStore.setState({ session: { ...session, role } });
+}
+
 export async function refreshFriends(): Promise<void> {
   const epoch = sessionEpoch;
   const friends = await Obscura.getFriends();
@@ -282,7 +294,7 @@ export async function applyObscuraEvent(event: ObscuraEvent): Promise<void> {
       return;
     case 'authStateChanged':
       if (event.state === 'loggedOut') resetSession();
-      else useStore.setState({ authed: true });
+      else if (useStore.getState().session.status !== 'signedIn') await loadSession();
       return;
     case 'appStateChanged':
       // Native code may have stored rows while JS was suspended; only flush the outbox if connected.
@@ -295,7 +307,7 @@ export async function applyObscuraEvent(event: ObscuraEvent): Promise<void> {
       }
       return;
     case 'pushTokenReceived':
-      if (useStore.getState().authed) {
+      if (useStore.getState().session.status === 'signedIn') {
         await Obscura.registerPushToken(event.token).catch((e) => logError('push.register', e));
       }
       return;
@@ -306,8 +318,9 @@ export async function applyObscuraEvent(event: ObscuraEvent): Promise<void> {
 }
 
 /**
- * Load the session identity and friends atomically, then sync all domain slices. Resolves false,
- * writing nothing, when the session was reset while the reads were in flight.
+ * Read the session identity, role and friends, enter `signedIn`, then sync all domain slices.
+ * Resolves false, entering `signedOut` (or writing nothing, if the session was reset while the reads
+ * were in flight), when the kit reports no complete identity.
  */
 export async function loadSession(): Promise<boolean> {
   const epoch = sessionEpoch;
@@ -322,11 +335,13 @@ export async function loadSession(): Promise<boolean> {
     pull(Obscura.getFriends(), [] as Friend[]),
   ]);
   if (epoch !== sessionEpoch) return false;
+  const me = toMe(userId, username, deviceId);
+  if (me === null) {
+    useStore.setState({ session: { status: 'signedOut' } });
+    return false;
+  }
   useStore.setState({
-    myUserId: userId ?? '',
-    myUsername: username ?? '',
-    myDeviceId: deviceId ?? '',
-    isPrimary,
+    session: { status: 'signedIn', me, role: deviceRole(isPrimary) },
     connState,
     friends,
   });
@@ -335,31 +350,30 @@ export async function loadSession(): Promise<boolean> {
   return true;
 }
 
+/** Enter the session the kit just authenticated; rejects if it reports none. */
+export async function startSession(): Promise<void> {
+  if (!(await loadSession())) throw new Error('Signed in, but the session could not be loaded');
+}
+
+/** The cold-start auth check: leaves `booting` for `signedIn` or `signedOut`, whatever happens. */
 export async function bootstrapAuthState(): Promise<void> {
   try {
-    const state = await Obscura.getAuthState();
-    if (state === 'authenticated' && await loadSession()) {
-      useStore.setState({ authed: true });
-    }
+    if ((await Obscura.getAuthState()) === 'authenticated') await loadSession();
   } catch (e) {
     logError('bootstrap.authState', e);
   } finally {
-    useStore.setState({ bootstrapped: true });
-  }
-}
-
-export async function ensureSessionLoaded(): Promise<void> {
-  if (useStore.getState().myUserId === '') {
-    await loadSession();
+    if (useStore.getState().session.status === 'booting') {
+      useStore.setState({ session: { status: 'signedOut' } });
+    }
   }
 }
 
 export function shouldRequestStartupPermissions(
-  authed: boolean,
+  signedIn: boolean,
   connState: ConnectionState,
   alreadyRequested: boolean,
 ): boolean {
-  return authed && connState === 'connected' && !alreadyRequested;
+  return signedIn && connState === 'connected' && !alreadyRequested;
 }
 
 /** Mounted once at the app root: the auth check, the event subscription and the signed-in loops. */
@@ -371,23 +385,22 @@ export function ObscuraBootstrap(): null {
 
   useEffect(() => onObscuraEvent((e) => { applyObscuraEvent(e); }), []);
 
-  const authed = useStore((s) => s.authed);
+  const signedIn = useStore((s) => s.session.status === 'signedIn');
   useEffect(() => {
-    if (!authed) return;
-    ensureSessionLoaded();
+    if (!signedIn) return;
     const timer = setInterval(() => { sweepAndRefresh(); }, SWEEP_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [authed]);
+  }, [signedIn]);
 
   // Once per session, after the first connect. Android drops concurrent permission prompts.
   const connState = useStore((s) => s.connState);
   const permissionsRequested = useRef(false);
   useEffect(() => {
-    if (!authed) { permissionsRequested.current = false; return; }
-    if (!shouldRequestStartupPermissions(authed, connState, permissionsRequested.current)) return;
+    if (!signedIn) { permissionsRequested.current = false; return; }
+    if (!shouldRequestStartupPermissions(signedIn, connState, permissionsRequested.current)) return;
     permissionsRequested.current = true;
     requestStartupPermissions().catch((e) => logError('permissions.startup', e));
-  }, [authed, connState]);
+  }, [signedIn, connState]);
 
   return null;
 }

@@ -2,7 +2,8 @@ import {
   MIN_PASSWORD_LENGTH, cancelLink, cancelPendingLinkOnUnmount,
   credentialsProblem, linkThisDevice, logIn, register, resetAccount,
 } from '../login';
-import { resetSession, useStore } from '../store';
+import { resetSession } from '../store';
+import { sessionStatus, signInAs } from './support';
 import { Obscura } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
 
@@ -16,7 +17,7 @@ describe('logIn', () => {
   it('connects an existing device without provisioning', async () => {
     expect(await logIn('alice', 'password-1234')).toBe('signedIn');
 
-    expect(useStore.getState().authed).toBe(true);
+    expect(sessionStatus()).toBe('signedIn');
     expect(bridge.connectionState).toBe('connected');
   });
 
@@ -25,7 +26,7 @@ describe('logIn', () => {
 
     expect(await logIn('alice', 'password-1234')).toBe('linkRequired');
 
-    expect(useStore.getState().authed).toBe(false);
+    expect(sessionStatus()).toBe('signedOut');
     expect(bridge.connectionState).toBe('disconnected');
   });
 
@@ -48,7 +49,7 @@ describe('logIn', () => {
     await expect(logIn('alice', 'password-1234')).rejects.toThrow(/after a wipe/);
 
     expect(await Obscura.getMessages()).toEqual([]);
-    expect(useStore.getState().authed).toBe(false);
+    expect(sessionStatus()).toBe('signedOut');
   });
 
   it('does not log in again when the wipe fails', async () => {
@@ -59,7 +60,7 @@ describe('logIn', () => {
     await expect(logIn('alice', 'password-1234')).rejects.toMatchObject({ code: 'WIPE_ERROR' });
 
     expect(await Obscura.getMessages()).toHaveLength(1);
-    expect(useStore.getState().authed).toBe(false);
+    expect(sessionStatus()).toBe('signedOut');
   });
 
   it('reports rejected credentials without touching the device', async () => {
@@ -67,7 +68,7 @@ describe('logIn', () => {
 
     expect(await logIn('alice', 'password-1234')).toBe('invalidCredentials');
 
-    expect(useStore.getState().authed).toBe(false);
+    expect(sessionStatus()).toBe('signedOut');
     expect(bridge.connectionState).toBe('disconnected');
   });
 });
@@ -79,12 +80,12 @@ describe('linkThisDevice', () => {
     await waitForCall('completeLink');
 
     expect(codes).toHaveLength(1);
-    expect(useStore.getState().authed).toBe(false);
+    expect(sessionStatus()).toBe('signedOut');
 
     bridge.__approvePendingLink();
     await linking;
 
-    expect(useStore.getState().authed).toBe(true);
+    expect(sessionStatus()).toBe('signedIn');
     expect(await bridge.isPrimary()).toBe(false);
   });
 
@@ -99,7 +100,7 @@ describe('linkThisDevice', () => {
     bridge.__approvePendingLink();
     await second;
 
-    expect(useStore.getState().authed).toBe(true);
+    expect(sessionStatus()).toBe('signedIn');
   });
 
   it('rejects CANCELLED when cancelled while waiting', async () => {
@@ -109,7 +110,7 @@ describe('linkThisDevice', () => {
     await cancelLink();
 
     await expect(linking).rejects.toMatchObject({ code: 'CANCELLED' });
-    expect(useStore.getState().authed).toBe(false);
+    expect(sessionStatus()).toBe('signedOut');
   });
 
   it('does not wait for approval when cancelled while the session opens', async () => {
@@ -125,7 +126,7 @@ describe('linkThisDevice', () => {
     expect(bridge.__calls).not.toContain('completeLink');
 
     bridge.__calls.length = 0;
-    useStore.setState({ authed: true });
+    signInAs();
     await cancelPendingLinkOnUnmount();
     expect(bridge.__calls).not.toContain('cancelLink');
   });
@@ -135,7 +136,7 @@ describe('resetAccount', () => {
   it('resets and provisions this device as the new primary, then connects', async () => {
     await resetAccount('alice', 'password-1234');
 
-    expect(useStore.getState().authed).toBe(true);
+    expect(sessionStatus()).toBe('signedIn');
     expect(bridge.connectionState).toBe('connected');
   });
 
@@ -144,7 +145,7 @@ describe('resetAccount', () => {
 
     await expect(resetAccount('alice', 'password-1234')).rejects.toMatchObject({ code: 'HTTP_ERROR' });
 
-    expect(useStore.getState().authed).toBe(false);
+    expect(sessionStatus()).toBe('signedOut');
     expect(bridge.connectionState).toBe('disconnected');
   });
 });
@@ -165,7 +166,7 @@ describe('register', () => {
   it('registers, connects and signs in', async () => {
     await register('alice', 'password-1234');
 
-    expect(useStore.getState().authed).toBe(true);
+    expect(sessionStatus()).toBe('signedIn');
     expect(bridge.connectionState).toBe('connected');
   });
 });

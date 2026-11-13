@@ -10,7 +10,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   chatTimeline, conversationItems, pixStatus, unseenVisibleMessageIds, type ChatTimelineItem,
 } from '../domain/chats';
-import { useSession, useMessages, useAcceptedFriends, markSeen } from '../state/store';
+import { useSignedIn, useMessages, useAcceptedFriends, markSeen } from '../state/store';
 import { usePeerTyping, notifyTyping, sendChatMessage } from '../state/chat';
 import { useAppActive } from '../hooks/useAppActive';
 import { isBackSwipeGesture, shouldCompleteBackSwipe } from '../utils/gesture';
@@ -50,7 +50,7 @@ const VIEWABILITY = { itemVisiblePercentThreshold: 50 };
 
 export function ChatScreen({ route }: RootStackScreenProps<'Chat'>) {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { myUserId } = useSession();
+  const { me: { userId: myUserId } } = useSignedIn();
   const friends = useAcceptedFriends();
   const friend = friends.find((f) => f.userId === route.params.userId)
     ?? { userId: route.params.userId, username: route.params.username, status: 'accepted' as const };

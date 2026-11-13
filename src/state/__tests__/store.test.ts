@@ -5,8 +5,9 @@ import {
   markSeen, saveOwnProfile, applyObscuraEvent, loadSession,
   refreshFriends, resetSession, logout, flushOutboxFromStore, sweepAndRefresh,
   subscribeToLaunchScreen, loadDebugLog, copyToClipboard, getFriendCode,
-  bootstrapAuthState, ensureSessionLoaded, shouldRequestStartupPermissions,
+  bootstrapAuthState, startSession, shouldRequestStartupPermissions,
 } from '../store';
+import { myUserId, sessionStatus, signInAs } from './support';
 import { canPromptFor, requestStartupPermissions } from '../permissions';
 import { Obscura } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
@@ -29,10 +30,11 @@ const DEVICE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const BOB = '22222222-2222-4222-8222-222222222222';
 
 function session() {
-  useStore.setState({
-    authed: true, myUserId: SELF, myUsername: 'me', myDeviceId: DEVICE,
-    friends: [{ userId: BOB, username: 'bob', status: 'accepted' }],
-  });
+  signInAs(
+    { userId: SELF, username: 'me', deviceId: DEVICE },
+    'primary',
+    [{ userId: BOB, username: 'bob', status: 'accepted' }],
+  );
 }
 
 beforeEach(() => {
@@ -66,7 +68,7 @@ describe('logout & sessionEpoch race protection', () => {
     await logout();
 
     expect(useStore.getState()).toMatchObject({
-      authed: false, myUserId: '', friends: [], messages: [], stories: [], profiles: [],
+      session: { status: 'signedOut' }, friends: [], messages: [], stories: [], profiles: [],
     });
     expect(bridge.__calls).toContain('logout');
   });
@@ -78,7 +80,7 @@ describe('logout & sessionEpoch race protection', () => {
 
     await logout();
 
-    expect(useStore.getState().authed).toBe(false);
+    expect(sessionStatus()).toBe('signedOut');
   });
 
   it('discards stale in-flight getMessages, getStories, and getProfiles responses across resetSession/logout', async () => {
@@ -127,11 +129,11 @@ describe('logout & sessionEpoch race protection', () => {
     release();
 
     await expect(inflight).resolves.toBe(false);
-    expect(useStore.getState()).toMatchObject({ myUserId: '', myUsername: '', isPrimary: null, friends: [] });
+    expect(useStore.getState()).toMatchObject({ session: { status: 'signedOut' }, friends: [] });
   });
 
   it('does not sign in when the session is reset during the cold-start load', async () => {
-    useStore.setState({ bootstrapped: false });
+    useStore.setState({ session: { status: 'booting' } });
     const release = bridge.__deferNext('getFriends');
 
     const inflight = bootstrapAuthState();
@@ -140,7 +142,7 @@ describe('logout & sessionEpoch race protection', () => {
     release();
     await inflight;
 
-    expect(useStore.getState()).toMatchObject({ bootstrapped: true, authed: false, myUserId: '' });
+    expect(sessionStatus()).toBe('signedOut');
   });
 });
 
@@ -232,10 +234,10 @@ describe('slice refresh & coalescing', () => {
     await Promise.resolve();
     off();
 
-    useStore.setState({ bootstrapped: false });
+    useStore.setState({ session: { status: 'booting' } });
     bridge.__failNext('getAuthState', 'STORAGE_ERROR');
     await bootstrapAuthState();
-    expect(useStore.getState().bootstrapped).toBe(true);
+    expect(sessionStatus()).toBe('signedOut');
   });
 });
 
@@ -305,21 +307,29 @@ describe('event and lifecycle sync triggers', () => {
 
     await loadSession();
 
-    expect(useStore.getState().myUserId).toBe(SELF);
+    expect(myUserId()).toBe(SELF);
     expect(useStore.getState().friends).toEqual([]);
     expect(useStore.getState().messages.map((m) => m.id)).toEqual(['dm_1']);
   });
 
-  it('flips authed on `authStateChanged: authenticated` and clears on `loggedOut`', async () => {
-    expect(useStore.getState().authed).toBe(false);
+  it('loads the session on `authStateChanged: authenticated` and clears it on `loggedOut`', async () => {
+    expect(sessionStatus()).toBe('signedOut');
 
     await applyObscuraEvent({ type: 'authStateChanged', state: 'authenticated' });
-    expect(useStore.getState().authed).toBe(true);
+    expect(useStore.getState().session).toEqual({
+      status: 'signedIn',
+      me: { userId: SELF, username: 'me', deviceId: DEVICE },
+      role: 'primary',
+    });
+
+    bridge.__calls.length = 0;
+    await applyObscuraEvent({ type: 'authStateChanged', state: 'authenticated' });
+    expect(bridge.__calls).not.toContain('getUserId');
 
     session();
     await applyObscuraEvent({ type: 'authStateChanged', state: 'loggedOut' });
-    expect(useStore.getState().authed).toBe(false);
-    expect(useStore.getState().myUserId).toBe('');
+    expect(sessionStatus()).toBe('signedOut');
+    expect(myUserId()).toBeNull();
   });
 
   it('refreshes the friend graph after friendsChanged', async () => {
@@ -365,10 +375,8 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
     offNull();
 
     bridge.__failNext('getUserId', 'ERR', 'no uid');
-    bridge.__failNext('getUsername', 'ERR', 'no uname');
-    bridge.__failNext('getDeviceId', 'ERR', 'no did');
-    await loadSession();
-    expect(useStore.getState()).toMatchObject({ myUserId: '', myUsername: '', myDeviceId: '' });
+    await expect(loadSession()).resolves.toBe(false);
+    expect(sessionStatus()).toBe('signedOut');
   });
 
   it('combines native and JS debug logs, copies to clipboard, and fetches the friend code', async () => {
@@ -385,26 +393,26 @@ describe('launch intent, debug log, clipboard & friend code helpers', () => {
     expect(await getFriendCode()).toBe(`${SELF}:me`);
   });
 
-  it('bootstraps auth state, ensures session is loaded once, and gates startup permission requests', async () => {
-    useStore.setState({ bootstrapped: false, authed: false, myUserId: '' });
+  it('bootstraps into the right session, starts sessions, and gates startup permission requests', async () => {
+    useStore.setState({ session: { status: 'booting' } });
     await bootstrapAuthState();
-    expect(useStore.getState()).toMatchObject({ bootstrapped: true, authed: true, myUserId: SELF });
+    expect(myUserId()).toBe(SELF);
 
     resetSession();
-    useStore.setState({ bootstrapped: false });
+    useStore.setState({ session: { status: 'booting' } });
     await bridge.logout();
     bridge.__calls.length = 0;
     await bootstrapAuthState();
-    expect(useStore.getState()).toMatchObject({ bootstrapped: true, authed: false, myUserId: '' });
+    expect(sessionStatus()).toBe('signedOut');
     expect(bridge.__calls).not.toContain('getUserId');
+
+    // The kit authenticated but reports no identity: there is no session to enter.
+    await expect(startSession()).rejects.toThrow('could not be loaded');
+    expect(sessionStatus()).toBe('signedOut');
 
     bridge.__authenticate({ userId: SELF, username: 'me', deviceId: DEVICE });
-    await ensureSessionLoaded();
-    expect(useStore.getState().myUserId).toBe(SELF);
-
-    bridge.__calls.length = 0;
-    await ensureSessionLoaded();
-    expect(bridge.__calls).not.toContain('getUserId');
+    await startSession();
+    expect(myUserId()).toBe(SELF);
 
     expect(shouldRequestStartupPermissions(true, 'connected', false)).toBe(true);
     expect(shouldRequestStartupPermissions(false, 'connected', false)).toBe(false);

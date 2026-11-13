@@ -5,7 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { toast } from '../components/Toast';
 import { CodeCard } from '../components/CodeCard';
-import { useSession, addFriend, getFriendCode } from '../state/store';
+import { useSignedIn, addFriend, getFriendCode } from '../state/store';
 import { errorMessage } from '../domain/errors';
 import { logError } from '../utils/log';
 import type { RootStackParamList } from '../navigation/types';
@@ -14,7 +14,7 @@ import { s, colors } from '../styles';
 export function AddFriendScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
-  const { isPrimary } = useSession();
+  const { role } = useSignedIn();
   const [myCode, setMyCode] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState('');
   const [adding, setAdding] = useState(false);
@@ -43,10 +43,10 @@ export function AddFriendScreen() {
 
       <View style={afs.divider} />
 
-      {isPrimary === false && (
+      {role === 'linked' && (
         <Text style={afs.note}>Friends are added and accepted on your primary device.</Text>
       )}
-      {isPrimary === true && (<>
+      {role === 'primary' && (<>
         <Text style={[s.sectionTitle, afs.sectionLabel]}>add by code</Text>
         <View style={afs.enterRow}>
           <TextInput

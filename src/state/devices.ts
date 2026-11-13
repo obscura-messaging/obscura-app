@@ -2,7 +2,7 @@ import { Obscura, type DeviceInfo } from '../native/ObscuraModule';
 import { orderDevices } from '../domain/devices';
 import { errorCode } from '../domain/errors';
 import { cleanCode } from '../domain/qr';
-import { resetSession, useStore } from './store';
+import { resetSession, setDeviceRole } from './store';
 
 export type { DeviceInfo };
 
@@ -11,7 +11,7 @@ export async function primaryOnly<T>(action: () => Promise<T>): Promise<T> {
   try {
     return await action();
   } catch (e) {
-    if (errorCode(e) === 'NOT_PRIMARY') useStore.setState({ isPrimary: false });
+    if (errorCode(e) === 'NOT_PRIMARY') setDeviceRole('linked');
     throw e;
   }
 }
