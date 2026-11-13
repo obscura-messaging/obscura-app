@@ -21,7 +21,7 @@ libsignal-protocol = { git = "https://github.com/signalapp/libsignal", tag = "v0
 rusqlite = { version = "0.42.0", features = ["bundled-sqlcipher-vendored-openssl"] }
 uniffi = "0.32.2"
 thiserror = "2.0.21"
-futures = { version = "0.3.34", default-features = false, features = ["executor"] }
+futures = { version = "0.3.34", default-features = false, features = ["executor", "alloc"] }
 async-trait = "0.1.79"
 # Same major as libsignal 0.106.2 (rand 0.9.4), so our RNG satisfies its Rng + CryptoRng bounds.
 rand = "0.9.4"

@@ -360,3 +360,31 @@ fn to_libsignal_bundle(b: PreKeyBundleData) -> Result<PreKeyBundle, CoreError> {
         IdentityKey::decode(&b.identity_key)?,
     )?)
 }
+
+// Stretch experiment: an async export. Awaiting libsignal's `message_decrypt` directly in an
+// async export does not compile: UniFFI's `rust_future_new` requires `Send`, and libsignal's
+// store futures are `async_trait(?Send)` over `&mut dyn *Store` (plus `ThreadRng` is `!Send`).
+// What works is running the synchronous call on its own thread and awaiting a oneshot, which
+// is `Send`; the foreign caller gets a real suspend point without a blocked thread of its own.
+#[uniffi::export]
+impl SpikeClient {
+    pub async fn decrypt_async(
+        self: Arc<Self>,
+        peer_name: String,
+        peer_device: u32,
+        ciphertext: Ciphertext,
+    ) -> Result<Vec<u8>, CoreError> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        std::thread::Builder::new()
+            .name("obscura-core-decrypt".to_owned())
+            .spawn(move || {
+                let _ = tx.send(self.decrypt(peer_name, peer_device, ciphertext));
+            })
+            .map_err(|e| CoreError::Storage {
+                message: format!("spawn failed: {e}"),
+            })?;
+        rx.await.map_err(|_| CoreError::Protocol {
+            message: "decrypt worker dropped its result".to_owned(),
+        })?
+    }
+}

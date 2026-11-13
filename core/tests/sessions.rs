@@ -244,3 +244,23 @@ fn logger_receives_messages() {
         "plaintext leaked into logs"
     );
 }
+
+#[test]
+fn decrypt_async_round_trips() {
+    let p = Pair::new();
+    establish(&p);
+    let first = p
+        .alice
+        .encrypt("bob".into(), 1, b"async 1".to_vec())
+        .unwrap();
+    let pt = futures::executor::block_on(p.bob.clone().decrypt_async("alice".into(), 1, first));
+    assert_eq!(pt.unwrap(), b"async 1");
+    send(&p.bob, "bob", &p.alice, "alice", "sync reply");
+    let second = p
+        .alice
+        .encrypt("bob".into(), 1, b"async 2".to_vec())
+        .unwrap();
+    assert_eq!(second.kind, CiphertextKind::Whisper);
+    let pt = futures::executor::block_on(p.bob.clone().decrypt_async("alice".into(), 1, second));
+    assert_eq!(pt.unwrap(), b"async 2");
+}
