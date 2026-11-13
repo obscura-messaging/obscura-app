@@ -252,7 +252,9 @@ export async function saveOwnProfile(displayName: string, bio: string): Promise<
 // ─── Session & Friends ───────────────────────────────────
 
 export async function refreshFriends(): Promise<void> {
-  useStore.setState({ friends: await Obscura.getFriends() });
+  const epoch = sessionEpoch;
+  const friends = await Obscura.getFriends();
+  if (epoch === sessionEpoch) useStore.setState({ friends });
 }
 
 export async function addFriend(rawCode: string): Promise<void> {
@@ -328,8 +330,12 @@ export async function applyObscuraEvent(event: ObscuraEvent): Promise<void> {
   }
 }
 
-/** Load the session identity and friends atomically, then sync all domain slices. */
-export async function loadSession(): Promise<void> {
+/**
+ * Load the session identity and friends atomically, then sync all domain slices. Resolves false,
+ * writing nothing, when the session was reset while the reads were in flight.
+ */
+export async function loadSession(): Promise<boolean> {
+  const epoch = sessionEpoch;
   const pull = <T>(p: Promise<T>, fallback: T): Promise<T> =>
     p.catch((e) => { logError('session.load', e); return fallback; });
   const [userId, username, deviceId, isPrimary, connState, friends] = await Promise.all([
@@ -340,6 +346,7 @@ export async function loadSession(): Promise<void> {
     pull(Obscura.getConnectionState(), 'disconnected' as ConnectionState),
     pull(Obscura.getFriends(), [] as Friend[]),
   ]);
+  if (epoch !== sessionEpoch) return false;
   useStore.setState({
     myUserId: userId ?? '',
     myUsername: username ?? '',
@@ -350,13 +357,13 @@ export async function loadSession(): Promise<void> {
   });
   // Push can store rows with no JS running and `messageReceived` may be dropped, so cold start syncs.
   await syncAll();
+  return true;
 }
 
 export async function bootstrapAuthState(): Promise<void> {
   try {
     const state = await Obscura.getAuthState();
-    if (state === 'authenticated') {
-      await loadSession();
+    if (state === 'authenticated' && await loadSession()) {
       useStore.setState({ authed: true });
     }
   } catch (e) {
