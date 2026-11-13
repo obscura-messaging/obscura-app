@@ -22,7 +22,7 @@ import { MAIN_HEADER_CONTENT_HEIGHT, MainHeaderOverlay } from '../components/Mai
 import type { RootStackParamList } from '../navigation/types';
 import { openPixViewer } from '../navigation/openPixViewer';
 import { timeAgo } from '../utils/format';
-import { errorMessage } from '../utils/log';
+import { errorMessage } from '../domain/errors';
 import { colors } from '../styles';
 
 function PixAvatar({ badge, friend }: { badge: PixBadge; friend: Friend }) {

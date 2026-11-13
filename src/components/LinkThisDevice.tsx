@@ -9,7 +9,8 @@ import {
   linkThisDevice,
   resetAccount,
 } from '../state/login';
-import { errorMessage, logError } from '../utils/log';
+import { errorMessage } from '../domain/errors';
+import { logError } from '../utils/log';
 import { s, colors } from '../styles';
 
 type Phase =

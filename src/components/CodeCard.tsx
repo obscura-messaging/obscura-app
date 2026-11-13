@@ -4,7 +4,7 @@ import QRCode from 'react-native-qrcode-svg';
 import { copyToClipboard } from '../state/store';
 import { toast } from './Toast';
 import { encodeQR, type QRKind } from '../domain/qr';
-import { errorMessage } from '../utils/log';
+import { errorMessage } from '../domain/errors';
 import { colors } from '../styles';
 
 interface CodeCardProps {

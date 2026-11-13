@@ -12,3 +12,5 @@ swift/
 server-proto/
 client-protocol/
 coverage/
+# Claude Code worktrees: other checkouts of this repo.
+.claude/

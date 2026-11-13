@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MIN_PASSWORD_LENGTH, credentialsProblem, logIn, register } from '../state/login';
 import { KeyboardScreen } from '../components/KeyboardScreen';
 import { LinkThisDevice } from '../components/LinkThisDevice';
-import { errorMessage } from '../utils/log';
+import { errorMessage } from '../domain/errors';
 import { s, colors } from '../styles';
 
 type Phase =

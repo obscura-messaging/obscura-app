@@ -1,11 +1,4 @@
-import {
-  deviceLabel,
-  errorCode,
-  errorMessage,
-  linkProblem,
-  orderDevices,
-  type DeviceInfo,
-} from '../devices';
+import { deviceLabel, linkProblem, orderDevices, type DeviceInfo } from '../devices';
 
 const device = (deviceId: string, name: string | null, isPrimary = false): DeviceInfo => ({
   deviceId,
@@ -31,17 +24,8 @@ describe('orderDevices', () => {
   });
 });
 
-describe('linkProblem, errorMessage & errorCode', () => {
+describe('linkProblem', () => {
   const rejection = (code: string) => Object.assign(new Error('boom'), { code });
-
-  it('extracts error messages and codes from errors, objects, primitives, and null', () => {
-    expect(errorMessage(new Error('failed'))).toBe('failed');
-    expect(errorMessage({ message: 42 })).toBe('[object Object]');
-    expect(errorMessage(null)).toBe('null');
-    expect(errorCode(rejection('OFFLINE'))).toBe('OFFLINE');
-    expect(errorCode({ code: 123 })).toBeUndefined();
-    expect(errorCode(null)).toBeUndefined();
-  });
 
   it('treats a cancelled link as no problem', () => {
     expect(linkProblem(rejection('CANCELLED'))).toBeNull();

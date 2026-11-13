@@ -140,6 +140,48 @@ describe('logout & sessionEpoch race protection', () => {
     expect(useStore.getState().stories).toEqual([]);
     expect(useStore.getState().profiles).toEqual([]);
   });
+
+  it('discards a stale in-flight getFriends response across resetSession', async () => {
+    session();
+    bridge.__setFriends([{ userId: BOB, username: 'bob', status: 'accepted' }]);
+    const release = bridge.__deferNext('getFriends');
+
+    const inflight = refreshFriends();
+    resetSession();
+    release();
+    await inflight;
+
+    expect(useStore.getState().friends).toEqual([]);
+  });
+
+  it('does not restore the identity of a session reset while loadSession was reading it', async () => {
+    const release = bridge.__deferNext('getFriends');
+
+    const inflight = loadSession();
+    await logout();
+    release();
+
+    await expect(inflight).resolves.toBe(false);
+    expect(useStore.getState()).toMatchObject({
+      myUserId: '',
+      myUsername: '',
+      isPrimary: null,
+      friends: [],
+    });
+  });
+
+  it('does not sign in when the session is reset during the cold-start load', async () => {
+    useStore.setState({ bootstrapped: false });
+    const release = bridge.__deferNext('getFriends');
+
+    const inflight = bootstrapAuthState();
+    await new Promise(r => setImmediate(r));
+    resetSession();
+    release();
+    await inflight;
+
+    expect(useStore.getState()).toMatchObject({ bootstrapped: true, authed: false, myUserId: '' });
+  });
 });
 
 describe('seen receipts & profile writes', () => {
