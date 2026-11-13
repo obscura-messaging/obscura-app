@@ -44,35 +44,55 @@ describe('notifyTyping & nextPeerTypingState', () => {
     await notifyTyping(BOB.userId, 'h', 'hi');
     await notifyTyping(BOB.userId, 'hi', '');
 
-    expect(bridge.__calls.filter((c) => c === 'sendTyping')).toHaveLength(2);
-    expect(bridge.__calls.filter((c) => c === 'stopTyping')).toHaveLength(1);
+    expect(bridge.__calls.filter(c => c === 'sendTyping')).toHaveLength(2);
+    expect(bridge.__calls.filter(c => c === 'stopTyping')).toHaveLength(1);
 
     bridge.__failNext('sendTyping', 'SEND_FAILED', 'send typing err');
     bridge.__failNext('stopTyping', 'SEND_FAILED', 'stop typing err');
     await notifyTyping(BOB.userId, '', 'h');
     await notifyTyping(BOB.userId, 'h', '');
-    expect(getJsLog().some((l) => l.includes('[typing.send] send typing err'))).toBe(true);
-    expect(getJsLog().some((l) => l.includes('[typing.stop] stop typing err'))).toBe(true);
+    expect(getJsLog().some(l => l.includes('[typing.send] send typing err'))).toBe(true);
+    expect(getJsLog().some(l => l.includes('[typing.stop] stop typing err'))).toBe(true);
   });
 
   it('updates peer typing state on typingChanged for that peer and resets on directMessage receipt', () => {
-    expect(nextPeerTypingState(false, BOB.userId, {
-      type: 'typingChanged', peerUserId: BOB.userId, typing: true,
-    })).toBe(true);
-    expect(nextPeerTypingState(true, BOB.userId, {
-      type: 'typingChanged', peerUserId: 'other-peer', typing: false,
-    })).toBe(true);
-    expect(nextPeerTypingState(false, BOB.userId, {
-      type: 'typingChanged', peerUserId: 'other-peer', typing: true,
-    })).toBe(false);
-    expect(nextPeerTypingState(true, BOB.userId, {
-      type: 'messageReceived', model: 'story',
-    })).toBe(true);
-    expect(nextPeerTypingState(true, BOB.userId, {
-      type: 'messageReceived', model: 'directMessage',
-    })).toBe(false);
-    expect(nextPeerTypingState(true, BOB.userId, {
-      type: 'friendsChanged',
-    })).toBe(true);
+    expect(
+      nextPeerTypingState(false, BOB.userId, {
+        type: 'typingChanged',
+        peerUserId: BOB.userId,
+        typing: true,
+      }),
+    ).toBe(true);
+    expect(
+      nextPeerTypingState(true, BOB.userId, {
+        type: 'typingChanged',
+        peerUserId: 'other-peer',
+        typing: false,
+      }),
+    ).toBe(true);
+    expect(
+      nextPeerTypingState(false, BOB.userId, {
+        type: 'typingChanged',
+        peerUserId: 'other-peer',
+        typing: true,
+      }),
+    ).toBe(false);
+    expect(
+      nextPeerTypingState(true, BOB.userId, {
+        type: 'messageReceived',
+        model: 'story',
+      }),
+    ).toBe(true);
+    expect(
+      nextPeerTypingState(true, BOB.userId, {
+        type: 'messageReceived',
+        model: 'directMessage',
+      }),
+    ).toBe(false);
+    expect(
+      nextPeerTypingState(true, BOB.userId, {
+        type: 'friendsChanged',
+      }),
+    ).toBe(true);
   });
 });

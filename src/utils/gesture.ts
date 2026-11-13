@@ -1,5 +1,4 @@
-export const clamp = (v: number, lo: number, hi: number) =>
-  Math.max(lo, Math.min(hi, v));
+export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 /** Distance between the first two touches. */
 export const touchDist = (touches: ReadonlyArray<{ pageX: number; pageY: number }>) =>

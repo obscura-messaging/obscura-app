@@ -1,7 +1,11 @@
 import React from 'react';
 import {
-  KeyboardAvoidingView, TouchableWithoutFeedback, Keyboard, Platform,
-  View, StyleSheet,
+  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  Keyboard,
+  Platform,
+  View,
+  StyleSheet,
 } from 'react-native';
 
 /**

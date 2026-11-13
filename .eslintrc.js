@@ -62,7 +62,8 @@ module.exports = {
                   '**/components/**',
                   '**/navigation/**',
                 ],
-                message: 'src/domain/ must remain pure and independent of React, native, state, and UI.',
+                message:
+                  'src/domain/ must remain pure and independent of React, native, state, and UI.',
               },
             ],
           },

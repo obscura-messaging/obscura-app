@@ -6,8 +6,16 @@ import type { Friend, ProfileItem } from '../domain/friends';
 import type { MediaAttachment, MediaType, StoryItem } from '../domain/viewer';
 
 export type {
-  CaptionMeta, ConversationItem, DeviceInfo, DirectMessageItem,
-  Friend, MediaAttachment, MediaType, PixItem, ProfileItem, StoryItem,
+  CaptionMeta,
+  ConversationItem,
+  DeviceInfo,
+  DirectMessageItem,
+  Friend,
+  MediaAttachment,
+  MediaType,
+  PixItem,
+  ProfileItem,
+  StoryItem,
 };
 
 export interface ResizedImage {
@@ -86,10 +94,7 @@ export interface LaunchIntent {
 }
 
 export type LoginScenario =
-  | 'existingDevice'
-  | 'linkRequired'
-  | 'deviceMismatch'
-  | 'invalidCredentials';
+  'existingDevice' | 'linkRequired' | 'deviceMismatch' | 'invalidCredentials';
 
 /** The `code` of a kit rejection, mirroring `ObscuraError.kt`. Other failures use a per-method code. */
 export type ObscuraErrorCode =
@@ -230,7 +235,8 @@ export const Obscura: ObscuraClient = new Proxy(rawBridge, {
   get(target, prop, receiver) {
     switch (prop) {
       case 'getMessages':
-        return async (): Promise<ConversationItem[]> => (await target.getMessages()).map(toConversationItem);
+        return async (): Promise<ConversationItem[]> =>
+          (await target.getMessages()).map(toConversationItem);
       case 'getStories':
         return async (): Promise<StoryItem[]> => (await target.getStories()).map(toStoryItem);
       default: {
