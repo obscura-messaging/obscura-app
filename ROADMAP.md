@@ -22,7 +22,7 @@
 
 ## Gaps
 
-- iOS push and production readiness ([`IOS_PARITY.md`](docs/IOS_PARITY.md)).
+- iOS push ([`IOS_PARITY.md`](docs/IOS_PARITY.md)).
 
 ## Next
 
