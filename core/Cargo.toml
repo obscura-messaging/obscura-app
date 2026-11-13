@@ -1,0 +1,38 @@
+[package]
+name = "obscura-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "obscura_core"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+default = ["sqlcipher-openssl"]
+bindgen = ["uniffi/cli"]
+# SQLCipher's crypto provider: enable exactly one. Vendored OpenSSL builds for every target.
+sqlcipher-openssl = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
+# Apple targets only: without OpenSSL, libsqlite3-sys builds SQLCipher against CommonCrypto
+# (and links Security.framework) when both host and target are Apple.
+sqlcipher-commoncrypto = ["rusqlite/bundled-sqlcipher"]
+
+[dependencies]
+libsignal-protocol = { git = "https://github.com/signalapp/libsignal", tag = "v0.106.2" }
+rusqlite = "0.42.0"
+uniffi = "0.32.2"
+thiserror = "2.0.21"
+futures = { version = "0.3.34", default-features = false, features = ["executor", "alloc"] }
+async-trait = "0.1.79"
+# Same major as libsignal 0.106.2 (rand 0.9.4), so our RNG satisfies its Rng + CryptoRng bounds.
+rand = "0.9.4"
+
+[dev-dependencies]
+base64 = "0.23.1"
+serde_json = "1.0.154"
+tempfile = "3"

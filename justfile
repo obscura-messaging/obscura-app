@@ -74,6 +74,22 @@ format:
 # Run every JavaScript CI gate.
 check: test typecheck lint format-check
 
+# Format-check, lint and test the Rust core (docs/RUST_CORE.md).
+core-check:
+    cd core && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --locked
+
+# Test the core's generated Kotlin bindings on the JVM against a host build.
+core-jvm-test:
+    kotlin/gradlew -p core/bindings/kotlin-jvm-test test
+
+# Build the core for Android into a jniLibs dir and generate Kotlin bindings.
+core-android jnilibs kotlin *abis:
+    core/scripts/build-android.sh {{jnilibs}} {{kotlin}} {{abis}}
+
+# Build the core's iOS XCFramework (macOS): crypto is commoncrypto or openssl.
+core-xcframework crypto="openssl":
+    core/scripts/build-xcframework.sh {{crypto}}
+
 # Test the release verification script.
 release-script-test:
     python3 scripts/test-verify-release-build.py -q

@@ -61,3 +61,14 @@
 -dontwarn org.openjsse.**
 -dontwarn org.slf4j.**
 -dontwarn java.sql.**
+
+# ----- Rust core spike (obscura-core over UniFFI + JNA) ---------------------
+# Inert unless -PobscuraRustCore packages the core into a release build.
+# libjnidispatch looks JNA classes up by name (Structure, CallbackReference, ...),
+# and JNA lays out Structures from @FieldOrder strings that must still match the
+# field names, so neither JNA nor the generated bindings may be renamed. The JNA
+# AAR ships no consumer rules; its desktop-only java.awt references never run.
+-keep class com.sun.jna.** { *; }
+-keepclassmembers class * extends com.sun.jna.** { public *; }
+-keep class uniffi.obscura_core.** { *; }
+-dontwarn java.awt.**
