@@ -1,20 +1,79 @@
-name: Core spike (iOS)
+name: Core
 
-# Go/no-go spike: build the Rust core as an XCFramework and run its Swift API tests on an iOS
-# simulator, once per SQLCipher crypto provider.
+# The Rust core (docs/RUST_CORE.md): host tests and the Kotlin bindings on Linux, and the
+# Swift bindings on an iOS simulator once per SQLCipher crypto provider. Not part of CI's
+# Gate yet; nothing in the app depends on core/ until the migration starts.
 on:
+  pull_request:
+    paths:
+      - 'core/**'
+      - '.github/workflows/core.yml'
+      - '.github/actions/**'
+      - 'scripts/ci-install-rust.sh'
+      - '.xcode-version'
   push:
-    branches: [spike/rust-core-ios]
+    branches: [main]
+    paths:
+      - 'core/**'
+      - '.github/workflows/core.yml'
+      - '.github/actions/**'
+      - 'scripts/ci-install-rust.sh'
+      - '.xcode-version'
   workflow_dispatch:
+    inputs:
+      app_link:
+        description: Also build the iOS app linked against the core (about 15 minutes of macOS).
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: core-spike-ios-${{ github.ref }}
-  cancel-in-progress: true
+  group: core-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
+  rust:
+    name: Rust and Kotlin bindings
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          java: true
+
+      # libsignal's spqr dependency generates its protobuf code at build time.
+      - name: Install protobuf
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust
+        run: scripts/ci-install-rust.sh
+
+      - name: Cache Cargo
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core/target
+          key: core-linux-${{ runner.arch }}-${{ hashFiles('core/Cargo.lock', 'core/Cargo.toml') }}
+          restore-keys: core-linux-${{ runner.arch }}-
+
+      - name: Check
+        run: just core-check
+
+      - name: Kotlin bindings
+        run: just core-jvm-test
+
   xcframework:
     name: XCFramework (${{ matrix.crypto }})
     runs-on: macos-26
@@ -81,6 +140,7 @@ jobs:
   app-link:
     name: App links the core
     needs: xcframework
+    if: github.event_name == 'workflow_dispatch' && inputs.app_link
     runs-on: macos-26
     timeout-minutes: 60
     steps:

@@ -33,6 +33,8 @@ Code and tests are the authority on behaviour; Markdown documents explain only
   as it is ([kit contract](docs/KIT_API.md)).
 - [`docs/PUSH_NOTIFICATIONS.md`](docs/PUSH_NOTIFICATIONS.md): push privacy
   rationale.
+- [`docs/RUST_CORE.md`](docs/RUST_CORE.md): why both kits should converge on one
+  Rust core, and what the spike proved.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): setup, `just check`, and native pin.
 - [`docs/ANDROID_DISTRIBUTION.md`](docs/ANDROID_DISTRIBUTION.md),
   [`docs/IOS_DISTRIBUTION.md`](docs/IOS_DISTRIBUTION.md): tester builds.
