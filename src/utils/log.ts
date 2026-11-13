@@ -3,9 +3,7 @@
  * swallowed error goes through `logError`; lint bans empty catches.
  */
 
-import { errorCode, errorMessage } from '../domain/devices';
-
-export { errorCode, errorMessage };
+import { errorMessage } from '../domain/errors';
 
 const buffer: string[] = [];
 const MAX_LINES = 200;

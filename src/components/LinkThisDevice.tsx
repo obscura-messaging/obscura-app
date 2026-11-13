@@ -4,7 +4,8 @@ import { CodeCard } from './CodeCard';
 import { confirm } from './confirm';
 import { linkProblem, type LinkProblem } from '../domain/devices';
 import { cancelLink, cancelPendingLinkOnUnmount, linkThisDevice, resetAccount } from '../state/login';
-import { errorMessage, logError } from '../utils/log';
+import { errorMessage } from '../domain/errors';
+import { logError } from '../utils/log';
 import { s, colors } from '../styles';
 
 type Phase = { kind: 'starting' } | { kind: 'waiting'; code: string } | { kind: 'resetting' } | LinkProblem;

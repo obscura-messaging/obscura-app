@@ -1,5 +1,6 @@
 import { Alert } from 'react-native';
-import { deviceLabel, errorMessage } from '../domain/devices';
+import { deviceLabel } from '../domain/devices';
+import { errorMessage } from '../domain/errors';
 import { approveLink, linkCodeDeviceName } from '../state/devices';
 import { toast } from '../state/toast';
 

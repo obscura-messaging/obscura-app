@@ -6,7 +6,8 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { toast } from '../components/Toast';
 import { CodeCard } from '../components/CodeCard';
 import { useSession, addFriend, getFriendCode } from '../state/store';
-import { errorMessage, logError } from '../utils/log';
+import { errorMessage } from '../domain/errors';
+import { logError } from '../utils/log';
 import type { RootStackParamList } from '../navigation/types';
 import { s, colors } from '../styles';
 
