@@ -443,7 +443,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun acceptFriend(userId: String, promise: Promise) {
         scope.launch {
             try {
-                Log.d(TAG, "acceptFriend: $userId")
                 requireClient().acceptFriend(userId)
                 promise.resolve(null)
             } catch (e: Exception) {
@@ -461,7 +460,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         scope.launch {
             try {
                 val code = requireClient().friendCode()
-                Log.d(TAG, "getFriendCode: ${code.take(20)}...")
                 promise.resolve(code)
             } catch (e: Exception) {
                 promise.rejectKit("NOT_AUTHED", e)
@@ -473,7 +471,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun addFriendByCode(code: String, promise: Promise) {
         scope.launch {
             try {
-                Log.d(TAG, "addFriendByCode: ${code.take(20)}...")
                 // Delegates rather than re-decoding, and this direction was the strictly worse copy:
                 // the kit additionally normalises url-safe base64 and rejects a code whose fields are
                 // present but empty. Both halves of the format now live in `FriendCode`, where the
@@ -711,7 +708,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
                 .addOnCompleteListener { task ->
                     if (task.isSuccessful) {
                         val token = task.result
-                        Log.d(TAG, "FCM token: ${token.take(20)}...")
                         ObscuraSession.deliverPushToken(token)
                         promise.resolve(true)
                     } else {
