@@ -1,0 +1,63 @@
+name: Core spike (iOS)
+
+# Go/no-go spike: build the Rust core as an XCFramework and run its Swift API tests on an iOS
+# simulator, once per SQLCipher crypto provider.
+on:
+  push:
+    branches: [spike/rust-core-ios]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-spike-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  xcframework:
+    name: XCFramework (${{ matrix.crypto }})
+    runs-on: macos-26
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        crypto: [openssl, commoncrypto]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Select Xcode
+        uses: ./.github/actions/xcode
+
+      - name: Install Rust
+        run: scripts/ci-install-rust.sh aarch64-apple-ios aarch64-apple-ios-sim
+
+      - name: Cache Cargo
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core/target
+          key: core-ios-${{ matrix.crypto }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.xcode-version', 'core/Cargo.lock', 'core/Cargo.toml') }}
+
+      - name: Build XCFramework
+        run: |
+          start=$SECONDS
+          core/scripts/build-xcframework.sh ${{ matrix.crypto }}
+          echo "timing: build-xcframework.sh ${{ matrix.crypto }} $((SECONDS - start))s"
+          find core/swift/ObscuraCore/ObscuraCoreFFI.xcframework -maxdepth 4 | sort
+
+      - name: List simulators
+        run: xcrun simctl list devices available iPhone
+
+      - name: Test on iOS simulator
+        working-directory: core/swift/ObscuraCore
+        run: |
+          id="$("$GITHUB_WORKSPACE/swift/scripts/simulator.sh")"
+          echo "simulator: $id"
+          start=$SECONDS
+          xcodebuild -scheme ObscuraCore -derivedDataPath .build/DerivedData \
+            -destination "platform=iOS Simulator,id=$id" test
+          echo "timing: xcodebuild test $((SECONDS - start))s"
