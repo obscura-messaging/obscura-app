@@ -1,0 +1,7 @@
+/target/
+/bindings/kotlin-jvm-test/.gradle/
+/bindings/kotlin-jvm-test/.kotlin/
+/bindings/kotlin-jvm-test/build/
+/swift/ObscuraCore/.build/
+/swift/ObscuraCore/ObscuraCoreFFI.xcframework/
+/swift/ObscuraCore/Sources/ObscuraCore/obscura_core.swift

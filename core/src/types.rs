@@ -1,0 +1,535 @@
+use crate::error::ObscuraError;
+use crate::proto::client;
+
+pub const EXPIRE_AFTER_VIEW_MS: i64 = 15 * 60 * 1000;
+pub const MAX_EPHEMERAL_AGE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+pub const STORY_MAX_AGE_MS: i64 = 24 * 60 * 60 * 1000;
+
+pub fn expires_at(sent_at: i64, viewed_at: Option<i64>) -> i64 {
+    let max_expiry = sent_at.saturating_add(MAX_EPHEMERAL_AGE_MS);
+    match viewed_at {
+        None => max_expiry,
+        Some(v) => max_expiry.min(v.saturating_add(EXPIRE_AFTER_VIEW_MS)),
+    }
+}
+
+pub fn clamp_future_timestamp(sent_at: u64, now_ms: i64) -> i64 {
+    let cap = now_ms.saturating_add(60_000);
+    match i64::try_from(sent_at) {
+        Ok(ts) if ts >= 0 => ts.min(cap),
+        _ => cap,
+    }
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthState {
+    LoggedOut,
+    Authenticated,
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionState {
+    Disconnected,
+    Connecting,
+    Connected,
+    Reconnecting,
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginScenario {
+    ExistingDevice,
+    LinkRequired,
+    DeviceMismatch,
+    InvalidCredentials,
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TypingState {
+    Started,
+    Stopped,
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaType {
+    Photo,
+    Video,
+}
+
+impl MediaType {
+    pub fn from_wire(value: &str) -> Self {
+        if value == "video" {
+            MediaType::Video
+        } else {
+            MediaType::Photo
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MediaType::Photo => "photo",
+            MediaType::Video => "video",
+        }
+    }
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversationKind {
+    Message,
+    Pix,
+}
+
+impl ConversationKind {
+    pub fn from_wire(value: &str) -> Result<Self, ObscuraError> {
+        match value {
+            "message" => Ok(ConversationKind::Message),
+            "pix" => Ok(ConversationKind::Pix),
+            other => Err(ObscuraError::invalid_arg(format!(
+                "Invalid conversation item kind: {other}"
+            ))),
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ConversationKind::Message => "message",
+            ConversationKind::Pix => "pix",
+        }
+    }
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EntryModel {
+    DirectMessage,
+    Pix,
+    Seen,
+    Story,
+    Profile,
+}
+
+impl EntryModel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EntryModel::DirectMessage => "directMessage",
+            EntryModel::Pix => "pix",
+            EntryModel::Seen => "seen",
+            EntryModel::Story => "story",
+            EntryModel::Profile => "profile",
+        }
+    }
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FriendStatus {
+    PendingSent,
+    PendingReceived,
+    Accepted,
+}
+
+impl FriendStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FriendStatus::PendingSent => "pending_sent",
+            FriendStatus::PendingReceived => "pending_received",
+            FriendStatus::Accepted => "accepted",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "pending_sent" => Some(FriendStatus::PendingSent),
+            "pending_received" => Some(FriendStatus::PendingReceived),
+            "accepted" => Some(FriendStatus::Accepted),
+            _ => None,
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct Friend {
+    pub user_id: String,
+    pub username: String,
+    pub status: FriendStatus,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct DeviceInfo {
+    pub device_id: String,
+    pub name: Option<String>,
+    pub is_primary: bool,
+    pub is_this_device: bool,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct MediaAttachment {
+    pub id: String,
+    pub content_key: Vec<u8>,
+    pub nonce: Vec<u8>,
+    pub media_type: MediaType,
+}
+
+impl MediaAttachment {
+    pub fn to_proto(&self) -> client::AttachmentPointer {
+        client::AttachmentPointer {
+            id: self.id.clone(),
+            content_key: self.content_key.clone(),
+            nonce: self.nonce.clone(),
+            media_type: self.media_type.as_str().to_owned(),
+        }
+    }
+
+    pub fn from_proto(att: &client::AttachmentPointer) -> Option<Self> {
+        if att.id.trim().is_empty() || att.content_key.is_empty() || att.nonce.is_empty() {
+            return None;
+        }
+        Some(MediaAttachment {
+            id: att.id.clone(),
+            content_key: att.content_key.clone(),
+            nonce: att.nonce.clone(),
+            media_type: MediaType::from_wire(&att.media_type),
+        })
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct ConversationItem {
+    pub id: String,
+    pub peer_user_id: String,
+    pub kind: ConversationKind,
+    pub author_user_id: String,
+    pub sent_at: i64,
+    pub viewed_at: Option<i64>,
+    pub expires_at: i64,
+    pub content: String,
+    pub attachment: Option<MediaAttachment>,
+    pub caption: Option<String>,
+    pub caption_meta: Option<String>,
+    pub display_duration: i32,
+    pub undelivered: bool,
+}
+
+impl ConversationItem {
+    pub fn message(
+        id: String,
+        peer_user_id: String,
+        author_user_id: String,
+        sent_at: i64,
+        content: String,
+        viewed_at: Option<i64>,
+        undelivered: bool,
+    ) -> Self {
+        Self {
+            id,
+            peer_user_id,
+            kind: ConversationKind::Message,
+            author_user_id,
+            sent_at,
+            viewed_at,
+            expires_at: expires_at(sent_at, viewed_at),
+            content,
+            attachment: None,
+            caption: None,
+            caption_meta: None,
+            display_duration: 0,
+            undelivered,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn pix(
+        id: String,
+        peer_user_id: String,
+        author_user_id: String,
+        sent_at: i64,
+        attachment: MediaAttachment,
+        caption: Option<String>,
+        caption_meta: Option<String>,
+        display_duration: i32,
+        viewed_at: Option<i64>,
+        undelivered: bool,
+    ) -> Self {
+        Self {
+            id,
+            peer_user_id,
+            kind: ConversationKind::Pix,
+            author_user_id,
+            sent_at,
+            viewed_at,
+            expires_at: expires_at(sent_at, viewed_at),
+            content: String::new(),
+            attachment: Some(attachment),
+            caption,
+            caption_meta,
+            display_duration,
+            undelivered,
+        }
+    }
+
+    pub fn to_client_message(&self) -> client::ClientMessage {
+        let payload = if let Some(att) = &self.attachment {
+            client::client_message::Payload::Pix(client::PixMessage {
+                id: self.id.clone(),
+                peer_user_id: self.peer_user_id.clone(),
+                attachment: Some(att.to_proto()),
+                caption: self.caption.clone().unwrap_or_default(),
+                caption_meta: self.caption_meta.clone().unwrap_or_default(),
+                display_duration_secs: self.display_duration.max(0) as u32,
+            })
+        } else {
+            client::client_message::Payload::DirectMessage(client::DirectMessage {
+                id: self.id.clone(),
+                peer_user_id: self.peer_user_id.clone(),
+                content: self.content.clone(),
+            })
+        };
+        client::ClientMessage {
+            timestamp: self.sent_at.max(0) as u64,
+            payload: Some(payload),
+        }
+    }
+
+    pub fn to_snapshot_record(&self) -> client::StoredMessageRecord {
+        client::StoredMessageRecord {
+            id: self.id.clone(),
+            peer_user_id: self.peer_user_id.clone(),
+            kind: self.kind.as_str().to_owned(),
+            author_user_id: self.author_user_id.clone(),
+            sent_at: self.sent_at.max(0) as u64,
+            viewed_at: self.viewed_at.unwrap_or(0).max(0) as u64,
+            content: self.content.clone(),
+            attachment: self.attachment.as_ref().map(MediaAttachment::to_proto),
+            caption: self.caption.clone().unwrap_or_default(),
+            caption_meta: self.caption_meta.clone().unwrap_or_default(),
+            display_duration_secs: self.display_duration.max(0) as u32,
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct StoryItem {
+    pub id: String,
+    pub author_user_id: String,
+    pub sent_at: i64,
+    pub expires_at: i64,
+    pub content: String,
+    pub attachment: Option<MediaAttachment>,
+    pub caption_meta: Option<String>,
+    pub undelivered: bool,
+}
+
+impl StoryItem {
+    pub fn new(
+        id: String,
+        author_user_id: String,
+        sent_at: i64,
+        content: String,
+        attachment: Option<MediaAttachment>,
+        caption_meta: Option<String>,
+        undelivered: bool,
+    ) -> Self {
+        Self {
+            id,
+            author_user_id,
+            sent_at,
+            expires_at: sent_at.saturating_add(STORY_MAX_AGE_MS),
+            content,
+            attachment,
+            caption_meta,
+            undelivered,
+        }
+    }
+
+    pub fn to_client_message(&self) -> client::ClientMessage {
+        client::ClientMessage {
+            timestamp: self.sent_at.max(0) as u64,
+            payload: Some(client::client_message::Payload::Story(client::StoryPost {
+                id: self.id.clone(),
+                content: self.content.clone(),
+                attachment: self.attachment.as_ref().map(MediaAttachment::to_proto),
+                caption_meta: self.caption_meta.clone().unwrap_or_default(),
+            })),
+        }
+    }
+
+    pub fn to_snapshot_record(&self) -> client::StoredStoryRecord {
+        client::StoredStoryRecord {
+            id: self.id.clone(),
+            author_user_id: self.author_user_id.clone(),
+            sent_at: self.sent_at.max(0) as u64,
+            content: self.content.clone(),
+            attachment: self.attachment.as_ref().map(MediaAttachment::to_proto),
+            caption_meta: self.caption_meta.clone().unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct ProfileItem {
+    pub user_id: String,
+    pub author_device_id: String,
+    pub updated_at: i64,
+    pub display_name: String,
+    pub bio: String,
+    pub undelivered: bool,
+}
+
+impl ProfileItem {
+    pub fn to_client_message(&self) -> client::ClientMessage {
+        client::ClientMessage {
+            timestamp: self.updated_at.max(0) as u64,
+            payload: Some(client::client_message::Payload::Profile(
+                client::ProfileUpdate {
+                    display_name: self.display_name.clone(),
+                    bio: self.bio.clone(),
+                },
+            )),
+        }
+    }
+
+    pub fn to_snapshot_record(&self) -> client::StoredProfileRecord {
+        client::StoredProfileRecord {
+            user_id: self.user_id.clone(),
+            author_device_id: self.author_device_id.clone(),
+            updated_at: self.updated_at.max(0) as u64,
+            display_name: self.display_name.clone(),
+            bio: self.bio.clone(),
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct CaptureResult {
+    pub undelivered_peer_user_ids: Vec<String>,
+    pub story_undelivered: bool,
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubmissionStatus {
+    Accepted,
+    Rejected,
+    Unknown,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct SubmissionResult {
+    pub user_id: String,
+    pub device_id: Option<String>,
+    pub status: SubmissionStatus,
+    pub error: Option<String>,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct ObscuraClientConfig {
+    pub api_url: String,
+    pub database_path: Option<String>,
+    pub database_key: Vec<u8>,
+    pub device_name: String,
+    pub attachment_cache_dir: Option<String>,
+}
+
+impl ObscuraClientConfig {
+    pub fn validate(&self) -> Result<(), ObscuraError> {
+        validate_api_url(&self.api_url)?;
+        if self.device_name.trim().is_empty() {
+            return Err(ObscuraError::invalid_arg("deviceName must not be blank"));
+        }
+        if let Some(path) = &self.database_path {
+            if path.trim().is_empty() {
+                return Err(ObscuraError::invalid_arg("databasePath must not be blank"));
+            }
+            if self.database_key.len() != 32 {
+                return Err(ObscuraError::invalid_arg(format!(
+                    "db_key must be 32 bytes, got {}",
+                    self.database_key.len()
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn validate_api_url(api_url: &str) -> Result<(), ObscuraError> {
+    let invalid = || {
+        ObscuraError::invalid_arg(format!(
+            "API URL must use HTTPS (or loopback HTTP): {api_url}"
+        ))
+    };
+    if api_url.contains('@')
+        || api_url.contains('?')
+        || api_url.contains('#')
+        || api_url.chars().any(char::is_whitespace)
+    {
+        return Err(invalid());
+    }
+    let parsed = url::Url::parse(api_url).map_err(|_| invalid())?;
+    if !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(invalid());
+    }
+    let Some(host) = parsed.host_str() else {
+        return Err(invalid());
+    };
+    if host.trim().is_empty() {
+        return Err(invalid());
+    }
+    if parsed.port() == Some(0) {
+        return Err(invalid());
+    }
+    // Check explicit port in raw URL isn't out of range or 0 (e.g. ":0")
+    if let Some(after_scheme) = api_url
+        .strip_prefix("https://")
+        .or_else(|| api_url.strip_prefix("http://"))
+    {
+        let authority = after_scheme.split('/').next().unwrap_or("");
+        if authority.is_empty() {
+            return Err(invalid());
+        }
+        if let Some(port_str) = extract_port(authority) {
+            let Ok(port) = port_str.parse::<u32>() else {
+                return Err(invalid());
+            };
+            if !(1..=65535).contains(&port) {
+                return Err(invalid());
+            }
+        }
+    } else {
+        return Err(invalid());
+    }
+
+    let scheme = parsed.scheme();
+    let is_loopback = scheme == "http" && matches!(host, "localhost" | "127.0.0.1" | "[::1]");
+    if !(scheme == "https" || is_loopback) {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn extract_port(authority: &str) -> Option<&str> {
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (_, after_bracket) = rest.split_once(']')?;
+        after_bracket.strip_prefix(':')
+    } else {
+        let (_, port) = authority.rsplit_once(':')?;
+        Some(port)
+    }
+}
+
+#[derive(uniffi::Object, Debug, Clone)]
+pub struct LinkRequest {
+    pub(crate) code: String,
+    pub(crate) session_id: String,
+    pub(crate) user_id: String,
+    pub(crate) expires_at: i64,
+    pub(crate) ephemeral_private_key: Vec<u8>,
+    pub(crate) username: String,
+    pub(crate) device_name: String,
+}
+
+#[uniffi::export]
+impl LinkRequest {
+    pub fn code(&self) -> String {
+        self.code.clone()
+    }
+}
