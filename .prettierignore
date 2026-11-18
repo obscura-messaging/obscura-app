@@ -1,4 +1,4 @@
-# Prettier formats the app's JavaScript and TypeScript only. The native kits, the protocol
+# Prettier formats the app's JavaScript and TypeScript only. The Rust core, the protocol
 # submodules, and generated or vendored output have their own conventions.
 *
 !*/
@@ -7,8 +7,7 @@
 !*.tsx
 android/
 ios/
-kotlin/
-swift/
+core/
 server-proto/
 client-protocol/
 coverage/

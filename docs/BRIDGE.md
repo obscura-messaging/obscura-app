@@ -3,9 +3,9 @@
 [`src/native/ObscuraModule.ts`](../src/native/ObscuraModule.ts) and
 [`src/native/__tests__/exports.test.ts`](../src/native/__tests__/exports.test.ts)
 are the executable authority on bridge signatures, error codes, and event
-shapes across TypeScript, Kotlin, Swift, and Objective-C. Kit semantics live in
-[`KIT_API.md`][kit]. This document records only **why** the bridge boundary is
-constrained as it is.
+shapes across TypeScript, Rust, Kotlin, Swift, and Objective-C. Core semantics
+live in [`KIT_API.md`][kit]. This document records only **why** the bridge
+boundary is constrained as it is.
 
 ## Why these boundary rules exist
 

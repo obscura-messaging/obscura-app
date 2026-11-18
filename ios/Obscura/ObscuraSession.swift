@@ -1,21 +1,22 @@
 import Foundation
 import UIKit
-import ObscuraKit
+import ObscuraCore
 
-final class BridgeLogger: ObscuraLogger {
-    func log(_ message: String) { NSLog("[ObscuraKit] %@", message) }
+final class BridgeLogger: ObscuraLogger, @unchecked Sendable {
+    func log(_ message: String) { NSLog("[ObscuraCore] %@", message) }
+    func log(message: String) { log(message) }
     func decryptFailed(sourceUserId: String, reason: String) { log("decrypt failed from \(sourceUserId): \(reason)") }
     func ackFailed(envelopeId: String, reason: String) { log("ack failed \(envelopeId): \(reason)") }
-    func tokenRefreshFailed(attempt: Int, reason: String) { log("token refresh failed (\(attempt)): \(reason)") }
+    func tokenRefreshFailed(attempt: Int32, reason: String) { log("token refresh failed (\(attempt)): \(reason)") }
     func preKeySyncFailed(reason: String) { log("prekey sync failed: \(reason)") }
     func identityChanged(userId: String) { log("identity changed: \(userId)") }
     func sessionEstablishFailed(userId: String, reason: String) { log("session establish failed \(userId): \(reason)") }
     func databaseError(store: String, operation: String, reason: String) { log("db error \(store).\(operation): \(reason)") }
 }
 
-/** Owns the live client and OS lifecycle. The kit is the only session writer. */
+/** Owns the live client and OS lifecycle. The core is the only session writer. */
 @MainActor
-final class ObscuraSession {
+final class ObscuraSession: ClientEventListener {
     static let shared = ObscuraSession()
     private static let apiURL: String = {
         guard let url = Bundle.main.object(forInfoDictionaryKey: "ObscuraAPIURL") as? String, !url.isEmpty else {
@@ -31,10 +32,14 @@ final class ObscuraSession {
     /// This device's name on the account, shown in device lists and on the primary when linking.
     let deviceName = UIDevice.current.model
     private let storage = KeychainSession()
+    private let transport = UrlSessionTransport()
     private var restoreTask: Task<Void, Never>?
-    private var messageTask: Task<Void, Never>?
     var onClientReplaced: ((ObscuraClient?) -> Void)?
-    var onMessageReceived: ((EntryModel) -> Void)?
+    var onConnectionChanged: ((ConnectionState) -> Void)?
+    var onAuthChanged: ((AuthState) -> Void)?
+    var onFriendsListChanged: (() -> Void)?
+    var onMessageReceivedCallback: ((EntryModel) -> Void)?
+    var onPeerTypingChangedCallback: ((String, Bool) -> Void)?
     var onAppStateChanged: ((Bool) -> Void)?
 
     private init() {
@@ -44,13 +49,12 @@ final class ObscuraSession {
                 let restored = try makeUserClient(username: username)
                 client = restored
                 clientUsername = username.lowercased()
-                observeMessages(restored)
                 restoreTask = Task { [weak self] in
                     defer { self?.restoreTask = nil }
                     if !(await restored.restorePersistedSession()) {
                         self?.logger.log("No usable stored session")
                     } else if self?.appInForeground == false {
-                        await restored.disconnect()
+                        restored.disconnect()
                     }
                 }
             }
@@ -66,32 +70,85 @@ final class ObscuraSession {
         return root.appendingPathComponent("ObscuraData")
     }
 
+    private static var attachmentCacheDir: URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("attachments")
+    }
+
     func makeUserClient(username: String) throws -> ObscuraClient {
         guard username.range(of: "^[a-zA-Z0-9_]{3,50}$", options: .regularExpression) != nil else {
-            throw ObscuraError.invalidArgument("Invalid username")
+            throw ObscuraError.InvalidArgument(reason: "Invalid username")
         }
         // The server normalizes usernames; case variants must open the same database.
         let storageName = username.lowercased()
-        return try ObscuraClient(
-            apiURL: Self.apiURL,
-            dataDirectory: Self.baseDir.appendingPathComponent(storageName).path,
-            userId: storageName,
-            keychainAccessGroup: SharedContainer.keychainAccessGroup,
-            deviceName: deviceName,
-            sessionStorage: storage,
-            logger: logger
-        )
+        do {
+            return try openClient(storageName: storageName)
+        } catch ObscuraError.DatabaseUndecryptable {
+            logger.log("Database cannot be decrypted; discarding it")
+            let userDir = Self.baseDir.appendingPathComponent(storageName)
+            try? FileManager.default.removeItem(at: userDir)
+            if let cacheDir = Self.attachmentCacheDir {
+                try? FileManager.default.removeItem(at: cacheDir)
+            }
+            try? storage.clear()
+            return try openClient(storageName: storageName)
+        }
     }
 
-    func replaceClient(_ next: ObscuraClient?, username: String? = nil) async throws {
+    private func openClient(storageName: String) throws -> ObscuraClient {
+        let dataDirectory = Self.baseDir.appendingPathComponent(storageName).path
+        let protection = [FileAttributeKey.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
+        try FileManager.default.createDirectory(
+            atPath: dataDirectory,
+            withIntermediateDirectories: true,
+            attributes: protection
+        )
+        let dbPath = (dataDirectory as NSString).appendingPathComponent("obscura.sqlite")
+        let key = try DatabaseSecret.getOrCreate(
+            userId: storageName,
+            accessGroup: SharedContainer.keychainAccessGroup
+        )
+        let config = ObscuraClientConfig(
+            apiUrl: Self.apiURL,
+            databasePath: dbPath,
+            databaseKey: key,
+            deviceName: deviceName,
+            attachmentCacheDir: Self.attachmentCacheDir?.path
+        )
+        let opened = try ObscuraClient.open(
+            config: config,
+            sessionStorage: storage,
+            transport: transport,
+            logger: logger,
+            listener: self
+        )
+        try FileManager.default.setAttributes(protection, ofItemAtPath: dbPath)
+        return opened
+    }
+
+    func replaceClient(username: String) async throws -> ObscuraClient {
+        guard username.range(of: "^[a-zA-Z0-9_]{3,50}$", options: .regularExpression) != nil else {
+            throw ObscuraError.InvalidArgument(reason: "Invalid username")
+        }
         restoreTask?.cancel()
         await restoreTask?.value
         restoreTask = nil
-        if let previous = client { try await previous.logout() }
+        if let previous = client {
+            client = nil
+            clientUsername = nil
+            do {
+                try await previous.logout()
+            } catch {
+                await previous.shutdown()
+                throw error
+            }
+            await previous.shutdown()
+        }
+        let next = try makeUserClient(username: username)
         client = next
-        clientUsername = username?.lowercased()
-        observeMessages(next)
+        clientUsername = username.lowercased()
         onClientReplaced?(next)
+        return next
     }
 
     func reuseOrReplaceClient(username: String) async throws -> ObscuraClient {
@@ -99,17 +156,15 @@ final class ObscuraSession {
         await restoreTask?.value
         restoreTask = nil
         let storageName = username.lowercased()
-        if let existing = client, clientUsername == storageName, existing.authState == .loggedOut {
+        if let existing = client, clientUsername == storageName, existing.authState() == .loggedOut {
             return existing
         }
-        let next = try makeUserClient(username: username)
-        try await replaceClient(next, username: storageName)
-        return next
+        return try await replaceClient(username: username)
     }
 
     func readyClient() async throws -> ObscuraClient {
         await waitForRestore()
-        guard let client else { throw ObscuraError.notAuthenticated }
+        guard let client else { throw ObscuraError.NotAuthenticated }
         return client
     }
 
@@ -117,21 +172,39 @@ final class ObscuraSession {
         await restoreTask?.value
     }
 
-    func discardClient() {
+    func discardClient() async {
+        restoreTask?.cancel()
+        await restoreTask?.value
+        restoreTask = nil
+        let previous = client
         client = nil
         clientUsername = nil
-        observeMessages(nil)
+        if let previous {
+            await previous.shutdown()
+        }
         onClientReplaced?(nil)
     }
 
-    // A React Native reload must not cancel the client's single-consumer stream.
-    private func observeMessages(_ client: ObscuraClient?) {
-        messageTask?.cancel()
-        messageTask = client.map { client in
-            Task { [weak self] in
-                for await model in client.messageReceived { self?.onMessageReceived?(model) }
-            }
-        }
+    // MARK: - ClientEventListener
+
+    nonisolated func onConnectionStateChanged(state: ConnectionState) {
+        Task { @MainActor in self.onConnectionChanged?(state) }
+    }
+
+    nonisolated func onAuthStateChanged(state: AuthState) {
+        Task { @MainActor in self.onAuthChanged?(state) }
+    }
+
+    nonisolated func onFriendsChanged() {
+        Task { @MainActor in self.onFriendsListChanged?() }
+    }
+
+    nonisolated func onMessageReceived(model: EntryModel) {
+        Task { @MainActor in self.onMessageReceivedCallback?(model) }
+    }
+
+    nonisolated func onPeerTypingChanged(peerUserId: String, isTyping: Bool) {
+        Task { @MainActor in self.onPeerTypingChangedCallback?(peerUserId, isTyping) }
     }
 
     private func observeAppLifecycle() {
@@ -142,7 +215,7 @@ final class ObscuraSession {
                 self.appInForeground = true
                 self.onAppStateChanged?(true)
                 await self.restoreTask?.value
-                guard self.appInForeground, let client = self.client, client.authState == .authenticated else { return }
+                guard self.appInForeground, let client = self.client, client.authState() == .authenticated else { return }
                 do { try await client.connect() }
                 catch { self.logger.log("Foreground reconnect failed: \(error)") }
             }
@@ -152,11 +225,11 @@ final class ObscuraSession {
                 guard let self else { return }
                 self.appInForeground = false
                 self.onAppStateChanged?(false)
-                await self.client?.disconnect()
+                self.client?.disconnect()
                 if let pendingRestore = self.restoreTask {
                     await pendingRestore.value
                     if !self.appInForeground {
-                        await self.client?.disconnect()
+                        self.client?.disconnect()
                     }
                 }
             }

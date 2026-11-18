@@ -2,23 +2,12 @@ package dev.barrelmaker.obscura
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.database.sqlite.SQLiteDatabaseCorruptException
 import android.util.Log
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
-import app.cash.sqldelight.db.QueryResult
-import app.cash.sqldelight.driver.android.AndroidSqliteDriver
-import dev.barrelmaker.obscura.kit.AuthState
-import dev.barrelmaker.obscura.kit.ConnectionState
-import dev.barrelmaker.obscura.kit.EntryModel
-import dev.barrelmaker.obscura.kit.ObscuraClient
-import dev.barrelmaker.obscura.kit.ObscuraConfig
-import dev.barrelmaker.obscura.kit.ObscuraError
-import dev.barrelmaker.obscura.kit.ObscuraLogger
-import dev.barrelmaker.obscura.kit.db.ObscuraDatabase
-import dev.barrelmaker.obscura.kit.stores.FriendStatus
+import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -26,12 +15,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
-import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
+import kotlinx.coroutines.runBlocking
+import uniffi.obscura_core.AuthState
+import uniffi.obscura_core.ClientEventListener
+import uniffi.obscura_core.ConnectionState
+import uniffi.obscura_core.EntryModel
+import uniffi.obscura_core.FriendStatus
+import uniffi.obscura_core.ObscuraClient
+import uniffi.obscura_core.ObscuraClientConfig
+import uniffi.obscura_core.ObscuraException
+import uniffi.obscura_core.ObscuraLogger
 
-/** Owns the live client, OS lifecycle and notifications. The kit owns session persistence. */
-object ObscuraSession {
+/** Owns the live client, OS lifecycle and notifications. The core owns session persistence. */
+object ObscuraSession : ObscuraLogger, ClientEventListener {
     private const val TAG = "ObscuraSession"
     private const val API_URL = BuildConfig.OBSCURA_API_URL
     /** This device's name on the account, shown in device lists and on the primary when linking. */
@@ -42,6 +39,7 @@ object ObscuraSession {
         fun onAuthStateChanged(state: AuthState)
         fun onFriendsChanged()
         fun onMessageReceived(model: EntryModel)
+        fun onPeerTypingChanged(peerUserId: String, isTyping: Boolean)
         fun onPushToken(token: String)
         fun onAppStateChanged(state: AppState)
     }
@@ -54,27 +52,68 @@ object ObscuraSession {
     }
     private val sessionStorage by lazy { SharedPreferencesSessionStorage(prefs) }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val collectorJobs = mutableListOf<Job>()
     private var restoreJob: Job? = null
 
     @Volatile var client: ObscuraClient? = null
         private set
     @Volatile private var clientUsername: String? = null
+    @Volatile private var previousPending: Set<String>? = null
     @Volatile var appInForeground =
         ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
         private set
     @Volatile private var sink: EventSink? = null
     private val pushWakeCount = java.util.concurrent.atomic.AtomicInteger(0)
 
-    val logger: ObscuraLogger = object : ObscuraLogger {
-        override fun log(message: String) { Log.d(TAG, message) }
-        override fun decryptFailed(sourceUserId: String, reason: String) { Log.w(TAG, "decrypt failed from $sourceUserId: $reason") }
-        override fun ackFailed(envelopeId: String, reason: String) { Log.w(TAG, "ack failed $envelopeId: $reason") }
-        override fun tokenRefreshFailed(attempt: Int, reason: String) { Log.e(TAG, "token refresh failed ($attempt): $reason") }
-        override fun preKeySyncFailed(reason: String) { Log.w(TAG, "prekey sync failed: $reason") }
-        override fun identityChanged(userId: String) { Log.w(TAG, "identity changed: $userId") }
-        override fun sessionEstablishFailed(userId: String, reason: String) { Log.w(TAG, "session establish failed $userId: $reason") }
-        override fun databaseError(store: String, operation: String, reason: String) { Log.e(TAG, "db error $store.$operation: $reason") }
+    val logger: ObscuraLogger = this
+
+    override fun log(message: String) { Log.d(TAG, message) }
+    override fun decryptFailed(sourceUserId: String, reason: String) { Log.w(TAG, "decrypt failed from $sourceUserId: $reason") }
+    override fun ackFailed(envelopeId: String, reason: String) { Log.w(TAG, "ack failed $envelopeId: $reason") }
+    override fun tokenRefreshFailed(attempt: Int, reason: String) { Log.e(TAG, "token refresh failed ($attempt): $reason") }
+    override fun preKeySyncFailed(reason: String) { Log.w(TAG, "prekey sync failed: $reason") }
+    override fun identityChanged(userId: String) { Log.w(TAG, "identity changed: $userId") }
+    override fun sessionEstablishFailed(userId: String, reason: String) { Log.w(TAG, "session establish failed $userId: $reason") }
+    override fun databaseError(store: String, operation: String, reason: String) { Log.e(TAG, "db error $store.$operation: $reason") }
+
+    override fun onConnectionStateChanged(state: ConnectionState) {
+        sink?.onConnectionChanged(state)
+    }
+
+    override fun onAuthStateChanged(state: AuthState) {
+        sink?.onAuthStateChanged(state)
+    }
+
+    override fun onFriendsChanged() {
+        sink?.onFriendsChanged()
+        val c = client ?: return
+        scope.launch {
+            try {
+                val pending = c.getFriends()
+                    .filter { it.status == FriendStatus.PENDING_RECEIVED }
+                    .map { it.userId }
+                    .toSet()
+                if (client !== c) return@launch
+                if (!appInForeground && previousPending?.let { (pending - it).isNotEmpty() } == true) {
+                    NotificationHelper.postGeneric(appContext, "New friend request")
+                }
+                previousPending = pending
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                databaseError("friends", "notification", e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    override fun onMessageReceived(model: EntryModel) {
+        sink?.onMessageReceived(model)
+        if (!appInForeground) {
+            notificationText(model)?.let { NotificationHelper.postGeneric(appContext, it) }
+        }
+    }
+
+    override fun onPeerTypingChanged(peerUserId: String, isTyping: Boolean) {
+        sink?.onPeerTypingChanged(peerUserId, isTyping)
     }
 
     fun init(app: Context) {
@@ -87,7 +126,7 @@ object ObscuraSession {
                     val c = client ?: return
                     scope.launch {
                         restoreJob?.join()
-                        if (!appInForeground || client !== c || c.authState.value != AuthState.AUTHENTICATED) return@launch
+                        if (!appInForeground || client !== c || c.authState() != AuthState.AUTHENTICATED) return@launch
                         try { c.connect() }
                         catch (e: CancellationException) { throw e }
                         catch (e: Exception) { Log.e(TAG, "Foreground reconnect failed", e) }
@@ -118,8 +157,8 @@ object ObscuraSession {
     fun bindEventSink(s: EventSink) {
         sink = s
         s.onAppStateChanged(if (appInForeground) AppState.ACTIVE else AppState.BACKGROUND)
-        s.onAuthStateChanged(client?.authState?.value ?: AuthState.LOGGED_OUT)
-        s.onConnectionChanged(client?.connectionState?.value ?: ConnectionState.DISCONNECTED)
+        s.onAuthStateChanged(client?.authState() ?: AuthState.LOGGED_OUT)
+        s.onConnectionChanged(client?.connectionState() ?: ConnectionState.DISCONNECTED)
         s.onFriendsChanged()
     }
 
@@ -138,7 +177,7 @@ object ObscuraSession {
         restoreJob?.cancelAndJoin()
         restoreJob = null
         val existing = client
-        if (existing != null && clientUsername == username.lowercase(Locale.ROOT) && existing.authState.value == AuthState.LOGGED_OUT) {
+        if (existing != null && clientUsername == username.lowercase(Locale.ROOT) && existing.authState() == AuthState.LOGGED_OUT) {
             return existing
         }
         return createClient(username)
@@ -146,62 +185,75 @@ object ObscuraSession {
 
     private fun buildClient(username: String): ObscuraClient {
         if (!Regex("^[a-zA-Z0-9_]{3,50}$").matches(username)) {
-            throw ObscuraError.InvalidArgument("Invalid username")
+            throw ObscuraException.InvalidArgument("Invalid username")
         }
         destroyClient(notifySink = false)
         // The server treats usernames case-insensitively; storage must identify the same account.
         val storageName = username.lowercase(Locale.ROOT)
         val dbName = "obscura_$storageName.db"
-        System.loadLibrary("sqlcipher")
-        val driver = try {
-            openDatabase(storageName, dbName)
-        } catch (e: Exception) {
-            if (!isUndecryptable(e)) throw e
+        val c = try {
+            openClient(storageName, dbName)
+        } catch (e: ObscuraException.DatabaseUndecryptable) {
             Log.e(TAG, "Database cannot be decrypted; discarding it", e)
             LocalKeystore.discardDatabase(appContext, storageName, dbName)
             sessionStorage.clear()
-            openDatabase(storageName, dbName)
+            openClient(storageName, dbName)
+        } catch (e: LocalKeystore.SecretUnavailableException) {
+            Log.e(TAG, "Database key unavailable; discarding it", e)
+            LocalKeystore.discardDatabase(appContext, storageName, dbName)
+            sessionStorage.clear()
+            openClient(storageName, dbName)
         }
-        return ObscuraClient(
-            ObscuraConfig(apiUrl = API_URL, deviceName = deviceName),
-            driver = driver,
-            sessionStorage = sessionStorage,
-            attachmentCacheDir = java.io.File(appContext.cacheDir, "attachments"),
-        ).also {
-            it.logger = logger
-            client = it
-            clientUsername = storageName
-            startCollectors(it)
-        }
+        client = c
+        clientUsername = storageName
+        seedPreviousPending(c)
+        return c
     }
 
-    private fun openDatabase(username: String, dbName: String): AndroidSqliteDriver {
-        val driver = AndroidSqliteDriver(
-            ObscuraDatabase.Schema, appContext, dbName,
-            factory = SupportOpenHelperFactory(LocalKeystore.databaseKey(appContext, username)),
+    private fun openClient(storageName: String, dbName: String): ObscuraClient {
+        val dbFile = appContext.getDatabasePath(dbName)
+        dbFile.parentFile?.mkdirs()
+        return ObscuraClient.open(
+            ObscuraClientConfig(
+                apiUrl = API_URL,
+                databasePath = dbFile.absolutePath,
+                databaseKey = LocalKeystore.databaseKey(appContext, storageName),
+                deviceName = deviceName,
+                attachmentCacheDir = File(appContext.cacheDir, "attachments").absolutePath,
+            ),
+            sessionStorage,
+            OkHttpTransport(API_URL),
+            this,
+            this,
         )
-        try {
-            driver.executeQuery(null, "SELECT count(*) FROM sqlite_master", { it.next(); QueryResult.Unit }, 0)
-        } catch (e: Exception) {
-            driver.close()
-            throw e
-        }
-        return driver
     }
 
-    private fun isUndecryptable(e: Throwable): Boolean =
-        generateSequence(e) { it.cause }.any {
-            it is LocalKeystore.SecretUnavailableException ||
-                it is SQLiteDatabaseCorruptException ||
-                it.message?.contains("file is not a database") == true
+    private fun seedPreviousPending(c: ObscuraClient) {
+        scope.launch {
+            try {
+                val pending = c.getFriends()
+                    .filter { it.status == FriendStatus.PENDING_RECEIVED }
+                    .map { it.userId }
+                    .toSet()
+                if (client === c && previousPending == null) {
+                    previousPending = pending
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                databaseError("friends", "notification", e.message ?: e.javaClass.simpleName)
+            }
         }
+    }
 
     fun destroyClient(notifySink: Boolean = true) {
-        collectorJobs.forEach { it.cancel() }
-        collectorJobs.clear()
-        client?.disconnect()
+        val old = client
         client = null
         clientUsername = null
+        previousPending = null
+        if (old != null) {
+            runBlocking { old.shutdown() }
+        }
         if (notifySink) {
             sink?.onAuthStateChanged(AuthState.LOGGED_OUT)
             sink?.onConnectionChanged(ConnectionState.DISCONNECTED)
@@ -228,37 +280,6 @@ object ObscuraSession {
         return c
     }
 
-    private fun startCollectors(c: ObscuraClient) {
-        collectorJobs += scope.launch { c.connectionState.collect { sink?.onConnectionChanged(it) } }
-        collectorJobs += scope.launch { c.authState.collect { sink?.onAuthStateChanged(it) } }
-        collectorJobs += scope.launch {
-            var previousPending: Set<String>? = null
-            c.friendsChanged.collect {
-                sink?.onFriendsChanged()
-                try {
-                    val pending = c.getFriends().filter { it.status == FriendStatus.PENDING_RECEIVED }
-                        .map { it.userId }.toSet()
-                    if (!appInForeground && previousPending?.let { (pending - it).isNotEmpty() } == true) {
-                        NotificationHelper.postGeneric(appContext, "New friend request")
-                    }
-                    previousPending = pending
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    logger.databaseError("friends", "notification", e.message ?: e.javaClass.simpleName)
-                }
-            }
-        }
-        collectorJobs += scope.launch {
-            for (model in c.messageReceived) {
-                sink?.onMessageReceived(model)
-                if (!appInForeground) {
-                    notificationText(model)?.let { NotificationHelper.postGeneric(appContext, it) }
-                }
-            }
-        }
-    }
-
     private fun notificationText(model: EntryModel): String? = when (model) {
         EntryModel.PIX -> "New pix"
         EntryModel.DIRECT_MESSAGE -> "New message"
@@ -270,7 +291,7 @@ object ObscuraSession {
         try {
             val c = tryRestore() ?: return
             restoreJob?.join()
-            if (c.authState.value == AuthState.AUTHENTICATED) {
+            if (c.authState() == AuthState.AUTHENTICATED) {
                 c.processPendingMessages(timeoutMs)
             }
         } catch (e: CancellationException) {

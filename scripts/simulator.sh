@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Prints the id of an available iPhone simulator on the newest iOS runtime, compared by version
-# number. The kit's tests run there: libsignal's prebuilt core has iOS slices only.
+# number.
 #
 set -euo pipefail
 

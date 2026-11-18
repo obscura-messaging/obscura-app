@@ -1,8 +1,8 @@
 import Foundation
 import Security
-import ObscuraKit
+import ObscuraCore
 
-final class KeychainSession: SessionStorage {
+final class KeychainSession: SessionStorage, @unchecked Sendable {
     private func query(accessGroup: String?) -> [String: Any] {
         let bundleId = Bundle.main.bundleIdentifier ?? "dev.barrelmaker.obscura.dev"
         var query: [String: Any] = [
@@ -14,10 +14,16 @@ final class KeychainSession: SessionStorage {
         return query
     }
 
-    func save(_ session: [String: String]) throws {
+    func save(data: [String: String]) throws {
+        let encoded: Data
+        do {
+            encoded = try JSONEncoder().encode(data)
+        } catch {
+            throw ObscuraError.StorageFailed(reason: "Failed to encode session: \(error.localizedDescription)")
+        }
         let identity = query(accessGroup: SharedContainer.keychainAccessGroup)
         let attributes: [String: Any] = [
-            kSecValueData as String: try JSONEncoder().encode(session),
+            kSecValueData as String: encoded,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
         var status = SecItemUpdate(identity as CFDictionary, attributes as CFDictionary)
@@ -40,9 +46,13 @@ final class KeychainSession: SessionStorage {
         if status == errSecItemNotFound { return nil }
         try requireSuccess(status, operation: "load")
         guard let data = result as? Data else {
-            throw ObscuraError.storageFailed("Session keychain item is not data")
+            throw ObscuraError.StorageFailed(reason: "Session keychain item is not data")
         }
-        return try JSONDecoder().decode([String: String].self, from: data)
+        do {
+            return try JSONDecoder().decode([String: String].self, from: data)
+        } catch {
+            throw ObscuraError.StorageFailed(reason: "Failed to decode session: \(error.localizedDescription)")
+        }
     }
 
     func clear() throws {
@@ -55,7 +65,7 @@ final class KeychainSession: SessionStorage {
 
     private func requireSuccess(_ status: OSStatus, operation: String) throws {
         guard status == errSecSuccess else {
-            throw ObscuraError.storageFailed("Keychain session \(operation) failed (\(status))")
+            throw ObscuraError.StorageFailed(reason: "Keychain session \(operation) failed (\(status))")
         }
     }
 }

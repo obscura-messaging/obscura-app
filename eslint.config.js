@@ -26,14 +26,7 @@ module.exports = [
   {
     // The native submodule has its own language-specific gates. Its generated build output and
     // vendored dependencies must not become inputs to the app's JavaScript lint.
-    ignores: [
-      'kotlin/**',
-      'swift/**',
-      'ios/build/**',
-      'android/**/build/**',
-      'coverage/**',
-      '.claude/**',
-    ],
+    ignores: ['core/**', 'ios/build/**', 'android/**/build/**', 'coverage/**', '.claude/**'],
   },
   // Some plugins it bundles (eslint-plugin-ft-flow) still call context methods ESLint 9 removed.
   ...fixupConfigRules(reactNative),

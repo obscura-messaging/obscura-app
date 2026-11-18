@@ -1,16 +1,15 @@
 # Kit contract
 
-The Kotlin and Swift kits implement this contract. It is the one Markdown file
-that states **what**, not only why: with two implementations, neither kit's code
-can be the authority for the other, so the behaviour both must share lives
-here. Signatures belong to each kit's code; this file covers only behaviour a
-peer, the server or the other kit can observe.
+`obscura-core` ([`core/`](../core/)) implements this contract and exports it to
+the Android and iOS hosts via UniFFI ([`RUST_CORE.md`](RUST_CORE.md)). This
+document states the client protocol and storage behaviour a peer, the server, or
+a host bridge can observe.
 
 | Layer | Defined by |
 |---|---|
 | Transport | [`obscura.proto`](https://github.com/obscura-messaging/obscura-proto/blob/main/obscura/v1/obscura.proto), [`TRANSPORT.md`](https://github.com/obscura-messaging/obscura-proto/blob/main/TRANSPORT.md) |
 | End-to-end client content | [`client.proto`](../client-protocol/obscura/client/v1/client.proto) |
-| Kit behaviour | this document |
+| Core behaviour | this document |
 | Application models | [`DOMAIN_CONTRACT.md`](DOMAIN_CONTRACT.md) |
 
 ## Kit boundary
@@ -304,9 +303,10 @@ There is no Swift push-drain API without an implemented iOS push host.
 
 ## Errors
 
-Both kits use the same deliberate error codes: the `ObscuraErrorCode` union in
+`obscura-core` uses the deliberate error codes in the `ObscuraErrorCode` union in
 [`ObscuraModule.ts`](../src/native/ObscuraModule.ts), which `exports.test.ts`
-checks against both kits. HTTP errors retain status/body; other classified
-errors retain useful details. Underlying database, filesystem and cryptographic failures
-propagate rather than becoming success or silent defaults. Bridges preserve
-kit codes and use per-method codes for unclassified platform failures.
+checks against [`core/src/error.rs`](../core/src/error.rs). HTTP errors retain
+status/body; other classified errors retain useful details. Underlying database,
+filesystem and cryptographic failures propagate rather than becoming success or
+silent defaults. Bridges preserve core codes and use per-method codes for
+unclassified platform failures.

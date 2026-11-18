@@ -150,20 +150,12 @@ describe('dev and prod environments', () => {
 });
 
 describe('Gradle builds', () => {
-  it.each(['android', 'kotlin'])('%s runs its build on the JDK in .java-version', build => {
+  it('android runs its build on the JDK in .java-version', () => {
     const daemon = match(
-      source(`${build}/gradle/gradle-daemon-jvm.properties`),
+      source('android/gradle/gradle-daemon-jvm.properties'),
       /toolchainVersion=(\S+)/,
       'toolchainVersion',
     );
     expect(daemon).toBe(source('.java-version').trim());
-  });
-
-  it('run the app and the Kotlin kit on the same Gradle version', () => {
-    const distribution = (path: string) =>
-      match(source(path), /distributionUrl=(\S+)/, `${path} distributionUrl`);
-    expect(distribution('kotlin/gradle/wrapper/gradle-wrapper.properties')).toBe(
-      distribution('android/gradle/wrapper/gradle-wrapper.properties'),
-    );
   });
 });

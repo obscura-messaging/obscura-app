@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import ObscuraCore
 
 /// The per-user SQLCipher key, kept in the Keychain. A Notification Service Extension can read it
 /// only through a shared `accessGroup`.
@@ -18,19 +19,23 @@ enum DatabaseSecret {
         let found = SecItemCopyMatching(lookup as CFDictionary, &result)
         if found == errSecSuccess, let key = result as? Data, key.count == 32 { return key }
         guard found == errSecSuccess || found == errSecItemNotFound else {
-            throw ObscuraError.storageFailed("Keychain read OSStatus \(found)")
+            throw ObscuraError.StorageFailed(reason: "Keychain read OSStatus \(found)")
         }
 
         var key = Data(count: 32)
         let random = key.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
-        guard random == errSecSuccess else { throw ObscuraError.storageFailed("secure random OSStatus \(random)") }
+        guard random == errSecSuccess else {
+            throw ObscuraError.StorageFailed(reason: "secure random OSStatus \(random)")
+        }
 
         SecItemDelete(query as CFDictionary)
         var add = query
         add[kSecValueData as String] = key
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let added = SecItemAdd(add as CFDictionary, nil)
-        guard added == errSecSuccess else { throw ObscuraError.storageFailed("Keychain write OSStatus \(added)") }
+        guard added == errSecSuccess else {
+            throw ObscuraError.StorageFailed(reason: "Keychain write OSStatus \(added)")
+        }
         return key
     }
 }

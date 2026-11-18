@@ -1,6 +1,6 @@
 # Obscura
 
-End-to-end encrypted messaging over ObscuraKit ([`kotlin/`](kotlin/), [`swift/`](swift/)).
+End-to-end encrypted messaging over `obscura-core` ([`core/`](core/)).
 Android and iOS both ship. iOS does not have push yet
 ([`docs/IOS_PARITY.md`](docs/IOS_PARITY.md)).
 
@@ -10,11 +10,12 @@ A **pix** is a direct, disappearing photo or video message, not the app's name.
 
 Code and tests are the authority on behaviour; Markdown documents explain only
 **why** boundaries and constraints exist. The exception is
-[`docs/KIT_API.md`](docs/KIT_API.md), the behaviour contract both kits implement.
+[`docs/KIT_API.md`](docs/KIT_API.md), the behaviour contract the native core implements.
 
-- **Bridge & storage (`src/native/`, `android/`, `ios/`):**
-  Native hosts manage OS lifecycle, permissions, files, push, and React Native
-  marshalling, exposing typed domain operations over ObscuraKit.
+- **Bridge & storage (`src/native/`, `android/`, `ios/`, `core/`):**
+  Native hosts manage OS lifecycle, permissions, files, push, transport I/O, and
+  React Native marshalling, exposing typed domain operations over `obscura-core`
+  ([`docs/RUST_CORE.md`](docs/RUST_CORE.md)).
 - **Domain (`src/domain/`):** Pure, synchronous logic and narrowed view-model
   projections. Independent of React, React Native, native bridges, and stateful
   orchestration. Domain types make invalid UI states unrepresentable before

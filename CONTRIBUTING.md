@@ -7,18 +7,18 @@ date with `main`.
 
 | For | Needs |
 | --- | --- |
-| All work | [`just`](https://github.com/casey/just), Git, Node 22.13+ ([`.nvmrc`](.nvmrc)) |
-| Android | JDK 21, Android SDK 37, NDK `27.1.12297006` |
+| All work | [`just`](https://github.com/casey/just), Git, Node 22.13+ ([`.nvmrc`](.nvmrc)), Rust (`rustup`), `protoc` |
+| Android | JDK 21, Android SDK 37, NDK `27.1.12297006`, `cargo-ndk` |
 | iOS | macOS, Xcode ([`.xcode-version`](.xcode-version)), `protoc`, CocoaPods 1.17.0 |
 
 On macOS: `brew install just protobuf`, then
 `sudo gem install cocoapods -v 1.17.0 -N`.
 
 Gradle starts on any JDK 17 or newer, then runs the build on JDK 21, which it
-finds among your installed JDKs (`gradle/gradle-daemon-jvm.properties` in
-`android/` and `kotlin/`). The Android SDK comes from `ANDROID_HOME` or from
-`sdk.dir` in `android/local.properties`, which Android Studio writes;
-`just doctor-android` says which is missing.
+finds among your installed JDKs (`android/gradle/gradle-daemon-jvm.properties`).
+The Android SDK comes from `ANDROID_HOME` or from `sdk.dir` in
+`android/local.properties`, which Android Studio writes; `just doctor-android`
+says which is missing.
 
 ## Setup and builds
 
@@ -37,17 +37,14 @@ or `just ios-build arm64`.
   push, download the Firebase config (containing `dev.barrelmaker.obscura.dev`
   and `dev.barrelmaker.obscura`) into that path. It is gitignored. Never commit
   it, or any Firebase Admin credential.
-- **iOS.** The first build resolves the Swift package, including libsignal and
-  its prebuilt Rust core (an XCFramework from Signal, pinned with its checksum
-  in `swift/Package.swift`), then builds the pods. No Rust toolchain is needed.
-  The XCFramework has iOS slices only, so the kit's tests run on an iOS
-  simulator. Simulator builds do not exercise APNs, background delivery or
-  release signing.
-- **Swift protobuf bindings** are generated, not committed: `just swift-proto`
-  builds `protoc-gen-swift` at the SwiftProtobuf version both `Package.resolved`
-  files pin and writes `swift/Sources/ObscuraKit/Proto`. Every `swift-*` and
-  `ios-*` recipe runs it first, so a fresh clone opened straight in Xcode
-  does not compile until one of them has run.
+- **Rust core (`core/`).** Both Android and iOS build `obscura-core` from
+  `core/` ([`docs/RUST_CORE.md`](docs/RUST_CORE.md)). On Android, the
+  `buildObscuraRustCore` Gradle task runs `core/scripts/build-android.sh` to
+  build the JNI `.so` libraries and generate UniFFI Kotlin bindings. On iOS,
+  `just ios-prepare` runs `just core-xcframework` (`core/scripts/build-xcframework.sh`)
+  to build `ObscuraCoreFFI.xcframework` and generate the UniFFI Swift bindings
+  into `core/swift/ObscuraCore` before `pod install`. Simulator builds do not
+  exercise APNs, background delivery or release signing.
 - **Environments (`dev` vs `prod`).** Builds default to `dev`
   (`dev.barrelmaker.obscura.dev`, **Obscura Dev**, pointing at
   `https://devscura.barrelmaker.dev`); passing `env=prod` selects production
@@ -84,19 +81,20 @@ xcrun devicectl device install app --device <DEVICE_ID> \
 
 `just check` runs Jest, both typechecks, ESLint, and a Prettier check (`just format` fixes it); `just release-script-test` tests
 `scripts/verify-release-build.sh`;
-`just kotlin-check` runs protocol conformance and the Kotlin kit unit/coverage suite;
-`just swift-unit` runs the Swift kit unit and coverage suite.
+`just core-check` runs `cargo fmt --check`, `cargo clippy`, and the Rust unit and conformance test suite;
+`just core-jvm-test` tests the generated UniFFI Kotlin bindings on the JVM;
+`just core-swift-test` builds the iOS XCFramework and tests the generated UniFFI Swift bindings on an iOS simulator.
 
 | CI job | Runs | On |
 | --- | --- | --- |
 | `JavaScript` | `just check`, `just release-script-test`, `just bundle` | PRs, `main` |
-| `Kotlin` | `just protocol-lint`, `just kotlin-check`, `just server-up`, `just kotlin-integration` | Kotlin PRs, `main` |
-| `Swift` | `just swift-unit`, `just server-up`, `just swift-integration` | Swift PRs, `main` |
+| `Core` | `just protocol-lint`, `just protocol-vectors`, `just core-check`, `just core-jvm-test` | Core PRs, `main` |
+| `Core iOS` | `just core-swift-test` | Core iOS PRs, `main` |
 | `Android` | `just android-build arm64-v8a false` | Android PRs |
 | `iOS` | `just ios-build arm64` | iOS PRs |
 
 A PR runs a native job only when the job's inputs change: its platform
-directory, `server-proto/`, `client-protocol/`, the `justfile`, its workflow, or (for app
+directory, `core/`, `server-proto/`, `client-protocol/`, the `justfile`, its workflow, or (for app
 builds) the JavaScript toolchain files. A change under `src/` alone runs only
 `JavaScript`, which typechecks the code the native builds would bundle. Pushes
 to `main` run every job, because a release needs a fully green `main` commit.
@@ -105,17 +103,14 @@ so branch protection needs only that one check. Every job has a timeout set
 well above its cold-cache duration, so a hung macOS job cannot run for the
 6-hour default.
 
-## Integration tests
+## Local server
 
-The kit integration suites need a running `obscura-server`.
-`just server-up` builds the server at its latest commit (or `just server-up
+`just server-up` builds `obscura-server` at its latest commit (or `just server-up
 <ref>`), starts Postgres, Valkey and MinIO, and serves the API on
-`http://localhost:3000`. CI uses the same script. `just server-down` stops
-everything and deletes the data.
+`http://localhost:3000`. `just server-down` stops everything and deletes the data.
 
 ```bash
 just server-up
-just kotlin-integration      # or: just swift-integration
 just server-down
 ```
 
