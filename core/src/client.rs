@@ -177,7 +177,7 @@ impl ObscuraClient {
         if let Err(e) = self.connect().await {
             self.log(format!("SESSION restored offline: {e}"));
         }
-        true
+        self.auth_state() == AuthState::Authenticated
     }
 
     pub async fn register(&self, username: String, password: String) -> Result<(), ObscuraError> {
@@ -922,6 +922,48 @@ impl ObscuraClient {
 
     pub fn stop_observing_peer_typing(&self, peer_user_id: String) {
         self.typing.stop_observing_peer(&peer_user_id);
+    }
+}
+
+impl Drop for ObscuraClient {
+    fn drop(&mut self) {
+        self.shutdown_token.cancel();
+        if let Some(t) = self
+            .link_cancel
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        {
+            t.cancel();
+        }
+        self.gateway.disconnect();
+        self.auth.stop_background_tasks();
+        self.typing.clear();
+        if let Some(j) = self
+            .receive_job
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        {
+            j.abort();
+        }
+        if let Some(j) = self
+            .prekey_sync_job
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        {
+            j.abort();
+        }
+        if let Some(j) = self
+            .entry_dispatcher_job
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        {
+            j.abort();
+        }
+        self.db.signal_shutdown();
     }
 }
 

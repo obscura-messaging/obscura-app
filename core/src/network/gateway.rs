@@ -173,7 +173,7 @@ impl GatewayInner {
             if let Some(new_state) = state_change {
                 (self.on_state_changed)(new_state);
             }
-            return Err(connection_error(e));
+            return Err(e);
         }
 
         await_attempt(&attempt).await
@@ -250,7 +250,7 @@ impl GatewayInner {
         .await;
 
         if let Err(ref e) = res {
-            attempt.complete(Err(connection_error(e.clone())));
+            attempt.complete(Err(e.clone()));
         }
         res
     }
@@ -442,12 +442,5 @@ async fn await_attempt(attempt: &PendingAttempt) -> Result<(), ObscuraError> {
         if rx.changed().await.is_err() {
             return Err(ObscuraError::connection("Disconnected"));
         }
-    }
-}
-
-fn connection_error(err: ObscuraError) -> ObscuraError {
-    match err {
-        ObscuraError::ConnectionFailed { .. } | ObscuraError::ProtocolViolation { .. } => err,
-        other => ObscuraError::connection(other.to_string()),
     }
 }

@@ -25,7 +25,8 @@ core_dir=$(cd "$(dirname "$0")/.." && pwd)
 export ANDROID_HOME ANDROID_NDK_HOME
 # The app's minSdkVersion.
 api_level=${OBSCURA_ANDROID_API:-24}
-strip_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+strip_bin=$(compgen -G "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/bin/llvm-strip" | head -n 1)
+[ -n "$strip_bin" ] || { echo "llvm-strip not found under $ANDROID_NDK_HOME" >&2; exit 1; }
 
 declare -A rust_target=(
     [arm64-v8a]=aarch64-linux-android

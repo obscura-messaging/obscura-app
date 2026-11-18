@@ -590,9 +590,9 @@ impl AuthManager {
                     st.refresh_failures += 1;
                     st.refresh_failures as i32
                 };
-                if matches!(
+                if !matches!(
                     e,
-                    ObscuraError::ProtocolViolation { .. } | ObscuraError::InvalidArgument { .. }
+                    ObscuraError::ConnectionFailed { .. } | ObscuraError::Http { .. }
                 ) {
                     return Err(e);
                 }

@@ -295,8 +295,12 @@ impl DbHandle {
         self.truncate_wal().await
     }
 
-    pub async fn shutdown(&self) {
+    pub fn signal_shutdown(&self) {
         let _ = self.tx.send(ActorMsg::Shutdown);
+    }
+
+    pub async fn shutdown(&self) {
+        self.signal_shutdown();
         let handle = self
             .join_handle
             .lock()
