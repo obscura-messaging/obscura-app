@@ -17,8 +17,8 @@ use obscura_core::store::{
     history_sync,
 };
 use obscura_core::types::{
-    ConversationItem, EntryModel, Friend, FriendStatus, MediaAttachment, MediaType, ProfileItem,
-    StoryItem, expires_at,
+    ConversationItem, EntryModel, Friend, FriendStatus, MediaType, ProfileItem, StoredAttachment,
+    StoryItem,
 };
 
 #[tokio::test]
@@ -409,7 +409,6 @@ async fn content_store_profile_merge_expiry_sweep_and_history_sync() {
                 updated_at: 100,
                 display_name: "Bob B".to_owned(),
                 bio: "b".to_owned(),
-                undelivered: false,
             },
         )?);
         assert!(!content_store::upsert_profile_if_newer(
@@ -420,7 +419,6 @@ async fn content_store_profile_merge_expiry_sweep_and_history_sync() {
                 updated_at: 100,
                 display_name: "Bob A".to_owned(),
                 bio: "a".to_owned(),
-                undelivered: false,
             },
         )?);
         assert!(content_store::upsert_profile_if_newer(
@@ -431,7 +429,6 @@ async fn content_store_profile_merge_expiry_sweep_and_history_sync() {
                 updated_at: 100,
                 display_name: "Bob C".to_owned(),
                 bio: "c".to_owned(),
-                undelivered: false,
             },
         )?);
         assert_eq!(
@@ -448,34 +445,28 @@ async fn content_store_profile_merge_expiry_sweep_and_history_sync() {
             1_000,
             "hello".to_owned(),
             None,
-            false,
         );
-        content_store::insert_conversation(ctx.conn, &dm)?;
-        content_store::mark_conversation_viewed(
-            ctx.conn,
-            "dm1",
-            2_000,
-            expires_at(1_000, Some(2_000)),
-        )?;
+        content_store::insert_conversation(ctx.conn, &dm, None)?;
+        content_store::mark_conversation_viewed(ctx.conn, "dm1", 2_000)?;
 
+        let pix_att = StoredAttachment {
+            id: "att_exp".to_owned(),
+            content_key: vec![1u8; 32],
+            nonce: vec![2u8; 12],
+            media_type: MediaType::Photo,
+        };
         let pix = ConversationItem::pix(
             "pix1".to_owned(),
             peer.to_owned(),
             self_id.to_owned(),
             1_000,
-            MediaAttachment {
-                id: "att_exp".to_owned(),
-                content_key: vec![1u8; 32],
-                nonce: vec![2u8; 12],
-                media_type: MediaType::Photo,
-            },
+            pix_att.as_ref(),
             Some("cap".to_owned()),
             None,
             5,
             Some(2_000),
-            false,
         );
-        content_store::insert_conversation(ctx.conn, &pix)?;
+        content_store::insert_conversation(ctx.conn, &pix, Some(&pix_att))?;
 
         let story = StoryItem::new(
             "st1".to_owned(),
@@ -484,9 +475,8 @@ async fn content_store_profile_merge_expiry_sweep_and_history_sync() {
             "story text".to_owned(),
             None,
             None,
-            false,
         );
-        content_store::insert_story(ctx.conn, &story)?;
+        content_store::insert_story(ctx.conn, &story, None)?;
         Ok(())
     })
     .await

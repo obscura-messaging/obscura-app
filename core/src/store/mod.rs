@@ -79,6 +79,7 @@ impl Drop for OpenPathGuard {
 pub enum PostCommitEffect {
     IdentityChanged(String),
     FriendsChanged,
+    FriendRequestReceived,
     EntryInboxed(EntryModel),
 }
 
@@ -121,7 +122,7 @@ enum ActorMsg {
 pub struct DbHandle {
     tx: mpsc::UnboundedSender<ActorMsg>,
     join_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    dispatcher: Arc<Mutex<Option<EffectDispatcher>>>,
+    dispatcher: Option<EffectDispatcher>,
 }
 
 impl DbHandle {
@@ -169,7 +170,7 @@ impl DbHandle {
             Ok(Ok(())) => Ok(Self {
                 tx,
                 join_handle: Arc::new(Mutex::new(Some(join_handle))),
-                dispatcher: Arc::new(Mutex::new(dispatcher)),
+                dispatcher,
             }),
             Ok(Err(e)) => {
                 let _ = join_handle.join();
@@ -182,10 +183,6 @@ impl DbHandle {
                 )))
             }
         }
-    }
-
-    pub fn set_dispatcher(&self, dispatcher: EffectDispatcher) {
-        *self.dispatcher.lock().unwrap_or_else(|p| p.into_inner()) = Some(dispatcher);
     }
 
     pub async fn read<T, F>(&self, f: F) -> Result<T, ObscuraError>
@@ -243,12 +240,7 @@ impl DbHandle {
         if effects.is_empty() {
             return;
         }
-        let disp = self
-            .dispatcher
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone();
-        if let Some(dispatcher) = disp {
+        if let Some(ref dispatcher) = self.dispatcher {
             for effect in effects {
                 dispatcher(effect);
             }
@@ -534,6 +526,8 @@ CREATE TABLE IF NOT EXISTS conversation_entries (
     undelivered INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE INDEX IF NOT EXISTS conversation_entries_expires_at ON conversation_entries(expires_at);
+
 CREATE TABLE IF NOT EXISTS story_entries (
     id TEXT NOT NULL PRIMARY KEY,
     author_user_id TEXT NOT NULL,
@@ -547,6 +541,8 @@ CREATE TABLE IF NOT EXISTS story_entries (
     caption_meta TEXT,
     undelivered INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE INDEX IF NOT EXISTS story_entries_expires_at ON story_entries(expires_at);
 
 CREATE TABLE IF NOT EXISTS profile_entries (
     user_id TEXT NOT NULL PRIMARY KEY,

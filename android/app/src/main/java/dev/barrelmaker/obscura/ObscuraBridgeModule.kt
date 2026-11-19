@@ -6,17 +6,17 @@ import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
+import uniffi.obscura_core.AttachmentRef
 import uniffi.obscura_core.AuthState
 import uniffi.obscura_core.ConnectionState
+import uniffi.obscura_core.ConversationContent
 import uniffi.obscura_core.ConversationItem
-import uniffi.obscura_core.ConversationKind
 import uniffi.obscura_core.DeviceInfo
 import uniffi.obscura_core.EntryModel
 import uniffi.obscura_core.Friend
 import uniffi.obscura_core.FriendStatus
 import uniffi.obscura_core.LinkRequest
 import uniffi.obscura_core.LoginScenario
-import uniffi.obscura_core.MediaAttachment
 import uniffi.obscura_core.MediaType
 import uniffi.obscura_core.ObscuraClient
 import uniffi.obscura_core.ObscuraException
@@ -64,11 +64,6 @@ private fun FriendStatus.toJsString(): String = when (this) {
     FriendStatus.PENDING_SENT -> "pending_sent"
     FriendStatus.PENDING_RECEIVED -> "pending_received"
     FriendStatus.ACCEPTED -> "accepted"
-}
-
-private fun ConversationKind.toJsString(): String = when (this) {
-    ConversationKind.MESSAGE -> "message"
-    ConversationKind.PIX -> "pix"
 }
 
 private fun MediaType.toJsString(): String = when (this) {
@@ -829,7 +824,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    private fun attachmentToMap(att: MediaAttachment): WritableMap =
+    private fun attachmentToMap(att: AttachmentRef): WritableMap =
         Arguments.createMap().apply {
             putString("id", att.id)
             putString("mediaType", att.mediaType.toJsString())
@@ -839,19 +834,22 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         Arguments.createMap().apply {
             putString("id", m.id)
             putString("peerUserId", m.peerUserId)
-            putString("kind", m.kind.toJsString())
             putString("authorUserId", m.authorUserId)
             putDouble("sentAt", m.sentAt.toDouble())
             val viewedAt = m.viewedAt
             if (viewedAt != null) putDouble("viewedAt", viewedAt.toDouble()) else putNull("viewedAt")
-            if (m.kind == ConversationKind.PIX) {
-                val att = m.attachment
-                if (att != null) putMap("attachment", attachmentToMap(att)) else putNull("attachment")
-                putString("caption", m.caption)
-                putString("captionMeta", m.captionMeta)
-                putInt("displayDuration", m.displayDuration)
-            } else {
-                putString("content", m.content)
+            when (val c = m.content) {
+                is ConversationContent.Message -> {
+                    putString("kind", "message")
+                    putString("content", c.text)
+                }
+                is ConversationContent.Pix -> {
+                    putString("kind", "pix")
+                    putMap("attachment", attachmentToMap(c.attachment))
+                    putString("caption", c.caption)
+                    putString("captionMeta", c.captionMeta)
+                    putInt("displayDuration", c.displayDuration)
+                }
             }
         }
 

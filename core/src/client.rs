@@ -10,7 +10,6 @@ use rand::Rng;
 use tokio::sync::{Mutex as AsyncMutex, Notify, mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
 use crate::auth::{AuthManager, Credentials, TokenStatus};
 use crate::crypto::{attachment, link, prekeys};
@@ -30,11 +29,11 @@ use crate::store::content_store::{self, FriendReplyAction, PendingFriendReply};
 use crate::store::device_store::{self, LocalDevice};
 use crate::store::friend_store::{self, FriendList};
 use crate::store::signal_store::SignalStore;
-use crate::store::{DbContext, DbHandle, PostCommitEffect, history_sync};
+use crate::store::{DbContext, DbHandle, EffectDispatcher, PostCommitEffect, history_sync};
 use crate::types::{
     AuthState, CaptureResult, ConnectionState, ConversationItem, DeviceInfo, EntryModel, Friend,
-    FriendStatus, LinkRequest, LoginScenario, MediaAttachment, MediaType, ObscuraClientConfig,
-    ProfileItem, StoryItem, SubmissionStatus, TypingState, clamp_future_timestamp, expires_at,
+    FriendStatus, LinkRequest, LoginScenario, MediaType, ObscuraClientConfig, ProfileItem,
+    StoredAttachment, StoryItem, SubmissionStatus, TypingState, clamp_future_timestamp,
 };
 use crate::wire::codec::{self, PayloadDisposition, payload_disposition};
 use crate::wire::friend_code;
@@ -55,12 +54,71 @@ pub struct AttachmentUpload {
 }
 
 impl AttachmentUpload {
-    pub fn into_media(self, media_type: MediaType) -> MediaAttachment {
-        MediaAttachment {
+    pub fn into_stored(self, media_type: MediaType) -> StoredAttachment {
+        StoredAttachment {
             id: self.id,
             content_key: self.content_key,
             nonce: self.nonce,
             media_type,
+        }
+    }
+}
+
+#[derive(Default)]
+struct LinkCoordinator {
+    state: Mutex<LinkCoordinatorState>,
+    done_notify: Notify,
+}
+
+#[derive(Default)]
+struct LinkCoordinatorState {
+    cancel: Option<CancellationToken>,
+    in_flight: bool,
+}
+
+impl LinkCoordinator {
+    fn begin(&self) -> CancellationToken {
+        let token = CancellationToken::new();
+        let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(prev) = st.cancel.replace(token.clone()) {
+            prev.cancel();
+        }
+        st.in_flight = true;
+        token
+    }
+
+    fn finish(&self) {
+        let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        st.in_flight = false;
+        drop(st);
+        self.done_notify.notify_waiters();
+    }
+
+    fn cancel_now(&self) {
+        if let Some(t) = self
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .cancel
+            .take()
+        {
+            t.cancel();
+        }
+    }
+
+    async fn cancel_and_wait(&self) {
+        self.cancel_now();
+        loop {
+            let notified = self.done_notify.notified();
+            if !self
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .in_flight
+            {
+                break;
+            }
+            notified.await;
         }
     }
 }
@@ -102,9 +160,7 @@ pub struct ObscuraClient {
     last_processed_at_ms: AtomicI64,
     drain_mutex: AsyncMutex<()>,
     session_task_mutex: AsyncMutex<()>,
-    link_cancel: Mutex<Option<CancellationToken>>,
-    link_done_notify: Arc<Notify>,
-    link_in_flight: Mutex<bool>,
+    link_coordinator: LinkCoordinator,
     shutdown_token: CancellationToken,
 }
 
@@ -145,7 +201,7 @@ impl ObscuraClient {
     }
 
     pub fn device_id(&self) -> Option<String> {
-        self.auth.credentials().map(|c| c.device_id)
+        self.auth.device_id()
     }
 
     pub fn get_debug_log(&self) -> Vec<String> {
@@ -203,7 +259,7 @@ impl ObscuraClient {
     }
 
     pub async fn logout(&self) -> Result<(), ObscuraError> {
-        self.end_session(true, None, None).await
+        self.end_session(true).await
     }
 
     pub async fn wipe_device(&self) -> Result<(), ObscuraError> {
@@ -283,50 +339,14 @@ impl ObscuraClient {
     }
 
     pub async fn complete_link(&self, request: Arc<LinkRequest>) -> Result<(), ObscuraError> {
-        let token = CancellationToken::new();
-        {
-            let mut lock = self.link_cancel.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(prev) = lock.replace(token.clone()) {
-                prev.cancel();
-            }
-            *self
-                .link_in_flight
-                .lock()
-                .unwrap_or_else(|p| p.into_inner()) = true;
-        }
-
+        let token = self.link_coordinator.begin();
         let res = self.complete_link_inner(&request, &token).await;
-
-        {
-            *self
-                .link_in_flight
-                .lock()
-                .unwrap_or_else(|p| p.into_inner()) = false;
-            self.link_done_notify.notify_waiters();
-        }
+        self.link_coordinator.finish();
         res
     }
 
     pub async fn cancel_link(&self) {
-        let token = self
-            .link_cancel
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take();
-        if let Some(t) = token {
-            t.cancel();
-        }
-        loop {
-            let notified = self.link_done_notify.notified();
-            if !*self
-                .link_in_flight
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-            {
-                break;
-            }
-            notified.await;
-        }
+        self.link_coordinator.cancel_and_wait().await;
     }
 
     pub async fn approve_link(&self, code: String) -> Result<(), ObscuraError> {
@@ -532,11 +552,10 @@ impl ObscuraClient {
             sent_at,
             content,
             None,
-            false,
         );
         let item_for_db = item.clone();
         self.db
-            .write_tx(move |ctx| content_store::insert_conversation(ctx.conn, &item_for_db))
+            .write_tx(move |ctx| content_store::insert_conversation(ctx.conn, &item_for_db, None))
             .await?;
 
         let accepted = self.accepted_friend_ids(&self_creds.user_id).await?;
@@ -546,7 +565,7 @@ impl ObscuraClient {
             Vec::new()
         };
         let report = self
-            .send_to_peers_and_self(&self_creds.user_id, &peers, &item.to_client_message())
+            .send_to_peers_and_self(&self_creds.user_id, &peers, &item.to_client_message(None))
             .await;
         if peers.is_empty()
             || !report
@@ -588,7 +607,7 @@ impl ObscuraClient {
         let attachment = self
             .upload_attachment_path(&file_path)
             .await?
-            .into_media(media_type);
+            .into_stored(media_type);
         let mut undelivered_peers = Vec::new();
         for peer in &peer_user_ids {
             if let Err(e) = self
@@ -667,10 +686,9 @@ impl ObscuraClient {
             return Ok(());
         }
         let now = (self.clock)();
-        let exp = expires_at(row.sent_at, Some(now));
         let eid = entry_id.clone();
         self.db
-            .write_tx(move |ctx| content_store::mark_conversation_viewed(ctx.conn, &eid, now, exp))
+            .write_tx(move |ctx| content_store::mark_conversation_viewed(ctx.conn, &eid, now))
             .await?;
 
         let msg = ClientMessage {
@@ -699,54 +717,6 @@ impl ObscuraClient {
             .await
     }
 
-    pub async fn post_story(
-        &self,
-        content: String,
-        attachment: Option<MediaAttachment>,
-        caption_meta: Option<String>,
-    ) -> Result<String, ObscuraError> {
-        let self_creds = self.require_fresh_token().await?;
-        let sent_at = (self.clock)();
-        let id = generate_entry_id("story", sent_at);
-        let item = StoryItem::new(
-            id.clone(),
-            self_creds.user_id.clone(),
-            sent_at,
-            content,
-            attachment,
-            caption_meta.filter(|s| !s.is_empty()),
-            false,
-        );
-        let item_for_db = item.clone();
-        self.db
-            .write_tx(move |ctx| content_store::insert_story(ctx.conn, &item_for_db))
-            .await?;
-
-        let peers: Vec<String> = self
-            .accepted_friend_ids(&self_creds.user_id)
-            .await?
-            .into_iter()
-            .collect();
-        let report = self
-            .send_to_peers_and_self(&self_creds.user_id, &peers, &item.to_client_message())
-            .await;
-        if !peers.is_empty()
-            && !report
-                .recipients
-                .iter()
-                .any(|r| r.status == SubmissionStatus::Accepted)
-        {
-            let id_clone = id.clone();
-            self.db
-                .write_tx(move |ctx| {
-                    content_store::set_story_undelivered(ctx.conn, &id_clone, true)
-                })
-                .await?;
-            return Err(send_failed(EntryModel::Story, &report));
-        }
-        Ok(id)
-    }
-
     pub async fn get_profiles(&self) -> Result<Vec<ProfileItem>, ObscuraError> {
         self.db.read(content_store::get_profiles).await
     }
@@ -770,7 +740,6 @@ impl ObscuraClient {
             updated_at,
             display_name,
             bio,
-            undelivered: false,
         };
         let item_for_db = item.clone();
         self.db
@@ -812,13 +781,17 @@ impl ObscuraClient {
             .db
             .read(content_store::get_undelivered_messages)
             .await?;
-        for row in undelivered_msgs {
+        for (row, att) in undelivered_msgs {
             if !accepted.contains(&row.peer_user_id) {
                 continue;
             }
             let peers = vec![row.peer_user_id.clone()];
             let report = self
-                .send_to_peers_and_self(&self_creds.user_id, &peers, &row.to_client_message())
+                .send_to_peers_and_self(
+                    &self_creds.user_id,
+                    &peers,
+                    &row.to_client_message(att.as_ref()),
+                )
                 .await;
             if report
                 .recipients
@@ -836,12 +809,12 @@ impl ObscuraClient {
         }
 
         let undelivered_stories = self.db.read(content_store::get_undelivered_stories).await?;
-        for row in undelivered_stories {
+        for (row, att) in undelivered_stories {
             let report = self
                 .send_to_peers_and_self(
                     &self_creds.user_id,
                     &all_accepted,
-                    &row.to_client_message(),
+                    &row.to_client_message(att.as_ref()),
                 )
                 .await;
             if all_accepted.is_empty()
@@ -928,14 +901,7 @@ impl ObscuraClient {
 impl Drop for ObscuraClient {
     fn drop(&mut self) {
         self.shutdown_token.cancel();
-        if let Some(t) = self
-            .link_cancel
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take()
-        {
-            t.cancel();
-        }
+        self.link_coordinator.cancel_now();
         self.gateway.disconnect();
         self.auth.stop_background_tasks();
         self.typing.clear();
@@ -977,7 +943,6 @@ impl ObscuraClient {
         clock: Arc<dyn Fn() -> i64 + Send + Sync>,
     ) -> Result<Arc<Self>, ObscuraError> {
         config.validate()?;
-        let db = DbHandle::open(config.database_path.as_deref(), &config.database_key, None)?;
 
         let debug_log = Arc::new(Mutex::new(VecDeque::with_capacity(DEBUG_LOG_SIZE)));
         let entry_queue = Arc::new(Mutex::new(VecDeque::with_capacity(
@@ -985,7 +950,52 @@ impl ObscuraClient {
         )));
         let entry_notify = Arc::new(Notify::new());
 
+        let debug_for_eff = Arc::clone(&debug_log);
+        let logger_for_eff = Arc::clone(&logger);
+        let listener_for_eff = Arc::clone(&listener);
+        let clock_for_eff = Arc::clone(&clock);
+        let queue_for_eff = Arc::clone(&entry_queue);
+        let notify_for_eff = Arc::clone(&entry_notify);
+        let dispatcher: EffectDispatcher = Arc::new(move |effect| match effect {
+            PostCommitEffect::IdentityChanged(uid) => {
+                append_log(
+                    &debug_for_eff,
+                    &logger_for_eff,
+                    (clock_for_eff)(),
+                    &format!("IDENTITY changed for {uid}; sessions with its devices dropped"),
+                );
+                logger_for_eff.identity_changed(uid);
+            }
+            PostCommitEffect::FriendsChanged => {
+                listener_for_eff.on_friends_changed();
+            }
+            PostCommitEffect::FriendRequestReceived => {
+                listener_for_eff.on_friend_request_received();
+            }
+            PostCommitEffect::EntryInboxed(model) => {
+                let mut q = queue_for_eff.lock().unwrap_or_else(|p| p.into_inner());
+                if q.len() >= MESSAGE_RECEIVED_CAPACITY {
+                    q.pop_front();
+                }
+                q.push_back(model);
+                drop(q);
+                notify_for_eff.notify_one();
+            }
+        });
+        let db = DbHandle::open(
+            config.database_path.as_deref(),
+            &config.database_key,
+            Some(dispatcher),
+        )?;
+
+        let listener_for_typing = Arc::clone(&listener);
+        let typing = TypingTracker::with_listener(Arc::new(move |peer, is_typing| {
+            listener_for_typing.on_peer_typing_changed(peer.to_owned(), is_typing);
+        }));
+
         let listener_for_auth = Arc::clone(&listener);
+        let mut api_slot = None;
+        let mut gateway_slot = None;
         let auth = AuthManager::new(
             db.clone(),
             session_storage,
@@ -993,68 +1003,89 @@ impl ObscuraClient {
             Arc::clone(&logger),
             Arc::new(move |st| listener_for_auth.on_auth_state_changed(st)),
             Arc::clone(&clock),
-        );
+            |weak_auth| {
+                let weak_for_refresh = weak_auth.clone();
+                let refresh_cb: crate::network::api::RefreshCallback = Arc::new(move || {
+                    let w = weak_for_refresh.clone();
+                    Box::pin(async move {
+                        let Some(a) = w.upgrade() else {
+                            return Ok(TokenStatus::Rejected);
+                        };
+                        a.refresh().await
+                    })
+                });
+                let weak_for_token = weak_auth.clone();
+                let token_cb: crate::network::api::TokenGetter = Arc::new(move || {
+                    weak_for_token
+                        .upgrade()
+                        .and_then(|a| a.credentials().map(|c| c.token))
+                });
+                let api = APIClient::new(
+                    &config.api_url,
+                    Arc::clone(&transport),
+                    refresh_cb,
+                    token_cb,
+                );
 
-        let auth_for_refresh = Arc::clone(&auth);
-        let refresh_cb: crate::network::api::RefreshCallback = Arc::new(move || {
-            let a = Arc::clone(&auth_for_refresh);
-            Box::pin(async move { a.refresh().await })
-        });
-        let auth_for_token = Arc::clone(&auth);
-        let token_cb: crate::network::api::TokenGetter =
-            Arc::new(move || auth_for_token.credentials().map(|c| c.token));
+                let weak_for_gw = weak_auth.clone();
+                let before_connect: crate::network::gateway::BeforeConnectFn =
+                    Arc::new(move || {
+                        let w = weak_for_gw.clone();
+                        Box::pin(async move {
+                            let a = w.upgrade().ok_or(ObscuraError::NotAuthenticated)?;
+                            if a.ensure_fresh_token().await? == TokenStatus::Rejected {
+                                return Err(ObscuraError::NotAuthenticated);
+                            }
+                            a.require_credentials()?;
+                            Ok(())
+                        })
+                    });
+                let listener_for_gw = Arc::clone(&listener);
+                let debug_for_gw = Arc::clone(&debug_log);
+                let logger_for_gw = Arc::clone(&logger);
+                let clock_for_gw = Arc::clone(&clock);
+                let gateway = Gateway::new(
+                    api.clone(),
+                    transport,
+                    before_connect,
+                    Arc::new(move |st| listener_for_gw.on_connection_state_changed(st)),
+                    Arc::new(move |msg| {
+                        append_log(&debug_for_gw, &logger_for_gw, (clock_for_gw)(), &msg);
+                    }),
+                );
 
-        let api = APIClient::new(
-            &config.api_url,
-            Arc::clone(&transport),
-            refresh_cb,
-            token_cb,
-        );
+                let gw_for_rejected = gateway.clone();
+                let typing_for_rejected = typing.clone();
+                let debug_for_rejected = Arc::clone(&debug_log);
+                let logger_for_rejected = Arc::clone(&logger);
+                let clock_for_rejected = Arc::clone(&clock);
+                let on_rejected: crate::auth::OnRejectedFn = Arc::new(move || {
+                    gw_for_rejected.disconnect();
+                    typing_for_rejected.clear();
+                    append_log(
+                        &debug_for_rejected,
+                        &logger_for_rejected,
+                        (clock_for_rejected)(),
+                        "SESSION ended",
+                    );
+                });
 
-        let auth_for_gw = Arc::clone(&auth);
-        let before_connect: crate::network::gateway::BeforeConnectFn = Arc::new(move || {
-            let a = Arc::clone(&auth_for_gw);
-            Box::pin(async move {
-                if a.ensure_fresh_token().await? == TokenStatus::Rejected {
-                    return Err(ObscuraError::NotAuthenticated);
-                }
-                a.require_credentials()?;
-                Ok(())
-            })
-        });
-        let listener_for_gw = Arc::clone(&listener);
-        let debug_for_gw = Arc::clone(&debug_log);
-        let logger_for_gw = Arc::clone(&logger);
-        let clock_for_gw = Arc::clone(&clock);
-        let gateway = Gateway::new(
-            api.clone(),
-            transport,
-            before_connect,
-            Arc::new(move |st| listener_for_gw.on_connection_state_changed(st)),
-            Arc::new(move |msg| {
-                append_log(&debug_for_gw, &logger_for_gw, (clock_for_gw)(), &msg);
-            }),
+                api_slot = Some(api.clone());
+                gateway_slot = Some(gateway);
+                (api, on_rejected)
+            },
         );
+        let api = api_slot.expect("initialized in AuthManager::new");
+        let gateway = gateway_slot.expect("initialized in AuthManager::new");
 
-        let auth_for_msgr = Arc::clone(&auth);
-        let messenger = Messenger::new(
-            db.clone(),
-            api.clone(),
-            Arc::new(move || auth_for_msgr.credentials().map(|c| c.device_id)),
-        );
-        let auth_for_sender = Arc::clone(&auth);
+        let messenger = Messenger::new(db.clone(), api.clone(), Arc::clone(&auth));
         let sender = MessageSender::new(
             api.clone(),
             messenger.clone(),
             db.clone(),
             Arc::clone(&logger),
-            Arc::new(move || auth_for_sender.credentials().map(|c| c.device_id)),
+            Arc::clone(&auth),
         );
-
-        let listener_for_typing = Arc::clone(&listener);
-        let typing = TypingTracker::with_listener(Arc::new(move |peer, is_typing| {
-            listener_for_typing.on_peer_typing_changed(peer.to_owned(), is_typing);
-        }));
 
         let (prekey_sync_tx, mut prekey_sync_rx) = mpsc::unbounded_channel::<()>();
         let (processed_envelopes_tx, processed_envelopes_rx) = watch::channel(0u64);
@@ -1082,41 +1113,9 @@ impl ObscuraClient {
             last_processed_at_ms: AtomicI64::new(0),
             drain_mutex: AsyncMutex::new(()),
             session_task_mutex: AsyncMutex::new(()),
-            link_cancel: Mutex::new(None),
-            link_done_notify: Arc::new(Notify::new()),
-            link_in_flight: Mutex::new(false),
+            link_coordinator: LinkCoordinator::default(),
             shutdown_token: CancellationToken::new(),
         });
-
-        let debug_for_eff = Arc::clone(&debug_log);
-        let logger_for_eff = Arc::clone(&logger);
-        let listener_for_eff = Arc::clone(&listener);
-        let clock_for_eff = Arc::clone(&clock);
-        let queue_for_eff = Arc::clone(&entry_queue);
-        let notify_for_eff = Arc::clone(&entry_notify);
-        db.set_dispatcher(Arc::new(move |effect| match effect {
-            PostCommitEffect::IdentityChanged(uid) => {
-                append_log(
-                    &debug_for_eff,
-                    &logger_for_eff,
-                    (clock_for_eff)(),
-                    &format!("IDENTITY changed for {uid}; sessions with its devices dropped"),
-                );
-                logger_for_eff.identity_changed(uid);
-            }
-            PostCommitEffect::FriendsChanged => {
-                listener_for_eff.on_friends_changed();
-            }
-            PostCommitEffect::EntryInboxed(model) => {
-                let mut q = queue_for_eff.lock().unwrap_or_else(|p| p.into_inner());
-                if q.len() >= MESSAGE_RECEIVED_CAPACITY {
-                    q.pop_front();
-                }
-                q.push_back(model);
-                drop(q);
-                notify_for_eff.notify_one();
-            }
-        }));
 
         let queue_for_disp = Arc::clone(&entry_queue);
         let notify_for_disp = Arc::clone(&entry_notify);
@@ -1138,20 +1137,6 @@ impl ObscuraClient {
             .entry_dispatcher_job
             .lock()
             .unwrap_or_else(|p| p.into_inner()) = Some(disp_job);
-
-        let weak_for_rejected = Arc::downgrade(&client);
-        let api_for_bind = client.api.clone();
-        auth.bind(
-            api_for_bind,
-            Arc::new(move |creds, ver| {
-                let weak = weak_for_rejected.clone();
-                Box::pin(async move {
-                    if let Some(c) = weak.upgrade() {
-                        let _ = c.end_session(false, Some(&creds), Some(ver)).await;
-                    }
-                })
-            }),
-        );
 
         let weak_for_recv = Arc::downgrade(&client);
         let gw_for_recv = client.gateway.clone();
@@ -1673,8 +1658,8 @@ impl ObscuraClient {
         let id = self.api.upload_attachment(encrypted.ciphertext).await?;
         Ok(AttachmentUpload {
             id,
-            content_key: encrypted.content_key,
-            nonce: encrypted.nonce,
+            content_key: encrypted.content_key.to_vec(),
+            nonce: encrypted.nonce.to_vec(),
         })
     }
 
@@ -1682,33 +1667,10 @@ impl ObscuraClient {
         &self,
         file_path: &str,
     ) -> Result<AttachmentUpload, ObscuraError> {
-        self.require_fresh_token().await?;
         let plaintext = std::fs::read(file_path).map_err(|e| {
             ObscuraError::storage(format!("Failed to read capture file {file_path}: {e}"))
         })?;
-        let encrypted = attachment::encrypt(&plaintext)?;
-
-        let id = if let Some(ref cache_dir) = self.attachment_cache_dir {
-            std::fs::create_dir_all(cache_dir).map_err(|e| {
-                ObscuraError::storage(format!("Failed to create attachment cache dir: {e}"))
-            })?;
-            let tmp_path = cache_dir.join(format!("upload_{}.tmp", Uuid::new_v4()));
-            std::fs::write(&tmp_path, &encrypted.ciphertext).map_err(|e| {
-                ObscuraError::storage(format!("Failed to write encrypted upload temp file: {e}"))
-            })?;
-            let tmp_str = tmp_path.to_string_lossy().into_owned();
-            let res = self.api.upload_attachment_file(&tmp_str).await;
-            let _ = std::fs::remove_file(&tmp_path);
-            res?
-        } else {
-            self.api.upload_attachment(encrypted.ciphertext).await?
-        };
-
-        Ok(AttachmentUpload {
-            id,
-            content_key: encrypted.content_key,
-            nonce: encrypted.nonce,
-        })
+        self.upload_attachment_bytes(&plaintext).await
     }
 
     pub async fn download_decrypted_attachment(
@@ -1718,32 +1680,68 @@ impl ObscuraClient {
         nonce: &[u8],
     ) -> Result<Vec<u8>, ObscuraError> {
         self.require_fresh_token().await?;
-        let ciphertext = if let Some(ref cache_dir) = self.attachment_cache_dir {
-            let _ = std::fs::create_dir_all(cache_dir);
-            let tmp_path = cache_dir.join(format!("download_{}.tmp", Uuid::new_v4()));
-            let tmp_str = tmp_path.to_string_lossy().into_owned();
-            let resp_bytes = self.api.fetch_attachment_to_file(id, &tmp_str).await;
-            match resp_bytes {
-                Ok(body) => {
-                    let from_disk = std::fs::read(&tmp_path).ok().filter(|b| !b.is_empty());
-                    let _ = std::fs::remove_file(&tmp_path);
-                    from_disk.unwrap_or(body)
-                }
-                Err(e) => {
-                    let _ = std::fs::remove_file(&tmp_path);
-                    return Err(e);
-                }
-            }
-        } else {
-            self.api.fetch_attachment(id).await?
-        };
+        let ciphertext = self.api.fetch_attachment(id).await?;
         attachment::decrypt(&ciphertext, content_key, nonce)
+    }
+
+    pub async fn post_story(
+        &self,
+        content: String,
+        attachment: Option<StoredAttachment>,
+        caption_meta: Option<String>,
+    ) -> Result<String, ObscuraError> {
+        let self_creds = self.require_fresh_token().await?;
+        let sent_at = (self.clock)();
+        let id = generate_entry_id("story", sent_at);
+        let item = StoryItem::new(
+            id.clone(),
+            self_creds.user_id.clone(),
+            sent_at,
+            content,
+            attachment.as_ref().map(StoredAttachment::as_ref),
+            caption_meta.filter(|s| !s.is_empty()),
+        );
+        let item_for_db = item.clone();
+        let att_for_db = attachment.clone();
+        self.db
+            .write_tx(move |ctx| {
+                content_store::insert_story(ctx.conn, &item_for_db, att_for_db.as_ref())
+            })
+            .await?;
+
+        let peers: Vec<String> = self
+            .accepted_friend_ids(&self_creds.user_id)
+            .await?
+            .into_iter()
+            .collect();
+        let report = self
+            .send_to_peers_and_self(
+                &self_creds.user_id,
+                &peers,
+                &item.to_client_message(attachment.as_ref()),
+            )
+            .await;
+        if !peers.is_empty()
+            && !report
+                .recipients
+                .iter()
+                .any(|r| r.status == SubmissionStatus::Accepted)
+        {
+            let id_clone = id.clone();
+            self.db
+                .write_tx(move |ctx| {
+                    content_store::set_story_undelivered(ctx.conn, &id_clone, true)
+                })
+                .await?;
+            return Err(send_failed(EntryModel::Story, &report));
+        }
+        Ok(id)
     }
 
     pub async fn send_pix(
         &self,
         peer_user_id: &str,
-        attachment: MediaAttachment,
+        attachment: StoredAttachment,
         caption: &str,
         caption_meta: Option<&str>,
         display_duration: i32,
@@ -1762,16 +1760,18 @@ impl ObscuraClient {
             peer_user_id.to_owned(),
             self_creds.user_id.clone(),
             sent_at,
-            attachment,
+            attachment.as_ref(),
             (!caption.is_empty()).then(|| caption.to_owned()),
             caption_meta.filter(|s| !s.is_empty()).map(str::to_owned),
             display_duration,
             None,
-            false,
         );
         let item_for_db = item.clone();
+        let att_for_db = attachment.clone();
         self.db
-            .write_tx(move |ctx| content_store::insert_conversation(ctx.conn, &item_for_db))
+            .write_tx(move |ctx| {
+                content_store::insert_conversation(ctx.conn, &item_for_db, Some(&att_for_db))
+            })
             .await?;
 
         let accepted = self.accepted_friend_ids(&self_creds.user_id).await?;
@@ -1781,7 +1781,11 @@ impl ObscuraClient {
             Vec::new()
         };
         let report = self
-            .send_to_peers_and_self(&self_creds.user_id, &peers, &item.to_client_message())
+            .send_to_peers_and_self(
+                &self_creds.user_id,
+                &peers,
+                &item.to_client_message(Some(&attachment)),
+            )
             .await;
         if peers.is_empty()
             || !report
@@ -2003,7 +2007,7 @@ impl ObscuraClient {
     }
 
     async fn wipe_device_internal(&self, revoke: bool) -> Result<(), ObscuraError> {
-        self.end_session(revoke, None, None).await?;
+        self.end_session(revoke).await?;
         self.db.wipe_all().await?;
         if let Some(ref dir) = self.attachment_cache_dir {
             attachment::purge_all_cached(dir);
@@ -2011,26 +2015,14 @@ impl ObscuraClient {
         Ok(())
     }
 
-    async fn end_session(
-        &self,
-        revoke: bool,
-        expected: Option<&Credentials>,
-        expected_generation: Option<u64>,
-    ) -> Result<(), ObscuraError> {
-        let end_res = self.auth.end(expected, expected_generation);
+    async fn end_session(&self, revoke: bool) -> Result<(), ObscuraError> {
+        let end_res = self.auth.end(None, None);
         if self.auth.credentials().is_none() {
             self.gateway.disconnect();
-            // Wait for any in-flight receive_envelope or sync_prekeys to settle before returning
-            // (unless end_session was triggered from inside a 401 refresh during that task).
-            if expected.is_none() {
-                let _ = self.session_task_mutex.lock().await;
-            }
+            let _ = self.session_task_mutex.lock().await;
             self.typing.clear();
         }
         let previous = end_res?;
-        if expected.is_some() && previous.is_none() {
-            return Ok(());
-        }
         if revoke && let Some(ref prev) = previous {
             self.auth.revoke(prev).await;
         }
@@ -2147,9 +2139,8 @@ fn store_decrypted_in_tx(
                             sent_at,
                             dm.content.clone(),
                             None,
-                            false,
                         );
-                        content_store::insert_conversation(ctx.conn, &item)?;
+                        content_store::insert_conversation(ctx.conn, &item, None)?;
                         ctx.push_effect(PostCommitEffect::EntryInboxed(EntryModel::DirectMessage));
                     }
                 }
@@ -2159,7 +2150,7 @@ fn store_decrypted_in_tx(
                     let att = pix
                         .attachment
                         .as_ref()
-                        .and_then(MediaAttachment::from_proto);
+                        .and_then(StoredAttachment::from_proto);
                     let (Some(peer), Some(att)) = (peer, att) else {
                         logs.push(format!(
                             "RECV PIX with invalid fields from {sender_user_id}; ignored"
@@ -2182,14 +2173,13 @@ fn store_decrypted_in_tx(
                             peer,
                             sender_user_id.to_owned(),
                             sent_at,
-                            att,
+                            att.as_ref(),
                             (!pix.caption.is_empty()).then(|| pix.caption.clone()),
                             (!pix.caption_meta.is_empty()).then(|| pix.caption_meta.clone()),
                             pix.display_duration_secs as i32,
                             None,
-                            false,
                         );
-                        content_store::insert_conversation(ctx.conn, &item)?;
+                        content_store::insert_conversation(ctx.conn, &item, Some(&att))?;
                         ctx.push_effect(PostCommitEffect::EntryInboxed(EntryModel::Pix));
                     }
                 }
@@ -2207,12 +2197,7 @@ fn store_decrypted_in_tx(
                     {
                         let raw_viewed = i64::try_from(sr.viewed_at).unwrap_or(sent_at).max(0);
                         let viewed_at = raw_viewed.min(sent_at);
-                        content_store::mark_conversation_viewed(
-                            ctx.conn,
-                            &sr.entry_id,
-                            viewed_at,
-                            expires_at(row.sent_at, Some(viewed_at)),
-                        )?;
+                        content_store::mark_conversation_viewed(ctx.conn, &sr.entry_id, viewed_at)?;
                         ctx.push_effect(PostCommitEffect::EntryInboxed(EntryModel::Seen));
                     }
                 }
@@ -2222,17 +2207,19 @@ fn store_decrypted_in_tx(
                             "RECV STORY with blank id from {sender_user_id}; ignored"
                         ));
                     } else if content_store::can_insert_story(ctx.conn, &st.id)? {
-                        let att = st.attachment.as_ref().and_then(MediaAttachment::from_proto);
+                        let att = st
+                            .attachment
+                            .as_ref()
+                            .and_then(StoredAttachment::from_proto);
                         let item = StoryItem::new(
                             st.id.clone(),
                             sender_user_id.to_owned(),
                             sent_at,
                             st.content.clone(),
-                            att,
+                            att.as_ref().map(StoredAttachment::as_ref),
                             (!st.caption_meta.is_empty()).then(|| st.caption_meta.clone()),
-                            false,
                         );
-                        content_store::insert_story(ctx.conn, &item)?;
+                        content_store::insert_story(ctx.conn, &item, att.as_ref())?;
                         ctx.push_effect(PostCommitEffect::EntryInboxed(EntryModel::Story));
                     }
                 }
@@ -2245,7 +2232,6 @@ fn store_decrypted_in_tx(
                             updated_at: sent_at,
                             display_name: pr.display_name.clone(),
                             bio: pr.bio.clone(),
-                            undelivered: false,
                         },
                     )?;
                     if updated {
@@ -2341,6 +2327,7 @@ fn apply_friend_message_in_tx(
                     &req.username,
                     FriendStatus::PendingReceived,
                 )?;
+                ctx.push_effect(PostCommitEffect::FriendRequestReceived);
                 let _ = content_store::record_envelope(ctx.conn, envelope_id)?;
                 Ok(FriendFollowUp::Sync)
             }

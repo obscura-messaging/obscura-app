@@ -22,6 +22,7 @@ import uniffi.obscura_core.ObscuraClient
 import uniffi.obscura_core.ObscuraClientConfig
 import uniffi.obscura_core.ObscuraException
 import uniffi.obscura_core.ObscuraLogger
+import uniffi.obscura_core.PersistedSession
 import uniffi.obscura_core.SessionStorage
 import uniffi.obscura_core.Transport
 import uniffi.obscura_core.WebSocketHandle
@@ -29,15 +30,16 @@ import uniffi.obscura_core.WebSocketSink
 import uniffi.obscura_core.errorCode
 import uniffi.obscura_core.errorMessage
 import uniffi.obscura_core.linkCodeDeviceName
+import uniffi.obscura_core.validateUsername
 
 private class MemorySessionStorage : SessionStorage {
-    @Volatile var map: Map<String, String>? = null
-    override fun save(data: Map<String, String>) {
-        map = data
+    @Volatile var session: PersistedSession? = null
+    override fun save(session: PersistedSession) {
+        this.session = session
     }
-    override fun load(): Map<String, String>? = map
+    override fun load(): PersistedSession? = session
     override fun clear() {
-        map = null
+        session = null
     }
 }
 
@@ -60,6 +62,7 @@ private class RecordingListener : ClientEventListener {
     override fun onConnectionStateChanged(state: ConnectionState) { connStates += state }
     override fun onAuthStateChanged(state: AuthState) { authStates += state }
     override fun onFriendsChanged() {}
+    override fun onFriendRequestReceived() {}
     override fun onMessageReceived(model: EntryModel) { models += model }
     override fun onPeerTypingChanged(peerUserId: String, isTyping: Boolean) {}
 }
@@ -166,8 +169,12 @@ class BindingsTest {
             listener,
         )
 
+        validateUsername("alice")
+        assertThrows<ObscuraException.InvalidArgument> { validateUsername("a") }
+
         client.register("alice", "pass123")
         assertEquals(AuthState.AUTHENTICATED, client.authState())
+        assertEquals("alice", storage.load()?.username)
         assertTrue(client.isPrimary())
         assertTrue(client.friendCode().isNotBlank())
 

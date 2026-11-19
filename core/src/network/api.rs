@@ -5,11 +5,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use uuid::Uuid;
 
 use crate::auth::TokenStatus;
-use crate::crypto::prekeys::{DeviceKeysJson, PreKeyCounts, PreKeyUploadJson};
+use crate::crypto::prekeys::{DeviceKeysJson, PreKeyBundleJson, PreKeyCounts, PreKeyUploadJson};
 use crate::error::ObscuraError;
 use crate::network::transport::{HttpRequest, Transport};
 use crate::wire::uuid_codec::is_uuid;
@@ -89,6 +89,39 @@ struct RawDevicesWrapper {
     devices: Vec<RawOwnDevice>,
 }
 
+#[derive(Deserialize)]
+struct PreKeyBundlesWrapper {
+    bundles: Vec<PreKeyBundleJson>,
+}
+
+#[derive(Deserialize)]
+struct GatewayTicketResponse {
+    ticket: String,
+}
+
+#[derive(Deserialize)]
+struct AttachmentUploadResponse {
+    id: String,
+}
+
+#[derive(Serialize)]
+struct RegisterOrResetRequest<'a> {
+    username: &'a str,
+    password: &'a str,
+    name: &'a str,
+    #[serde(flatten)]
+    keys: &'a DeviceKeysJson,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProvisionDeviceRequest<'a> {
+    name: &'a str,
+    link_session_id: &'a str,
+    #[serde(flatten)]
+    keys: &'a DeviceKeysJson,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkSession {
     pub id: String,
@@ -142,13 +175,12 @@ impl APIClient {
         name: &str,
         keys: &DeviceKeysJson,
     ) -> Result<AuthResponse, ObscuraError> {
-        let mut body = serde_json::to_value(keys)
-            .map_err(|e| ObscuraError::protocol(format!("Failed to serialize device keys: {e}")))?;
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("username".to_owned(), Value::String(username.to_owned()));
-            obj.insert("password".to_owned(), Value::String(password.to_owned()));
-            obj.insert("name".to_owned(), Value::String(name.to_owned()));
-        }
+        let body = RegisterOrResetRequest {
+            username,
+            password,
+            name,
+            keys,
+        };
         let bytes = self
             .send_json("POST", "/v1/users", &body, Auth::None)
             .await?;
@@ -179,13 +211,12 @@ impl APIClient {
         name: &str,
         keys: &DeviceKeysJson,
     ) -> Result<AuthResponse, ObscuraError> {
-        let mut body = serde_json::to_value(keys)
-            .map_err(|e| ObscuraError::protocol(format!("Failed to serialize device keys: {e}")))?;
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("username".to_owned(), Value::String(username.to_owned()));
-            obj.insert("password".to_owned(), Value::String(password.to_owned()));
-            obj.insert("name".to_owned(), Value::String(name.to_owned()));
-        }
+        let body = RegisterOrResetRequest {
+            username,
+            password,
+            name,
+            keys,
+        };
         let bytes = self
             .send_json("POST", "/v1/users/reset", &body, Auth::None)
             .await?;
@@ -198,15 +229,11 @@ impl APIClient {
         keys: &DeviceKeysJson,
         link_session_id: &str,
     ) -> Result<AuthResponse, ObscuraError> {
-        let mut body = serde_json::to_value(keys)
-            .map_err(|e| ObscuraError::protocol(format!("Failed to serialize device keys: {e}")))?;
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("name".to_owned(), Value::String(name.to_owned()));
-            obj.insert(
-                "linkSessionId".to_owned(),
-                Value::String(link_session_id.to_owned()),
-            );
-        }
+        let body = ProvisionDeviceRequest {
+            name,
+            link_session_id,
+            keys,
+        };
         let bytes = self
             .send_json("POST", "/v1/devices", &body, Auth::None)
             .await?;
@@ -226,8 +253,6 @@ impl APIClient {
             "DELETE",
             "/v1/session",
             None,
-            None,
-            None,
             Auth::Token(bearer.to_owned()),
             &[],
         )
@@ -243,56 +268,49 @@ impl APIClient {
     }
 
     pub async fn upload_pre_keys(&self, keys: &PreKeyUploadJson) -> Result<(), ObscuraError> {
-        let body = serde_json::to_value(keys)
-            .map_err(|e| ObscuraError::protocol(format!("Failed to serialize prekeys: {e}")))?;
-        self.send_json("POST", "/v1/keys", &body, Auth::Session)
+        self.send_json("POST", "/v1/keys", keys, Auth::Session)
             .await?;
         Ok(())
     }
 
     pub async fn fetch_pre_key_counts(&self) -> Result<PreKeyCounts, ObscuraError> {
         let bytes = self
-            .send("GET", "/v1/keys", None, None, None, Auth::Session, &[])
+            .send("GET", "/v1/keys", None, Auth::Session, &[])
             .await?;
         serde_json::from_slice(&bytes)
             .map_err(|e| ObscuraError::protocol(format!("Invalid JSON response for /v1/keys: {e}")))
     }
 
-    pub async fn fetch_pre_key_bundles(&self, user_id: &str) -> Result<Vec<Value>, ObscuraError> {
+    pub async fn fetch_pre_key_bundles(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<PreKeyBundleJson>, ObscuraError> {
         let path = format!("/v1/keys/{}", url_encode(user_id));
-        let bytes = self
-            .send("GET", &path, None, None, None, Auth::Session, &[])
-            .await?;
-        let val: Value = serde_json::from_slice(&bytes).map_err(|e| {
+        let bytes = self.send("GET", &path, None, Auth::Session, &[]).await?;
+        let wrapper: PreKeyBundlesWrapper = serde_json::from_slice(&bytes).map_err(|e| {
             ObscuraError::protocol(format!("Invalid JSON response for /v1/keys: {e}"))
         })?;
-        let bundles = val
-            .get("bundles")
-            .and_then(Value::as_array)
-            .ok_or_else(|| ObscuraError::protocol("Invalid JSON response for /v1/keys"))?;
-        Ok(bundles.clone())
+        Ok(wrapper.bundles)
     }
 
     pub async fn fetch_pre_key_bundle(
         &self,
         user_id: &str,
         device_id: &str,
-    ) -> Result<Value, ObscuraError> {
+    ) -> Result<PreKeyBundleJson, ObscuraError> {
         let path = format!(
             "/v1/keys/{}/devices/{}",
             url_encode(user_id),
             url_encode(device_id)
         );
-        let bytes = self
-            .send("GET", &path, None, None, None, Auth::Session, &[])
-            .await?;
+        let bytes = self.send("GET", &path, None, Auth::Session, &[]).await?;
         serde_json::from_slice(&bytes)
             .map_err(|e| ObscuraError::protocol(format!("Invalid JSON response for /v1/keys: {e}")))
     }
 
     pub async fn fetch_own_devices(&self) -> Result<Vec<OwnDevice>, ObscuraError> {
         let bytes = self
-            .send("GET", "/v1/devices", None, None, None, Auth::Session, &[])
+            .send("GET", "/v1/devices", None, Auth::Session, &[])
             .await?;
         let wrapper: RawDevicesWrapper = serde_json::from_slice(&bytes).map_err(|e| {
             ObscuraError::protocol(format!("Invalid JSON response for /v1/devices: {e}"))
@@ -324,8 +342,7 @@ impl APIClient {
 
     pub async fn delete_device(&self, device_id: &str) -> Result<(), ObscuraError> {
         let path = format!("/v1/devices/{}", url_encode(device_id));
-        self.send("DELETE", &path, None, None, None, Auth::Session, &[])
-            .await?;
+        self.send("DELETE", &path, None, Auth::Session, &[]).await?;
         Ok(())
     }
 
@@ -352,8 +369,6 @@ impl APIClient {
             "PUT",
             &path,
             Some(body),
-            None,
-            None,
             Auth::Session,
             &[("Content-Type", OCTET_CONTENT_TYPE)],
         )
@@ -363,9 +378,7 @@ impl APIClient {
 
     pub async fn await_link_session(&self, id: &str) -> Result<Option<Vec<u8>>, ObscuraError> {
         let path = format!("/v1/link-sessions/{}", url_encode(id));
-        let (status, bytes) = self
-            .exchange("GET", &path, None, None, None, Auth::None, &[])
-            .await?;
+        let (status, bytes) = self.exchange("GET", &path, None, Auth::None, &[]).await?;
         if status == 204 {
             Ok(None)
         } else {
@@ -379,8 +392,6 @@ impl APIClient {
             "POST",
             "/v1/messages",
             Some(protobuf),
-            None,
-            None,
             Auth::Session,
             &[
                 ("Content-Type", PROTOBUF_CONTENT_TYPE),
@@ -396,23 +407,6 @@ impl APIClient {
                 "POST",
                 "/v1/attachments",
                 Some(blob),
-                None,
-                None,
-                Auth::Session,
-                &[("Content-Type", OCTET_CONTENT_TYPE)],
-            )
-            .await?;
-        parse_attachment_id(&bytes)
-    }
-
-    pub async fn upload_attachment_file(&self, file_path: &str) -> Result<String, ObscuraError> {
-        let bytes = self
-            .send(
-                "POST",
-                "/v1/attachments",
-                None,
-                Some(file_path.to_owned()),
-                None,
                 Auth::Session,
                 &[("Content-Type", OCTET_CONTENT_TYPE)],
             )
@@ -422,41 +416,20 @@ impl APIClient {
 
     pub async fn fetch_attachment(&self, id: &str) -> Result<Vec<u8>, ObscuraError> {
         let path = format!("/v1/attachments/{}", url_encode(id));
-        self.send("GET", &path, None, None, None, Auth::Session, &[])
-            .await
-    }
-
-    pub async fn fetch_attachment_to_file(
-        &self,
-        id: &str,
-        response_file_path: &str,
-    ) -> Result<Vec<u8>, ObscuraError> {
-        let path = format!("/v1/attachments/{}", url_encode(id));
-        self.send(
-            "GET",
-            &path,
-            None,
-            None,
-            Some(response_file_path.to_owned()),
-            Auth::Session,
-            &[],
-        )
-        .await
+        self.send("GET", &path, None, Auth::Session, &[]).await
     }
 
     pub async fn fetch_gateway_ticket(&self) -> Result<String, ObscuraError> {
         let bytes = self
             .send_json("POST", "/v1/gateway/ticket", &json!({}), Auth::Session)
             .await?;
-        let val: Value = serde_json::from_slice(&bytes).map_err(|e| {
+        let resp: GatewayTicketResponse = serde_json::from_slice(&bytes).map_err(|e| {
             ObscuraError::protocol(format!("Invalid JSON response for /v1/gateway/ticket: {e}"))
         })?;
-        let ticket = val
-            .get("ticket")
-            .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| ObscuraError::protocol("Invalid gateway ticket response"))?;
-        Ok(ticket.to_owned())
+        if resp.ticket.trim().is_empty() {
+            return Err(ObscuraError::protocol("Invalid gateway ticket response"));
+        }
+        Ok(resp.ticket)
     }
 
     pub fn gateway_url(&self, ticket: &str) -> String {
@@ -470,11 +443,11 @@ impl APIClient {
         format!("{ws_base}/v1/gateway?ticket={}", url_encode(ticket))
     }
 
-    async fn send_json(
+    async fn send_json<T: Serialize + ?Sized>(
         &self,
         method: &str,
         path: &str,
-        body: &Value,
+        body: &T,
         auth: Auth,
     ) -> Result<Vec<u8>, ObscuraError> {
         let bytes = serde_json::to_vec(body)
@@ -483,47 +456,31 @@ impl APIClient {
             method,
             path,
             Some(bytes),
-            None,
-            None,
             auth,
             &[("Content-Type", JSON_CONTENT_TYPE)],
         )
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn send(
         &self,
         method: &str,
         path: &str,
         body: Option<Vec<u8>>,
-        body_file_path: Option<String>,
-        response_file_path: Option<String>,
         auth: Auth,
         extra_headers: &[(&str, &str)],
     ) -> Result<Vec<u8>, ObscuraError> {
         Ok(self
-            .exchange(
-                method,
-                path,
-                body,
-                body_file_path,
-                response_file_path,
-                auth,
-                extra_headers,
-            )
+            .exchange(method, path, body, auth, extra_headers)
             .await?
             .1)
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn exchange(
         &self,
         method: &str,
         path: &str,
         body: Option<Vec<u8>>,
-        body_file_path: Option<String>,
-        response_file_path: Option<String>,
         auth: Auth,
         extra_headers: &[(&str, &str)],
     ) -> Result<(u16, Vec<u8>), ObscuraError> {
@@ -549,8 +506,6 @@ impl APIClient {
                 url: format!("{}{path}", self.base_url),
                 headers,
                 body: body.clone(),
-                body_file_path: body_file_path.clone(),
-                response_file_path: response_file_path.clone(),
             };
             let resp = self.transport.execute(req).await?;
             if (200..=299).contains(&resp.status) {
@@ -591,15 +546,13 @@ pub fn retry_after_ms(header: Option<&str>) -> Option<u64> {
 }
 
 fn parse_attachment_id(bytes: &[u8]) -> Result<String, ObscuraError> {
-    let val: Value = serde_json::from_slice(bytes).map_err(|e| {
+    let resp: AttachmentUploadResponse = serde_json::from_slice(bytes).map_err(|e| {
         ObscuraError::protocol(format!("Invalid JSON response for /v1/attachments: {e}"))
     })?;
-    let id = val
-        .get("id")
-        .and_then(Value::as_str)
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| ObscuraError::protocol("Invalid attachment response"))?;
-    Ok(id.to_owned())
+    if resp.id.trim().is_empty() {
+        return Err(ObscuraError::protocol("Invalid attachment response"));
+    }
+    Ok(resp.id)
 }
 
 pub fn url_encode(value: &str) -> String {

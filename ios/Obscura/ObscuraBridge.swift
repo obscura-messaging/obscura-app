@@ -583,7 +583,7 @@ extension ObscuraBridge {
         }
     }
 
-    static func attachmentDict(_ att: MediaAttachment) -> [String: Any] {
+    static func attachmentDict(_ att: AttachmentRef) -> [String: Any] {
         [
             "id": att.id,
             "mediaType": att.mediaType.jsValue,
@@ -591,7 +591,8 @@ extension ObscuraBridge {
     }
 
     static func conversationItemDict(_ item: ConversationItem) -> [String: Any] {
-        if item.kind == .pix, let att = item.attachment {
+        switch item.content {
+        case let .pix(attachment, caption, captionMeta, displayDuration):
             return [
                 "id": item.id,
                 "peerUserId": item.peerUserId,
@@ -599,22 +600,23 @@ extension ObscuraBridge {
                 "authorUserId": item.authorUserId,
                 "sentAt": Double(item.sentAt),
                 "viewedAt": item.viewedAt.map { Double($0) } as Any,
-                "content": item.content,
-                "attachment": attachmentDict(att),
-                "caption": item.caption as Any,
-                "captionMeta": item.captionMeta as Any,
-                "displayDuration": item.displayDuration,
+                "content": "",
+                "attachment": attachmentDict(attachment),
+                "caption": caption as Any,
+                "captionMeta": captionMeta as Any,
+                "displayDuration": displayDuration,
+            ]
+        case let .message(text):
+            return [
+                "id": item.id,
+                "peerUserId": item.peerUserId,
+                "kind": "message",
+                "authorUserId": item.authorUserId,
+                "sentAt": Double(item.sentAt),
+                "viewedAt": item.viewedAt.map { Double($0) } as Any,
+                "content": text,
             ]
         }
-        return [
-            "id": item.id,
-            "peerUserId": item.peerUserId,
-            "kind": "message",
-            "authorUserId": item.authorUserId,
-            "sentAt": Double(item.sentAt),
-            "viewedAt": item.viewedAt.map { Double($0) } as Any,
-            "content": item.content,
-        ]
     }
 
     static func storyItemDict(_ item: StoryItem) -> [String: Any] {
@@ -890,7 +892,7 @@ extension ObscuraBridge {
                            resolver resolve: @escaping RCTPromiseResolveBlock,
                            rejecter reject: @escaping RCTPromiseRejectBlock) {
         Task {
-            do { try await client.registerPushToken(token); resolve(nil) }
+            do { try await client.registerPushToken(token: token); resolve(nil) }
             catch { rejectKit(reject, "REGISTER_TOKEN_ERROR", error) }
         }
     }

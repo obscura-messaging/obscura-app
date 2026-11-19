@@ -20,11 +20,11 @@ pub const MIN_ONE_TIME_KEPT: i64 = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreKeyState {
-    pub next_signed_id: i64,
-    pub next_one_time_id: i64,
-    pub next_kyber_id: i64,
-    pub active_signed_id: i64,
-    pub active_last_resort_id: i64,
+    pub next_signed_id: u32,
+    pub next_one_time_id: u32,
+    pub next_kyber_id: u32,
+    pub active_signed_id: u32,
+    pub active_last_resort_id: u32,
     pub rotated_at: i64,
     pub synced_at: i64,
 }
@@ -59,6 +59,10 @@ pub fn address_for(device_uuid: &str) -> ProtocolAddress {
         device_uuid.to_owned(),
         libsignal_protocol::DeviceId::new(1).expect("device_id 1 is valid"),
     )
+}
+
+pub fn address_key_for_device(device_id: &str) -> String {
+    address_key(&address_for(device_id))
 }
 
 fn address_key(address: &ProtocolAddress) -> String {
@@ -165,11 +169,11 @@ impl<'a> SignalStore<'a> {
             [],
             |r| {
                 Ok(PreKeyState {
-                    next_signed_id: r.get(0)?,
-                    next_one_time_id: r.get(1)?,
-                    next_kyber_id: r.get(2)?,
-                    active_signed_id: r.get(3)?,
-                    active_last_resort_id: r.get(4)?,
+                    next_signed_id: r.get::<_, i64>(0)? as u32,
+                    next_one_time_id: r.get::<_, i64>(1)? as u32,
+                    next_kyber_id: r.get::<_, i64>(2)? as u32,
+                    active_signed_id: r.get::<_, i64>(3)? as u32,
+                    active_last_resort_id: r.get::<_, i64>(4)? as u32,
                     rotated_at: r.get(5)?,
                     synced_at: r.get(6)?,
                 })
@@ -186,11 +190,11 @@ impl<'a> SignalStore<'a> {
                 active_signed_id, active_last_resort_id, rotated_at, synced_at
             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
-                state.next_signed_id,
-                state.next_one_time_id,
-                state.next_kyber_id,
-                state.active_signed_id,
-                state.active_last_resort_id,
+                state.next_signed_id as i64,
+                state.next_one_time_id as i64,
+                state.next_kyber_id as i64,
+                state.active_signed_id as i64,
+                state.active_last_resort_id as i64,
                 state.rotated_at,
                 state.synced_at,
             ],
@@ -229,7 +233,7 @@ impl<'a> SignalStore<'a> {
             &signed,
             state.active_signed_id,
             now_ms,
-            |r| u32::from(r.id().unwrap_or(0.into())) as i64,
+            |r| u32::from(r.id().unwrap_or(0.into())),
             |r| {
                 r.timestamp()
                     .map(|t| t.epoch_millis() as i64)
@@ -238,7 +242,7 @@ impl<'a> SignalStore<'a> {
         ) {
             conn.execute(
                 "DELETE FROM signal_signed_prekeys WHERE id = ?1",
-                params![id],
+                params![id as i64],
             )?;
         }
 
@@ -247,7 +251,7 @@ impl<'a> SignalStore<'a> {
             &last_resort,
             state.active_last_resort_id,
             now_ms,
-            |r| u32::from(r.id().unwrap_or(0.into())) as i64,
+            |r| u32::from(r.id().unwrap_or(0.into())),
             |r| {
                 r.timestamp()
                     .map(|t| t.epoch_millis() as i64)
@@ -256,11 +260,11 @@ impl<'a> SignalStore<'a> {
         ) {
             conn.execute(
                 "DELETE FROM signal_kyber_prekeys WHERE id = ?1",
-                params![id],
+                params![id as i64],
             )?;
             conn.execute(
                 "DELETE FROM signal_last_resort_key_uses WHERE kyber_id = ?1",
-                params![id],
+                params![id as i64],
             )?;
         }
 
@@ -314,7 +318,7 @@ impl<'a> SignalStore<'a> {
     }
 
     pub fn contains_session(conn: &Connection, device_id: &str) -> Result<bool, ObscuraError> {
-        let key = format!("{device_id}.1");
+        let key = address_key_for_device(device_id);
         conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM signal_sessions WHERE address = ?1)",
             params![key],
@@ -326,12 +330,12 @@ impl<'a> SignalStore<'a> {
 
 fn archived_ids<T>(
     records: &[T],
-    active_id: i64,
+    active_id: u32,
     now_ms: i64,
-    id_fn: impl Fn(&T) -> i64,
+    id_fn: impl Fn(&T) -> u32,
     created_at_fn: impl Fn(&T) -> i64,
-) -> Vec<i64> {
-    let mut candidates: Vec<(i64, i64)> = records
+) -> Vec<u32> {
+    let mut candidates: Vec<(u32, i64)> = records
         .iter()
         .map(|r| (id_fn(r), created_at_fn(r)))
         .filter(|(id, created_at)| *id != active_id && now_ms - *created_at > ARCHIVE_AGE_MS)

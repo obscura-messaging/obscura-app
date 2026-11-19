@@ -45,7 +45,7 @@ final class ObscuraSession: ClientEventListener {
     private init() {
         SharedContainer.logStatus { NSLog("%@", $0) }
         do {
-            if let username = try storage.load()?["username"] {
+            if let username = try storage.load()?.username {
                 let restored = try makeUserClient(username: username)
                 client = restored
                 clientUsername = username.lowercased()
@@ -76,9 +76,7 @@ final class ObscuraSession: ClientEventListener {
     }
 
     func makeUserClient(username: String) throws -> ObscuraClient {
-        guard username.range(of: "^[a-zA-Z0-9_]{3,50}$", options: .regularExpression) != nil else {
-            throw ObscuraError.InvalidArgument(reason: "Invalid username")
-        }
+        try validateUsername(username: username)
         // The server normalizes usernames; case variants must open the same database.
         let storageName = username.lowercased()
         do {
@@ -127,9 +125,7 @@ final class ObscuraSession: ClientEventListener {
     }
 
     func replaceClient(username: String) async throws -> ObscuraClient {
-        guard username.range(of: "^[a-zA-Z0-9_]{3,50}$", options: .regularExpression) != nil else {
-            throw ObscuraError.InvalidArgument(reason: "Invalid username")
-        }
+        try validateUsername(username: username)
         restoreTask?.cancel()
         await restoreTask?.value
         restoreTask = nil
@@ -198,6 +194,8 @@ final class ObscuraSession: ClientEventListener {
     nonisolated func onFriendsChanged() {
         Task { @MainActor in self.onFriendsListChanged?() }
     }
+
+    nonisolated func onFriendRequestReceived() {}
 
     nonisolated func onMessageReceived(model: EntryModel) {
         Task { @MainActor in self.onMessageReceivedCallback?(model) }

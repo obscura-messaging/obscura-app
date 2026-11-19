@@ -2,8 +2,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::ObscuraError;
 use crate::types::{
-    ConversationItem, ConversationKind, EntryModel, MAX_EPHEMERAL_AGE_MS, MediaAttachment,
-    MediaType, ProfileItem, StoryItem,
+    ConversationContent, ConversationItem, ConversationKind, EntryModel, MAX_EPHEMERAL_AGE_MS,
+    MediaType, ProfileItem, StoredAttachment, StoryItem, expires_at,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,31 +139,47 @@ pub fn can_insert_conversation(conn: &Connection, id: &str) -> Result<bool, Obsc
     Ok(!exists)
 }
 
-pub fn insert_conversation(conn: &Connection, item: &ConversationItem) -> Result<(), ObscuraError> {
-    let att = item.attachment.as_ref();
+pub fn insert_conversation(
+    conn: &Connection,
+    item: &ConversationItem,
+    attachment: Option<&StoredAttachment>,
+) -> Result<(), ObscuraError> {
+    let (content, caption, caption_meta, display_duration) = match &item.content {
+        ConversationContent::Message { text } => (text.as_str(), None, None, 0i64),
+        ConversationContent::Pix {
+            caption,
+            caption_meta,
+            display_duration,
+            ..
+        } => (
+            "",
+            caption.as_deref(),
+            caption_meta.as_deref(),
+            *display_duration as i64,
+        ),
+    };
     conn.execute(
         "INSERT OR REPLACE INTO conversation_entries (
             id, peer_user_id, kind, author_user_id, sent_at, viewed_at, expires_at,
             content, media_ref, content_key, nonce, media_type, caption, caption_meta,
             display_duration, undelivered
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 0)",
         params![
             item.id,
             item.peer_user_id,
-            item.kind.as_str(),
+            item.kind().as_str(),
             item.author_user_id,
             item.sent_at,
             item.viewed_at,
-            item.expires_at,
-            item.content,
-            att.map(|a| a.id.as_str()),
-            att.map(|a| a.content_key.as_slice()),
-            att.map(|a| a.nonce.as_slice()),
-            att.map(|a| a.media_type.as_str()),
-            item.caption,
-            item.caption_meta,
-            item.display_duration as i64,
-            i64::from(item.undelivered),
+            item.expires_at(),
+            content,
+            attachment.map(|a| a.id.as_str()),
+            attachment.map(|a| a.content_key.as_slice()),
+            attachment.map(|a| a.nonce.as_slice()),
+            attachment.map(|a| a.media_type.as_str()),
+            caption,
+            caption_meta,
+            display_duration,
         ],
     )?;
     Ok(())
@@ -174,9 +190,9 @@ pub fn get_conversation(
     id: &str,
 ) -> Result<Option<ConversationItem>, ObscuraError> {
     conn.query_row(
-        "SELECT id, peer_user_id, kind, author_user_id, sent_at, viewed_at, expires_at,
+        "SELECT id, peer_user_id, kind, author_user_id, sent_at, viewed_at,
                 content, media_ref, content_key, nonce, media_type, caption, caption_meta,
-                display_duration, undelivered
+                display_duration
          FROM conversation_entries WHERE id = ?1",
         params![id],
         row_to_conversation,
@@ -187,9 +203,9 @@ pub fn get_conversation(
 
 pub fn get_messages(conn: &Connection) -> Result<Vec<ConversationItem>, ObscuraError> {
     let mut stmt = conn.prepare(
-        "SELECT id, peer_user_id, kind, author_user_id, sent_at, viewed_at, expires_at,
+        "SELECT id, peer_user_id, kind, author_user_id, sent_at, viewed_at,
                 content, media_ref, content_key, nonce, media_type, caption, caption_meta,
-                display_duration, undelivered
+                display_duration
          FROM conversation_entries ORDER BY sent_at ASC, id ASC",
     )?;
     let rows = stmt.query_map([], row_to_conversation)?;
@@ -197,14 +213,30 @@ pub fn get_messages(conn: &Connection) -> Result<Vec<ConversationItem>, ObscuraE
         .map_err(ObscuraError::from)
 }
 
-pub fn get_undelivered_messages(conn: &Connection) -> Result<Vec<ConversationItem>, ObscuraError> {
+pub fn get_messages_with_attachments(
+    conn: &Connection,
+) -> Result<Vec<(ConversationItem, Option<StoredAttachment>)>, ObscuraError> {
     let mut stmt = conn.prepare(
-        "SELECT id, peer_user_id, kind, author_user_id, sent_at, viewed_at, expires_at,
+        "SELECT id, peer_user_id, kind, author_user_id, sent_at, viewed_at,
                 content, media_ref, content_key, nonce, media_type, caption, caption_meta,
-                display_duration, undelivered
+                display_duration
+         FROM conversation_entries ORDER BY sent_at ASC, id ASC",
+    )?;
+    let rows = stmt.query_map([], row_to_conversation_with_attachment)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(ObscuraError::from)
+}
+
+pub fn get_undelivered_messages(
+    conn: &Connection,
+) -> Result<Vec<(ConversationItem, Option<StoredAttachment>)>, ObscuraError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, peer_user_id, kind, author_user_id, sent_at, viewed_at,
+                content, media_ref, content_key, nonce, media_type, caption, caption_meta,
+                display_duration
          FROM conversation_entries WHERE undelivered = 1 ORDER BY sent_at ASC, id ASC",
     )?;
-    let rows = stmt.query_map([], row_to_conversation)?;
+    let rows = stmt.query_map([], row_to_conversation_with_attachment)?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(ObscuraError::from)
 }
@@ -213,13 +245,23 @@ pub fn mark_conversation_viewed(
     conn: &Connection,
     id: &str,
     viewed_at: i64,
-    expires_at: i64,
 ) -> Result<(), ObscuraError> {
+    let Some(sent_at): Option<i64> = conn
+        .query_row(
+            "SELECT sent_at FROM conversation_entries WHERE id = ?1 AND viewed_at IS NULL",
+            params![id],
+            |r| r.get(0),
+        )
+        .optional()?
+    else {
+        return Ok(());
+    };
+    let exp = expires_at(sent_at, Some(viewed_at));
     conn.execute(
         "UPDATE conversation_entries
          SET viewed_at = ?1, expires_at = ?2
          WHERE id = ?3 AND viewed_at IS NULL",
-        params![viewed_at, expires_at, id],
+        params![viewed_at, exp, id],
     )?;
     Ok(())
 }
@@ -240,7 +282,7 @@ pub fn get_attachment(
     conn: &Connection,
     entry_id: &str,
     now_ms: i64,
-) -> Result<Option<MediaAttachment>, ObscuraError> {
+) -> Result<Option<StoredAttachment>, ObscuraError> {
     let mut stmt = conn.prepare(
         "SELECT media_ref, content_key, nonce, media_type
          FROM conversation_entries WHERE id = ?1 AND expires_at > ?2
@@ -282,25 +324,27 @@ pub fn can_insert_story(conn: &Connection, id: &str) -> Result<bool, ObscuraErro
     Ok(!exists)
 }
 
-pub fn insert_story(conn: &Connection, item: &StoryItem) -> Result<(), ObscuraError> {
-    let att = item.attachment.as_ref();
+pub fn insert_story(
+    conn: &Connection,
+    item: &StoryItem,
+    attachment: Option<&StoredAttachment>,
+) -> Result<(), ObscuraError> {
     conn.execute(
         "INSERT OR REPLACE INTO story_entries (
             id, author_user_id, sent_at, expires_at, content,
             media_ref, content_key, nonce, media_type, caption_meta, undelivered
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0)",
         params![
             item.id,
             item.author_user_id,
             item.sent_at,
-            item.expires_at,
+            item.expires_at(),
             item.content,
-            att.map(|a| a.id.as_str()),
-            att.map(|a| a.content_key.as_slice()),
-            att.map(|a| a.nonce.as_slice()),
-            att.map(|a| a.media_type.as_str()),
+            attachment.map(|a| a.id.as_str()),
+            attachment.map(|a| a.content_key.as_slice()),
+            attachment.map(|a| a.nonce.as_slice()),
+            attachment.map(|a| a.media_type.as_str()),
             item.caption_meta,
-            i64::from(item.undelivered),
         ],
     )?;
     Ok(())
@@ -320,8 +364,8 @@ pub fn set_story_undelivered(
 
 pub fn get_stories(conn: &Connection, now: i64) -> Result<Vec<StoryItem>, ObscuraError> {
     let mut stmt = conn.prepare(
-        "SELECT id, author_user_id, sent_at, expires_at, content,
-                media_ref, content_key, nonce, media_type, caption_meta, undelivered
+        "SELECT id, author_user_id, sent_at, content,
+                media_ref, content_key, nonce, media_type, caption_meta
          FROM story_entries WHERE expires_at > ?1 ORDER BY sent_at ASC, id ASC",
     )?;
     let rows = stmt.query_map(params![now], row_to_story)?;
@@ -329,31 +373,35 @@ pub fn get_stories(conn: &Connection, now: i64) -> Result<Vec<StoryItem>, Obscur
         .map_err(ObscuraError::from)
 }
 
-pub fn get_all_stories(conn: &Connection) -> Result<Vec<StoryItem>, ObscuraError> {
+pub fn get_all_stories(
+    conn: &Connection,
+) -> Result<Vec<(StoryItem, Option<StoredAttachment>)>, ObscuraError> {
     let mut stmt = conn.prepare(
-        "SELECT id, author_user_id, sent_at, expires_at, content,
-                media_ref, content_key, nonce, media_type, caption_meta, undelivered
+        "SELECT id, author_user_id, sent_at, content,
+                media_ref, content_key, nonce, media_type, caption_meta
          FROM story_entries ORDER BY sent_at ASC, id ASC",
     )?;
-    let rows = stmt.query_map([], row_to_story)?;
+    let rows = stmt.query_map([], row_to_story_with_attachment)?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(ObscuraError::from)
 }
 
-pub fn get_undelivered_stories(conn: &Connection) -> Result<Vec<StoryItem>, ObscuraError> {
+pub fn get_undelivered_stories(
+    conn: &Connection,
+) -> Result<Vec<(StoryItem, Option<StoredAttachment>)>, ObscuraError> {
     let mut stmt = conn.prepare(
-        "SELECT id, author_user_id, sent_at, expires_at, content,
-                media_ref, content_key, nonce, media_type, caption_meta, undelivered
+        "SELECT id, author_user_id, sent_at, content,
+                media_ref, content_key, nonce, media_type, caption_meta
          FROM story_entries WHERE undelivered = 1 ORDER BY sent_at ASC, id ASC",
     )?;
-    let rows = stmt.query_map([], row_to_story)?;
+    let rows = stmt.query_map([], row_to_story_with_attachment)?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(ObscuraError::from)
 }
 
 pub fn get_profile(conn: &Connection, user_id: &str) -> Result<Option<ProfileItem>, ObscuraError> {
     conn.query_row(
-        "SELECT user_id, author_device_id, updated_at, display_name, bio, undelivered
+        "SELECT user_id, author_device_id, updated_at, display_name, bio
          FROM profile_entries WHERE user_id = ?1",
         params![user_id],
         row_to_profile,
@@ -384,14 +432,13 @@ pub fn insert_profile(conn: &Connection, item: &ProfileItem) -> Result<(), Obscu
     conn.execute(
         "INSERT OR REPLACE INTO profile_entries (
             user_id, author_device_id, updated_at, display_name, bio, undelivered
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, 0)",
         params![
             item.user_id,
             item.author_device_id,
             item.updated_at,
             item.display_name,
             item.bio,
-            i64::from(item.undelivered),
         ],
     )?;
     Ok(())
@@ -412,7 +459,7 @@ pub fn set_profile_undelivered(
 
 pub fn get_profiles(conn: &Connection) -> Result<Vec<ProfileItem>, ObscuraError> {
     let mut stmt = conn.prepare(
-        "SELECT user_id, author_device_id, updated_at, display_name, bio, undelivered
+        "SELECT user_id, author_device_id, updated_at, display_name, bio
          FROM profile_entries ORDER BY user_id ASC",
     )?;
     let rows = stmt.query_map([], row_to_profile)?;
@@ -422,7 +469,7 @@ pub fn get_profiles(conn: &Connection) -> Result<Vec<ProfileItem>, ObscuraError>
 
 pub fn get_undelivered_profiles(conn: &Connection) -> Result<Vec<ProfileItem>, ObscuraError> {
     let mut stmt = conn.prepare(
-        "SELECT user_id, author_device_id, updated_at, display_name, bio, undelivered
+        "SELECT user_id, author_device_id, updated_at, display_name, bio
          FROM profile_entries WHERE undelivered = 1 ORDER BY user_id ASC",
     )?;
     let rows = stmt.query_map([], row_to_profile)?;
@@ -432,18 +479,18 @@ pub fn get_undelivered_profiles(conn: &Connection) -> Result<Vec<ProfileItem>, O
 
 pub fn import_snapshot(
     conn: &Connection,
-    messages: &[ConversationItem],
-    stories: &[StoryItem],
+    messages: &[(ConversationItem, Option<StoredAttachment>)],
+    stories: &[(StoryItem, Option<StoredAttachment>)],
     profiles: &[ProfileItem],
 ) -> Result<(), ObscuraError> {
-    for m in messages {
+    for (m, att) in messages {
         if can_insert_conversation(conn, &m.id)? {
-            insert_conversation(conn, m)?;
+            insert_conversation(conn, m, att.as_ref())?;
         }
     }
-    for s in stories {
+    for (s, att) in stories {
         if can_insert_story(conn, &s.id)? {
-            insert_story(conn, s)?;
+            insert_story(conn, s, att.as_ref())?;
         }
     }
     for p in profiles {
@@ -555,14 +602,14 @@ fn to_attachment(
     content_key: Option<Vec<u8>>,
     nonce: Option<Vec<u8>>,
     media_type: Option<String>,
-) -> Option<MediaAttachment> {
+) -> Option<StoredAttachment> {
     let id = media_ref?;
     if id.trim().is_empty() {
         return None;
     }
     let content_key = content_key?;
     let nonce = nonce?;
-    Some(MediaAttachment {
+    Some(StoredAttachment {
         id,
         content_key,
         nonce,
@@ -571,6 +618,12 @@ fn to_attachment(
 }
 
 fn row_to_conversation(r: &rusqlite::Row<'_>) -> rusqlite::Result<ConversationItem> {
+    row_to_conversation_with_attachment(r).map(|(item, _)| item)
+}
+
+fn row_to_conversation_with_attachment(
+    r: &rusqlite::Row<'_>,
+) -> rusqlite::Result<(ConversationItem, Option<StoredAttachment>)> {
     let kind_str: String = r.get(2)?;
     let kind = ConversationKind::from_wire(&kind_str).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(
@@ -582,22 +635,28 @@ fn row_to_conversation(r: &rusqlite::Row<'_>) -> rusqlite::Result<ConversationIt
             )),
         )
     })?;
-    let attachment = to_attachment(r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?);
-    let caption: Option<String> = r.get(12)?;
-    let caption_meta: Option<String> = r.get(13)?;
-    let display_duration: i64 = r.get(14)?;
-    let undelivered: i64 = r.get(15)?;
-    match kind {
+    let text: String = r.get(6)?;
+    let attachment = to_attachment(r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?);
+    let caption: Option<String> = r.get(11)?;
+    let caption_meta: Option<String> = r.get(12)?;
+    let display_duration: i64 = r.get(13)?;
+    let content = match kind {
         ConversationKind::Pix => {
-            if attachment.is_none() {
+            let Some(ref att) = attachment else {
                 return Err(rusqlite::Error::FromSqlConversionFailure(
-                    8,
+                    7,
                     rusqlite::types::Type::Text,
                     Box::new(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "pix requires an attachment",
                     )),
                 ));
+            };
+            ConversationContent::Pix {
+                attachment: att.as_ref(),
+                caption,
+                caption_meta,
+                display_duration: display_duration as i32,
             }
         }
         ConversationKind::Message => {
@@ -615,48 +674,49 @@ fn row_to_conversation(r: &rusqlite::Row<'_>) -> rusqlite::Result<ConversationIt
                     )),
                 ));
             }
+            ConversationContent::Message { text }
         }
-    }
-    Ok(ConversationItem {
-        id: r.get(0)?,
-        peer_user_id: r.get(1)?,
-        kind,
-        author_user_id: r.get(3)?,
-        sent_at: r.get(4)?,
-        viewed_at: r.get(5)?,
-        expires_at: r.get(6)?,
-        content: r.get(7)?,
+    };
+    Ok((
+        ConversationItem {
+            id: r.get(0)?,
+            peer_user_id: r.get(1)?,
+            author_user_id: r.get(3)?,
+            sent_at: r.get(4)?,
+            viewed_at: r.get(5)?,
+            content,
+        },
         attachment,
-        caption,
-        caption_meta,
-        display_duration: display_duration as i32,
-        undelivered: undelivered != 0,
-    })
+    ))
 }
 
 fn row_to_story(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoryItem> {
-    let attachment = to_attachment(r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?);
-    let undelivered: i64 = r.get(10)?;
-    Ok(StoryItem {
-        id: r.get(0)?,
-        author_user_id: r.get(1)?,
-        sent_at: r.get(2)?,
-        expires_at: r.get(3)?,
-        content: r.get(4)?,
+    row_to_story_with_attachment(r).map(|(item, _)| item)
+}
+
+fn row_to_story_with_attachment(
+    r: &rusqlite::Row<'_>,
+) -> rusqlite::Result<(StoryItem, Option<StoredAttachment>)> {
+    let attachment = to_attachment(r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?);
+    Ok((
+        StoryItem {
+            id: r.get(0)?,
+            author_user_id: r.get(1)?,
+            sent_at: r.get(2)?,
+            content: r.get(3)?,
+            attachment: attachment.as_ref().map(StoredAttachment::as_ref),
+            caption_meta: r.get(8)?,
+        },
         attachment,
-        caption_meta: r.get(9)?,
-        undelivered: undelivered != 0,
-    })
+    ))
 }
 
 fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<ProfileItem> {
-    let undelivered: i64 = r.get(5)?;
     Ok(ProfileItem {
         user_id: r.get(0)?,
         author_device_id: r.get(1)?,
         updated_at: r.get(2)?,
         display_name: r.get(3)?,
         bio: r.get(4)?,
-        undelivered: undelivered != 0,
     })
 }

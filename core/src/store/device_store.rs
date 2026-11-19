@@ -1,6 +1,7 @@
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::ObscuraError;
+use crate::store::signal_store::address_key_for_device;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalDevice {
@@ -83,7 +84,7 @@ pub fn remove(conn: &Connection, user_id: &str, device_ids: &[String]) -> Result
         if deleted > 0 {
             conn.execute(
                 "DELETE FROM signal_sessions WHERE address = ?1",
-                params![format!("{device_id}.1")],
+                params![address_key_for_device(device_id)],
             )?;
         }
     }

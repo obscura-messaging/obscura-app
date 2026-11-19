@@ -21,11 +21,11 @@ import uniffi.obscura_core.AuthState
 import uniffi.obscura_core.ClientEventListener
 import uniffi.obscura_core.ConnectionState
 import uniffi.obscura_core.EntryModel
-import uniffi.obscura_core.FriendStatus
 import uniffi.obscura_core.ObscuraClient
 import uniffi.obscura_core.ObscuraClientConfig
 import uniffi.obscura_core.ObscuraException
 import uniffi.obscura_core.ObscuraLogger
+import uniffi.obscura_core.validateUsername
 
 /** Owns the live client, OS lifecycle and notifications. The core owns session persistence. */
 object ObscuraSession : ObscuraLogger, ClientEventListener {
@@ -57,7 +57,6 @@ object ObscuraSession : ObscuraLogger, ClientEventListener {
     @Volatile var client: ObscuraClient? = null
         private set
     @Volatile private var clientUsername: String? = null
-    @Volatile private var previousPending: Set<String>? = null
     @Volatile var appInForeground =
         ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
         private set
@@ -85,23 +84,11 @@ object ObscuraSession : ObscuraLogger, ClientEventListener {
 
     override fun onFriendsChanged() {
         sink?.onFriendsChanged()
-        val c = client ?: return
-        scope.launch {
-            try {
-                val pending = c.getFriends()
-                    .filter { it.status == FriendStatus.PENDING_RECEIVED }
-                    .map { it.userId }
-                    .toSet()
-                if (client !== c) return@launch
-                if (!appInForeground && previousPending?.let { (pending - it).isNotEmpty() } == true) {
-                    NotificationHelper.postGeneric(appContext, "New friend request")
-                }
-                previousPending = pending
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                databaseError("friends", "notification", e.message ?: e.javaClass.simpleName)
-            }
+    }
+
+    override fun onFriendRequestReceived() {
+        if (!appInForeground) {
+            NotificationHelper.postGeneric(appContext, "New friend request")
         }
     }
 
@@ -184,9 +171,7 @@ object ObscuraSession : ObscuraLogger, ClientEventListener {
     }
 
     private fun buildClient(username: String): ObscuraClient {
-        if (!Regex("^[a-zA-Z0-9_]{3,50}$").matches(username)) {
-            throw ObscuraException.InvalidArgument("Invalid username")
-        }
+        validateUsername(username)
         destroyClient(notifySink = false)
         // The server treats usernames case-insensitively; storage must identify the same account.
         val storageName = username.lowercase(Locale.ROOT)
@@ -206,7 +191,6 @@ object ObscuraSession : ObscuraLogger, ClientEventListener {
         }
         client = c
         clientUsername = storageName
-        seedPreviousPending(c)
         return c
     }
 
@@ -228,29 +212,10 @@ object ObscuraSession : ObscuraLogger, ClientEventListener {
         )
     }
 
-    private fun seedPreviousPending(c: ObscuraClient) {
-        scope.launch {
-            try {
-                val pending = c.getFriends()
-                    .filter { it.status == FriendStatus.PENDING_RECEIVED }
-                    .map { it.userId }
-                    .toSet()
-                if (client === c && previousPending == null) {
-                    previousPending = pending
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                databaseError("friends", "notification", e.message ?: e.javaClass.simpleName)
-            }
-        }
-    }
-
     fun destroyClient(notifySink: Boolean = true) {
         val old = client
         client = null
         clientUsername = null
-        previousPending = null
         if (old != null) {
             runBlocking { old.shutdown() }
         }
@@ -268,8 +233,7 @@ object ObscuraSession : ObscuraLogger, ClientEventListener {
     fun tryRestore(): ObscuraClient? {
         client?.let { return it }
         val saved = sessionStorage.load() ?: return null
-        val username = saved["username"] ?: return null
-        val c = buildClient(username)
+        val c = buildClient(saved.username)
         restoreJob = scope.launch {
             if (!c.restorePersistedSession()) {
                 Log.w(TAG, "No usable stored session")

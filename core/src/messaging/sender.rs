@@ -3,10 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::Mutex as AsyncMutex;
 
+use crate::auth::AuthManager;
 use crate::error::ObscuraError;
 use crate::messaging::messenger::{
-    Messenger, PeerBundle, UserSubmission, parse_peer_bundle, parse_peer_bundles,
-    require_consistent,
+    Messenger, PeerBundle, UserSubmission, parse_peer_bundles, require_consistent,
 };
 use crate::network::api::APIClient;
 use crate::network::transport::ObscuraLogger;
@@ -29,7 +29,7 @@ pub struct MessageSender {
     messenger: Messenger,
     db: DbHandle,
     logger: Arc<dyn ObscuraLogger>,
-    self_device_id: Arc<dyn Fn() -> Option<String> + Send + Sync>,
+    auth: Arc<AuthManager>,
     recipient_locks: Arc<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>>,
 }
 
@@ -39,14 +39,14 @@ impl MessageSender {
         messenger: Messenger,
         db: DbHandle,
         logger: Arc<dyn ObscuraLogger>,
-        self_device_id: Arc<dyn Fn() -> Option<String> + Send + Sync>,
+        auth: Arc<AuthManager>,
     ) -> Self {
         Self {
             api,
             messenger,
             db,
             logger,
-            self_device_id,
+            auth,
             recipient_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -184,7 +184,7 @@ impl MessageSender {
                             settled.insert(user_id.clone(), vec![rejected(user_id, e.to_string())]);
                             continue;
                         }
-                        let self_dev = (self.self_device_id)();
+                        let self_dev = self.auth.device_id();
                         let is_self = self_dev.is_some_and(|s| known.contains(&s));
                         target_users.push((user_id.clone(), is_self));
                         batch_submissions.extend(subs);
@@ -304,7 +304,7 @@ impl MessageSender {
             .db
             .read(move |conn| device_store::devices_of(conn, &uid))
             .await?;
-        let self_dev = (self.self_device_id)();
+        let self_dev = self.auth.device_id();
         Ok(all
             .into_iter()
             .filter(|d| self_dev.as_deref() != Some(d.as_str()))
@@ -343,10 +343,10 @@ impl MessageSender {
     }
 
     async fn fetch_all(&self, user_id: &str) -> Result<Vec<PeerBundle>, ObscuraError> {
-        let self_dev = (self.self_device_id)();
+        let self_dev = self.auth.device_id();
         match self.api.fetch_pre_key_bundles(user_id).await {
             Ok(values) => {
-                let bundles = parse_peer_bundles(&values)?;
+                let bundles = parse_peer_bundles(values)?;
                 Ok(bundles
                     .into_iter()
                     .filter(|b| self_dev.as_deref() != Some(b.device_id.as_str()))
@@ -364,7 +364,7 @@ impl MessageSender {
     ) -> Result<Option<PeerBundle>, ObscuraError> {
         match self.api.fetch_pre_key_bundle(user_id, device_id).await {
             Ok(val) => {
-                let bundle = parse_peer_bundle(&val)?;
+                let bundle = PeerBundle::try_from(val)?;
                 if bundle.device_id != device_id {
                     return Err(ObscuraError::protocol(format!(
                         "Bundle for {device_id} names device {}",

@@ -4,6 +4,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import org.json.JSONObject
 import uniffi.obscura_core.ObscuraException
+import uniffi.obscura_core.PersistedSession
 import uniffi.obscura_core.SessionStorage
 
 /**
@@ -14,9 +15,16 @@ class SharedPreferencesSessionStorage(
     private val prefs: SharedPreferences
 ) : SessionStorage {
 
-    override fun save(data: Map<String, String>) {
+    override fun save(session: PersistedSession) {
         try {
-            val json = JSONObject(data)
+            val json = JSONObject().apply {
+                put("token", session.token)
+                put("refreshToken", session.refreshToken)
+                put("expiresAt", session.expiresAt)
+                put("userId", session.userId)
+                put("deviceId", session.deviceId)
+                put("username", session.username)
+            }
             // Synchronous: refresh tokens are single-use, so losing a write to process death means a 401.
             check(prefs.edit()
                 .clear()
@@ -29,7 +37,7 @@ class SharedPreferencesSessionStorage(
         }
     }
 
-    override fun load(): Map<String, String>? {
+    override fun load(): PersistedSession? {
         val wrapped = prefs.getString(BLOB, null) ?: return null
         val plaintext = try {
             LocalKeystore.unwrap(wrapped)
@@ -40,11 +48,14 @@ class SharedPreferencesSessionStorage(
         }
         try {
             val json = JSONObject(String(plaintext, Charsets.UTF_8))
-            return json.keys().asSequence().associateWith { key ->
-                val value = json.get(key)
-                require(value is String) { "Session field $key is not a string" }
-                value
-            }
+            return PersistedSession(
+                token = json.getString("token"),
+                refreshToken = json.getString("refreshToken"),
+                expiresAt = json.getLong("expiresAt"),
+                userId = json.getString("userId"),
+                deviceId = json.getString("deviceId"),
+                username = json.getString("username"),
+            )
         } catch (e: ObscuraException) {
             throw e
         } catch (e: Exception) {

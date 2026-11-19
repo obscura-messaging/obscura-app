@@ -17,19 +17,19 @@ const EXTENSIONS: [&str; 3] = ["jpg", "mp4", "mov"];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EncryptedAttachment {
     pub ciphertext: Vec<u8>,
-    pub content_key: Vec<u8>,
-    pub nonce: Vec<u8>,
+    pub content_key: [u8; KEY_SIZE],
+    pub nonce: [u8; NONCE_SIZE],
 }
 
-pub fn random_nonce() -> Vec<u8> {
-    let mut nonce = vec![0u8; NONCE_SIZE];
-    rand::rng().fill(&mut nonce[..]);
+pub fn random_nonce() -> [u8; NONCE_SIZE] {
+    let mut nonce = [0u8; NONCE_SIZE];
+    rand::rng().fill(&mut nonce);
     nonce
 }
 
 pub fn encrypt(plaintext: &[u8]) -> Result<EncryptedAttachment, ObscuraError> {
-    let mut content_key = vec![0u8; KEY_SIZE];
-    rand::rng().fill(&mut content_key[..]);
+    let mut content_key = [0u8; KEY_SIZE];
+    rand::rng().fill(&mut content_key);
     let nonce = random_nonce();
     let ciphertext = encrypt_with_key(plaintext, &content_key, &nonce)?;
     Ok(EncryptedAttachment {

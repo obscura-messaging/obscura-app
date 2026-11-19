@@ -4,15 +4,15 @@ import ObscuraCore
 
 private final class MemorySessionStorage: SessionStorage, @unchecked Sendable {
     private let lock = NSLock()
-    private var stored: [String: String]?
+    private var stored: PersistedSession?
 
-    func save(data: [String: String]) throws {
+    func save(session: PersistedSession) throws {
         lock.lock()
-        stored = data
+        stored = session
         lock.unlock()
     }
 
-    func load() throws -> [String: String]? {
+    func load() throws -> PersistedSession? {
         lock.lock()
         defer { lock.unlock() }
         return stored
@@ -40,6 +40,7 @@ private final class NoopListener: ClientEventListener, @unchecked Sendable {
     func onConnectionStateChanged(state: ConnectionState) {}
     func onAuthStateChanged(state: AuthState) {}
     func onFriendsChanged() {}
+    func onFriendRequestReceived() {}
     func onMessageReceived(model: EntryModel) {}
     func onPeerTypingChanged(peerUserId: String, isTyping: Bool) {}
 }

@@ -26,17 +26,19 @@ pub mod store;
 pub mod types;
 pub mod wire;
 
+pub use auth::validate_username;
 pub use client::ObscuraClient;
 pub use crypto::link::link_code_device_name;
 pub use error::{ObscuraError, error_code, error_message};
 pub use network::transport::{
-    ClientEventListener, HttpRequest, HttpResponse, ObscuraLogger, SessionStorage, Transport,
-    WebSocketHandle, WebSocketSink,
+    ClientEventListener, HttpRequest, HttpResponse, ObscuraLogger, PersistedSession,
+    SessionStorage, Transport, WebSocketHandle, WebSocketSink,
 };
 pub use types::{
-    AuthState, CaptureResult, ConnectionState, ConversationItem, ConversationKind, DeviceInfo,
-    EntryModel, Friend, FriendStatus, LinkRequest, LoginScenario, MediaAttachment, MediaType,
-    ObscuraClientConfig, ProfileItem, StoryItem, SubmissionResult, SubmissionStatus, TypingState,
+    AttachmentRef, AuthState, CaptureResult, ConnectionState, ConversationContent,
+    ConversationItem, DeviceInfo, EntryModel, Friend, FriendStatus, LinkRequest, LoginScenario,
+    MediaType, ObscuraClientConfig, ProfileItem, StoryItem, SubmissionResult, SubmissionStatus,
+    TypingState,
 };
 
 uniffi::setup_scaffolding!("obscura_core");

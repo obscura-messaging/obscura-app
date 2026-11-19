@@ -72,7 +72,7 @@ impl MediaType {
     }
 }
 
-#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConversationKind {
     Message,
     Pix,
@@ -160,14 +160,27 @@ pub struct DeviceInfo {
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
-pub struct MediaAttachment {
+pub struct AttachmentRef {
+    pub id: String,
+    pub media_type: MediaType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredAttachment {
     pub id: String,
     pub content_key: Vec<u8>,
     pub nonce: Vec<u8>,
     pub media_type: MediaType,
 }
 
-impl MediaAttachment {
+impl StoredAttachment {
+    pub fn as_ref(&self) -> AttachmentRef {
+        AttachmentRef {
+            id: self.id.clone(),
+            media_type: self.media_type,
+        }
+    }
+
     pub fn to_proto(&self) -> client::AttachmentPointer {
         client::AttachmentPointer {
             id: self.id.clone(),
@@ -181,7 +194,7 @@ impl MediaAttachment {
         if att.id.trim().is_empty() || att.content_key.is_empty() || att.nonce.is_empty() {
             return None;
         }
-        Some(MediaAttachment {
+        Some(StoredAttachment {
             id: att.id.clone(),
             content_key: att.content_key.clone(),
             nonce: att.nonce.clone(),
@@ -190,21 +203,27 @@ impl MediaAttachment {
     }
 }
 
+#[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
+pub enum ConversationContent {
+    Message {
+        text: String,
+    },
+    Pix {
+        attachment: AttachmentRef,
+        caption: Option<String>,
+        caption_meta: Option<String>,
+        display_duration: i32,
+    },
+}
+
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
 pub struct ConversationItem {
     pub id: String,
     pub peer_user_id: String,
-    pub kind: ConversationKind,
     pub author_user_id: String,
     pub sent_at: i64,
     pub viewed_at: Option<i64>,
-    pub expires_at: i64,
-    pub content: String,
-    pub attachment: Option<MediaAttachment>,
-    pub caption: Option<String>,
-    pub caption_meta: Option<String>,
-    pub display_duration: i32,
-    pub undelivered: bool,
+    pub content: ConversationContent,
 }
 
 impl ConversationItem {
@@ -213,24 +232,16 @@ impl ConversationItem {
         peer_user_id: String,
         author_user_id: String,
         sent_at: i64,
-        content: String,
+        text: String,
         viewed_at: Option<i64>,
-        undelivered: bool,
     ) -> Self {
         Self {
             id,
             peer_user_id,
-            kind: ConversationKind::Message,
             author_user_id,
             sent_at,
             viewed_at,
-            expires_at: expires_at(sent_at, viewed_at),
-            content,
-            attachment: None,
-            caption: None,
-            caption_meta: None,
-            display_duration: 0,
-            undelivered,
+            content: ConversationContent::Message { text },
         }
     }
 
@@ -240,46 +251,63 @@ impl ConversationItem {
         peer_user_id: String,
         author_user_id: String,
         sent_at: i64,
-        attachment: MediaAttachment,
+        attachment: AttachmentRef,
         caption: Option<String>,
         caption_meta: Option<String>,
         display_duration: i32,
         viewed_at: Option<i64>,
-        undelivered: bool,
     ) -> Self {
         Self {
             id,
             peer_user_id,
-            kind: ConversationKind::Pix,
             author_user_id,
             sent_at,
             viewed_at,
-            expires_at: expires_at(sent_at, viewed_at),
-            content: String::new(),
-            attachment: Some(attachment),
-            caption,
-            caption_meta,
-            display_duration,
-            undelivered,
+            content: ConversationContent::Pix {
+                attachment,
+                caption,
+                caption_meta,
+                display_duration,
+            },
         }
     }
 
-    pub fn to_client_message(&self) -> client::ClientMessage {
-        let payload = if let Some(att) = &self.attachment {
-            client::client_message::Payload::Pix(client::PixMessage {
+    pub fn expires_at(&self) -> i64 {
+        expires_at(self.sent_at, self.viewed_at)
+    }
+
+    pub fn kind(&self) -> ConversationKind {
+        match self.content {
+            ConversationContent::Message { .. } => ConversationKind::Message,
+            ConversationContent::Pix { .. } => ConversationKind::Pix,
+        }
+    }
+
+    pub fn to_client_message(
+        &self,
+        attachment: Option<&StoredAttachment>,
+    ) -> client::ClientMessage {
+        let payload = match &self.content {
+            ConversationContent::Pix {
+                caption,
+                caption_meta,
+                display_duration,
+                ..
+            } => client::client_message::Payload::Pix(client::PixMessage {
                 id: self.id.clone(),
                 peer_user_id: self.peer_user_id.clone(),
-                attachment: Some(att.to_proto()),
-                caption: self.caption.clone().unwrap_or_default(),
-                caption_meta: self.caption_meta.clone().unwrap_or_default(),
-                display_duration_secs: self.display_duration.max(0) as u32,
-            })
-        } else {
-            client::client_message::Payload::DirectMessage(client::DirectMessage {
-                id: self.id.clone(),
-                peer_user_id: self.peer_user_id.clone(),
-                content: self.content.clone(),
-            })
+                attachment: attachment.map(StoredAttachment::to_proto),
+                caption: caption.clone().unwrap_or_default(),
+                caption_meta: caption_meta.clone().unwrap_or_default(),
+                display_duration_secs: (*display_duration).max(0) as u32,
+            }),
+            ConversationContent::Message { text } => {
+                client::client_message::Payload::DirectMessage(client::DirectMessage {
+                    id: self.id.clone(),
+                    peer_user_id: self.peer_user_id.clone(),
+                    content: text.clone(),
+                })
+            }
         };
         client::ClientMessage {
             timestamp: self.sent_at.max(0) as u64,
@@ -287,19 +315,42 @@ impl ConversationItem {
         }
     }
 
-    pub fn to_snapshot_record(&self) -> client::StoredMessageRecord {
-        client::StoredMessageRecord {
-            id: self.id.clone(),
-            peer_user_id: self.peer_user_id.clone(),
-            kind: self.kind.as_str().to_owned(),
-            author_user_id: self.author_user_id.clone(),
-            sent_at: self.sent_at.max(0) as u64,
-            viewed_at: self.viewed_at.unwrap_or(0).max(0) as u64,
-            content: self.content.clone(),
-            attachment: self.attachment.as_ref().map(MediaAttachment::to_proto),
-            caption: self.caption.clone().unwrap_or_default(),
-            caption_meta: self.caption_meta.clone().unwrap_or_default(),
-            display_duration_secs: self.display_duration.max(0) as u32,
+    pub fn to_snapshot_record(
+        &self,
+        attachment: Option<&StoredAttachment>,
+    ) -> client::StoredMessageRecord {
+        match &self.content {
+            ConversationContent::Message { text } => client::StoredMessageRecord {
+                id: self.id.clone(),
+                peer_user_id: self.peer_user_id.clone(),
+                kind: ConversationKind::Message.as_str().to_owned(),
+                author_user_id: self.author_user_id.clone(),
+                sent_at: self.sent_at.max(0) as u64,
+                viewed_at: self.viewed_at.unwrap_or(0).max(0) as u64,
+                content: text.clone(),
+                attachment: None,
+                caption: String::new(),
+                caption_meta: String::new(),
+                display_duration_secs: 0,
+            },
+            ConversationContent::Pix {
+                caption,
+                caption_meta,
+                display_duration,
+                ..
+            } => client::StoredMessageRecord {
+                id: self.id.clone(),
+                peer_user_id: self.peer_user_id.clone(),
+                kind: ConversationKind::Pix.as_str().to_owned(),
+                author_user_id: self.author_user_id.clone(),
+                sent_at: self.sent_at.max(0) as u64,
+                viewed_at: self.viewed_at.unwrap_or(0).max(0) as u64,
+                content: String::new(),
+                attachment: attachment.map(StoredAttachment::to_proto),
+                caption: caption.clone().unwrap_or_default(),
+                caption_meta: caption_meta.clone().unwrap_or_default(),
+                display_duration_secs: (*display_duration).max(0) as u32,
+            },
         }
     }
 }
@@ -309,11 +360,9 @@ pub struct StoryItem {
     pub id: String,
     pub author_user_id: String,
     pub sent_at: i64,
-    pub expires_at: i64,
     pub content: String,
-    pub attachment: Option<MediaAttachment>,
+    pub attachment: Option<AttachmentRef>,
     pub caption_meta: Option<String>,
-    pub undelivered: bool,
 }
 
 impl StoryItem {
@@ -322,41 +371,48 @@ impl StoryItem {
         author_user_id: String,
         sent_at: i64,
         content: String,
-        attachment: Option<MediaAttachment>,
+        attachment: Option<AttachmentRef>,
         caption_meta: Option<String>,
-        undelivered: bool,
     ) -> Self {
         Self {
             id,
             author_user_id,
             sent_at,
-            expires_at: sent_at.saturating_add(STORY_MAX_AGE_MS),
             content,
             attachment,
             caption_meta,
-            undelivered,
         }
     }
 
-    pub fn to_client_message(&self) -> client::ClientMessage {
+    pub fn expires_at(&self) -> i64 {
+        self.sent_at.saturating_add(STORY_MAX_AGE_MS)
+    }
+
+    pub fn to_client_message(
+        &self,
+        attachment: Option<&StoredAttachment>,
+    ) -> client::ClientMessage {
         client::ClientMessage {
             timestamp: self.sent_at.max(0) as u64,
             payload: Some(client::client_message::Payload::Story(client::StoryPost {
                 id: self.id.clone(),
                 content: self.content.clone(),
-                attachment: self.attachment.as_ref().map(MediaAttachment::to_proto),
+                attachment: attachment.map(StoredAttachment::to_proto),
                 caption_meta: self.caption_meta.clone().unwrap_or_default(),
             })),
         }
     }
 
-    pub fn to_snapshot_record(&self) -> client::StoredStoryRecord {
+    pub fn to_snapshot_record(
+        &self,
+        attachment: Option<&StoredAttachment>,
+    ) -> client::StoredStoryRecord {
         client::StoredStoryRecord {
             id: self.id.clone(),
             author_user_id: self.author_user_id.clone(),
             sent_at: self.sent_at.max(0) as u64,
             content: self.content.clone(),
-            attachment: self.attachment.as_ref().map(MediaAttachment::to_proto),
+            attachment: attachment.map(StoredAttachment::to_proto),
             caption_meta: self.caption_meta.clone().unwrap_or_default(),
         }
     }
@@ -369,7 +425,6 @@ pub struct ProfileItem {
     pub updated_at: i64,
     pub display_name: String,
     pub bio: String,
-    pub undelivered: bool,
 }
 
 impl ProfileItem {

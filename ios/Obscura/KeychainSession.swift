@@ -2,6 +2,35 @@ import Foundation
 import Security
 import ObscuraCore
 
+private struct CodableSession: Codable {
+    let token: String
+    let refreshToken: String
+    let expiresAt: Int64
+    let userId: String
+    let deviceId: String
+    let username: String
+
+    init(_ session: PersistedSession) {
+        token = session.token
+        refreshToken = session.refreshToken
+        expiresAt = session.expiresAt
+        userId = session.userId
+        deviceId = session.deviceId
+        username = session.username
+    }
+
+    var persisted: PersistedSession {
+        PersistedSession(
+            token: token,
+            refreshToken: refreshToken,
+            expiresAt: expiresAt,
+            userId: userId,
+            deviceId: deviceId,
+            username: username
+        )
+    }
+}
+
 final class KeychainSession: SessionStorage, @unchecked Sendable {
     private func query(accessGroup: String?) -> [String: Any] {
         let bundleId = Bundle.main.bundleIdentifier ?? "dev.barrelmaker.obscura.dev"
@@ -14,10 +43,10 @@ final class KeychainSession: SessionStorage, @unchecked Sendable {
         return query
     }
 
-    func save(data: [String: String]) throws {
+    func save(session: PersistedSession) throws {
         let encoded: Data
         do {
-            encoded = try JSONEncoder().encode(data)
+            encoded = try JSONEncoder().encode(CodableSession(session))
         } catch {
             throw ObscuraError.StorageFailed(reason: "Failed to encode session: \(error.localizedDescription)")
         }
@@ -37,7 +66,7 @@ final class KeychainSession: SessionStorage, @unchecked Sendable {
         try requireSuccess(status, operation: "save")
     }
 
-    func load() throws -> [String: String]? {
+    func load() throws -> PersistedSession? {
         var query = query(accessGroup: SharedContainer.keychainAccessGroup)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -49,7 +78,7 @@ final class KeychainSession: SessionStorage, @unchecked Sendable {
             throw ObscuraError.StorageFailed(reason: "Session keychain item is not data")
         }
         do {
-            return try JSONDecoder().decode([String: String].self, from: data)
+            return try JSONDecoder().decode(CodableSession.self, from: data).persisted
         } catch {
             throw ObscuraError.StorageFailed(reason: "Failed to decode session: \(error.localizedDescription)")
         }

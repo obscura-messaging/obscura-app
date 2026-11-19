@@ -23,38 +23,8 @@ final class UrlSessionTransport: Transport, @unchecked Sendable {
         }
 
         do {
-            let data: Data
-            let response: URLResponse
-            if let responseFilePath = request.responseFilePath {
-                if let bodyFilePath = request.bodyFilePath {
-                    urlRequest.httpBody = try Data(
-                        contentsOf: URL(fileURLWithPath: bodyFilePath),
-                        options: .mappedIfSafe
-                    )
-                } else {
-                    urlRequest.httpBody = request.body
-                }
-                let (tempURL, resp) = try await httpSession.download(for: urlRequest)
-                response = resp
-                if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
-                    let destURL = URL(fileURLWithPath: responseFilePath)
-                    let parentDir = destURL.deletingLastPathComponent()
-                    try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
-                    if FileManager.default.fileExists(atPath: destURL.path) {
-                        try FileManager.default.removeItem(at: destURL)
-                    }
-                    try FileManager.default.moveItem(at: tempURL, to: destURL)
-                    data = Data()
-                } else {
-                    data = (try? Data(contentsOf: tempURL)) ?? Data()
-                }
-            } else if let bodyFilePath = request.bodyFilePath {
-                let fileURL = URL(fileURLWithPath: bodyFilePath)
-                (data, response) = try await httpSession.upload(for: urlRequest, fromFile: fileURL)
-            } else {
-                urlRequest.httpBody = request.body
-                (data, response) = try await httpSession.data(for: urlRequest)
-            }
+            urlRequest.httpBody = request.body
+            let (data, response) = try await httpSession.data(for: urlRequest)
 
             guard let http = response as? HTTPURLResponse else {
                 throw ObscuraError.ProtocolViolation(reason: "Non-HTTP response for \(request.url)")

@@ -1,7 +1,5 @@
-use std::collections::HashMap;
 use std::future::Future;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use libsignal_protocol::IdentityKeyPair;
@@ -11,7 +9,7 @@ use tokio::task::JoinHandle;
 use crate::crypto::prekeys::{self, ProvisioningKeys};
 use crate::error::ObscuraError;
 use crate::network::api::{APIClient, AuthResponse, LinkSession};
-use crate::network::transport::{ObscuraLogger, SessionStorage};
+use crate::network::transport::{ObscuraLogger, PersistedSession, SessionStorage};
 use crate::store::device_store::{self, LocalDevice};
 use crate::store::signal_store::SignalStore;
 use crate::store::{DbContext, DbHandle};
@@ -28,52 +26,20 @@ pub enum TokenStatus {
     Unavailable,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Credentials {
-    pub token: String,
-    pub refresh_token: String,
-    pub expires_at: i64,
-    pub user_id: String,
-    pub device_id: String,
-    pub username: String,
-}
+pub type Credentials = PersistedSession;
 
 impl Credentials {
-    pub fn to_map(&self) -> HashMap<String, String> {
-        HashMap::from([
-            ("token".to_owned(), self.token.clone()),
-            ("refreshToken".to_owned(), self.refresh_token.clone()),
-            ("expiresAt".to_owned(), self.expires_at.to_string()),
-            ("userId".to_owned(), self.user_id.clone()),
-            ("deviceId".to_owned(), self.device_id.clone()),
-            ("username".to_owned(), self.username.clone()),
-        ])
-    }
-
-    pub fn from_map(map: &HashMap<String, String>) -> Option<Self> {
-        let token = map.get("token")?.clone();
-        let refresh_token = map.get("refreshToken")?.clone();
-        let expires_at: i64 = map.get("expiresAt")?.parse().ok()?;
-        let user_id = map.get("userId")?.clone();
-        let device_id = map.get("deviceId")?.clone();
-        let username = map.get("username")?.clone();
-        if token.trim().is_empty()
-            || refresh_token.trim().is_empty()
-            || expires_at <= 0
-            || !is_uuid(&user_id)
-            || !is_uuid(&device_id)
-            || username.trim().is_empty()
+    pub fn into_valid(self) -> Option<Self> {
+        if self.token.trim().is_empty()
+            || self.refresh_token.trim().is_empty()
+            || self.expires_at <= 0
+            || !is_uuid(&self.user_id)
+            || !is_uuid(&self.device_id)
+            || self.username.trim().is_empty()
         {
             return None;
         }
-        Some(Self {
-            token,
-            refresh_token,
-            expires_at,
-            user_id,
-            device_id,
-            username,
-        })
+        Some(self)
     }
 }
 
@@ -91,18 +57,63 @@ struct InFlightRefresh {
     handle: JoinHandle<()>,
 }
 
-struct AuthInnerState {
-    auth_state: AuthState,
-    credentials: Option<Credentials>,
-    generation: u64,
-    pending_link_session: Option<CachedLinkSession>,
-    refresh_failures: u32,
-    refresh_in_flight: Option<InFlightRefresh>,
-    refresh_loop: Option<JoinHandle<()>>,
+enum SessionPhase {
+    LoggedOut {
+        pending_link: Option<CachedLinkSession>,
+    },
+    Provisioning {
+        credentials: Credentials,
+        refresh_loop: JoinHandle<()>,
+    },
+    Authenticated {
+        credentials: Credentials,
+        refresh_loop: JoinHandle<()>,
+    },
 }
 
-pub type OnRejectedFn =
-    Arc<dyn Fn(Credentials, u64) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+impl SessionPhase {
+    fn auth_state(&self) -> AuthState {
+        match self {
+            SessionPhase::Authenticated { .. } => AuthState::Authenticated,
+            SessionPhase::LoggedOut { .. } | SessionPhase::Provisioning { .. } => {
+                AuthState::LoggedOut
+            }
+        }
+    }
+
+    fn credentials(&self) -> Option<&Credentials> {
+        match self {
+            SessionPhase::LoggedOut { .. } => None,
+            SessionPhase::Provisioning { credentials, .. }
+            | SessionPhase::Authenticated { credentials, .. } => Some(credentials),
+        }
+    }
+
+    fn credentials_mut(&mut self) -> Option<&mut Credentials> {
+        match self {
+            SessionPhase::LoggedOut { .. } => None,
+            SessionPhase::Provisioning { credentials, .. }
+            | SessionPhase::Authenticated { credentials, .. } => Some(credentials),
+        }
+    }
+
+    fn abort_refresh_loop(&self) {
+        match self {
+            SessionPhase::LoggedOut { .. } => {}
+            SessionPhase::Provisioning { refresh_loop, .. }
+            | SessionPhase::Authenticated { refresh_loop, .. } => refresh_loop.abort(),
+        }
+    }
+}
+
+struct AuthInnerState {
+    phase: SessionPhase,
+    generation: u64,
+    refresh_failures: u32,
+    refresh_in_flight: Option<InFlightRefresh>,
+}
+
+pub type OnRejectedFn = Arc<dyn Fn() + Send + Sync>;
 pub type AuthStateChangedFn = Arc<dyn Fn(AuthState) + Send + Sync>;
 pub type ClockFn = Arc<dyn Fn() -> i64 + Send + Sync>;
 
@@ -112,8 +123,8 @@ pub struct AuthManager {
     device_name: String,
     logger: Arc<dyn ObscuraLogger>,
     on_auth_state_changed: AuthStateChangedFn,
-    on_rejected: Mutex<Option<OnRejectedFn>>,
-    api: Mutex<Option<APIClient>>,
+    on_rejected: OnRejectedFn,
+    api: APIClient,
     clock: ClockFn,
     state: Mutex<AuthInnerState>,
 }
@@ -126,46 +137,39 @@ impl AuthManager {
         logger: Arc<dyn ObscuraLogger>,
         on_auth_state_changed: AuthStateChangedFn,
         clock: ClockFn,
+        build_api_and_on_rejected: impl FnOnce(&Weak<Self>) -> (APIClient, OnRejectedFn),
     ) -> Arc<Self> {
-        Arc::new(Self {
-            db,
-            storage,
-            device_name,
-            logger,
-            on_auth_state_changed,
-            on_rejected: Mutex::new(None),
-            api: Mutex::new(None),
-            clock,
-            state: Mutex::new(AuthInnerState {
-                auth_state: AuthState::LoggedOut,
-                credentials: None,
-                generation: 0,
-                pending_link_session: None,
-                refresh_failures: 0,
-                refresh_in_flight: None,
-                refresh_loop: None,
-            }),
+        Arc::new_cyclic(|weak| {
+            let (api, on_rejected) = build_api_and_on_rejected(weak);
+            Self {
+                db,
+                storage,
+                device_name,
+                logger,
+                on_auth_state_changed,
+                on_rejected,
+                api,
+                clock,
+                state: Mutex::new(AuthInnerState {
+                    phase: SessionPhase::LoggedOut { pending_link: None },
+                    generation: 0,
+                    refresh_failures: 0,
+                    refresh_in_flight: None,
+                }),
+            }
         })
     }
 
-    pub fn bind(&self, api: APIClient, on_rejected: OnRejectedFn) {
-        *self.api.lock().unwrap_or_else(|p| p.into_inner()) = Some(api);
-        *self.on_rejected.lock().unwrap_or_else(|p| p.into_inner()) = Some(on_rejected);
-    }
-
-    fn api(&self) -> APIClient {
-        self.api
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
-            .expect("APIClient not bound to AuthManager")
+    fn api(&self) -> &APIClient {
+        &self.api
     }
 
     pub fn auth_state(&self) -> AuthState {
         self.state
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .auth_state
+            .phase
+            .auth_state()
     }
 
     pub fn generation(&self) -> u64 {
@@ -179,8 +183,18 @@ impl AuthManager {
         self.state
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .credentials
-            .clone()
+            .phase
+            .credentials()
+            .cloned()
+    }
+
+    pub fn device_id(&self) -> Option<String> {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .phase
+            .credentials()
+            .map(|c| c.device_id.clone())
     }
 
     pub fn require_credentials(&self) -> Result<Credentials, ObscuraError> {
@@ -252,7 +266,10 @@ impl AuthManager {
         let now_s = (self.clock)() / 1000;
         {
             let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(cached) = st.pending_link_session.take()
+            if let SessionPhase::LoggedOut {
+                ref mut pending_link,
+            } = st.phase
+                && let Some(cached) = pending_link.take()
                 && cached.username == username
                 && cached.password == password
                 && cached.session.expires_at > now_s + 30
@@ -288,11 +305,14 @@ impl AuthManager {
                 Err(e) => return Err(e),
             };
             let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            st.pending_link_session = Some(CachedLinkSession {
-                username: username.to_owned(),
-                password: password.to_owned(),
-                session,
-            });
+            st.phase.abort_refresh_loop();
+            st.phase = SessionPhase::LoggedOut {
+                pending_link: Some(CachedLinkSession {
+                    username: username.to_owned(),
+                    password: password.to_owned(),
+                    session,
+                }),
+            };
             return Ok(LoginScenario::LinkRequired);
         };
 
@@ -360,11 +380,24 @@ impl AuthManager {
     pub fn publish_authenticated(&self) {
         let notify = {
             let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            if st.credentials.is_some() && st.auth_state != AuthState::Authenticated {
-                st.auth_state = AuthState::Authenticated;
-                true
-            } else {
-                false
+            match std::mem::replace(
+                &mut st.phase,
+                SessionPhase::LoggedOut { pending_link: None },
+            ) {
+                SessionPhase::Provisioning {
+                    credentials,
+                    refresh_loop,
+                } => {
+                    st.phase = SessionPhase::Authenticated {
+                        credentials,
+                        refresh_loop,
+                    };
+                    true
+                }
+                other => {
+                    st.phase = other;
+                    false
+                }
             }
         };
         if notify {
@@ -439,7 +472,7 @@ impl AuthManager {
             let _st = self.state.lock().unwrap_or_else(|p| p.into_inner());
             self.stored("load", || self.storage.load())?
         };
-        let stored = loaded.as_ref().and_then(Credentials::from_map);
+        let stored = loaded.and_then(Credentials::into_valid);
         let (local_device_id, has_identity) = self
             .db
             .read(|conn| {
@@ -480,7 +513,7 @@ impl AuthManager {
         let (previous, notify) = {
             let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
             if let Some(exp) = expected
-                && st.credentials.as_ref() != Some(exp)
+                && st.phase.credentials() != Some(exp)
             {
                 return Ok(None);
             }
@@ -489,19 +522,22 @@ impl AuthManager {
             {
                 return Ok(None);
             }
-            let previous = st.credentials.take();
+            let notify = st.phase.auth_state() != AuthState::LoggedOut;
+            st.phase.abort_refresh_loop();
+            let previous = match std::mem::replace(
+                &mut st.phase,
+                SessionPhase::LoggedOut { pending_link: None },
+            ) {
+                SessionPhase::LoggedOut { .. } => None,
+                SessionPhase::Provisioning { credentials, .. }
+                | SessionPhase::Authenticated { credentials, .. } => Some(credentials),
+            };
             st.generation += 1;
-            st.pending_link_session = None;
-            if let Some(job) = st.refresh_loop.take() {
-                job.abort();
-            }
             if let Some(inflight) = st.refresh_in_flight.take()
                 && expected.is_none()
             {
                 inflight.handle.abort();
             }
-            let notify = st.auth_state != AuthState::LoggedOut;
-            st.auth_state = AuthState::LoggedOut;
             let clear_res = self.stored("clear", || self.storage.clear());
             if let Err(e) = clear_res {
                 if notify {
@@ -529,7 +565,7 @@ impl AuthManager {
     async fn refresh_if_needed(self: &Arc<Self>, force: bool) -> Result<TokenStatus, ObscuraError> {
         let mut rx = {
             let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            let Some(current) = st.credentials.clone() else {
+            let Some(current) = st.phase.credentials().cloned() else {
                 return Ok(TokenStatus::Rejected);
             };
             if let Some(ref inflight) = st.refresh_in_flight
@@ -580,8 +616,8 @@ impl AuthManager {
             Err(e) => {
                 let failure_count = {
                     let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                    if st.generation != version || st.credentials.as_ref() != Some(&current) {
-                        return Ok(if st.credentials.is_none() {
+                    if st.generation != version || st.phase.credentials() != Some(&current) {
+                        return Ok(if st.phase.credentials().is_none() {
                             TokenStatus::Rejected
                         } else {
                             TokenStatus::Fresh
@@ -605,13 +641,8 @@ impl AuthManager {
                         ..
                     }
                 ) {
-                    let cb = self
-                        .on_rejected
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .clone();
-                    if let Some(on_rejected) = cb {
-                        on_rejected(current, version).await;
+                    if !matches!(self.end(Some(&current), Some(version)), Ok(None)) {
+                        (self.on_rejected)();
                     }
                     return Ok(if self.credentials().is_none() {
                         TokenStatus::Rejected
@@ -624,8 +655,8 @@ impl AuthManager {
         };
 
         let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if st.generation != version || st.credentials.as_ref() != Some(&current) {
-            return Ok(if st.credentials.is_none() {
+        if st.generation != version || st.phase.credentials() != Some(&current) {
+            return Ok(if st.phase.credentials().is_none() {
                 TokenStatus::Rejected
             } else {
                 TokenStatus::Fresh
@@ -644,8 +675,10 @@ impl AuthManager {
             device_id: current.device_id,
             username: current.username,
         };
-        self.stored("save", || self.storage.save(refreshed.to_map()))?;
-        st.credentials = Some(refreshed);
+        self.stored("save", || self.storage.save(refreshed.clone()))?;
+        if let Some(creds) = st.phase.credentials_mut() {
+            *creds = refreshed;
+        }
         st.refresh_failures = 0;
         Ok(TokenStatus::Fresh)
     }
@@ -657,27 +690,30 @@ impl AuthManager {
     ) -> Result<(), ObscuraError> {
         let notify = {
             let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            self.stored("save", || self.storage.save(new_creds.to_map()))?;
+            self.stored("save", || self.storage.save(new_creds.clone()))?;
+            let was_authenticated = st.phase.auth_state() == AuthState::Authenticated;
             st.generation += 1;
-            st.pending_link_session = None;
             if let Some(inflight) = st.refresh_in_flight.take() {
                 inflight.handle.abort();
             }
-            st.credentials = Some(new_creds);
             st.refresh_failures = 0;
-            if let Some(job) = st.refresh_loop.take() {
-                job.abort();
-            }
+            st.phase.abort_refresh_loop();
             let auth = Arc::clone(self);
-            st.refresh_loop = Some(crate::runtime::spawn(async move {
+            let refresh_loop = crate::runtime::spawn(async move {
                 auth.refresh_ahead_of_expiry().await;
-            }));
-            if publish_auth && st.auth_state != AuthState::Authenticated {
-                st.auth_state = AuthState::Authenticated;
-                true
+            });
+            st.phase = if publish_auth {
+                SessionPhase::Authenticated {
+                    credentials: new_creds,
+                    refresh_loop,
+                }
             } else {
-                false
-            }
+                SessionPhase::Provisioning {
+                    credentials: new_creds,
+                    refresh_loop,
+                }
+            };
+            publish_auth && !was_authenticated
         };
         if notify {
             (self.on_auth_state_changed)(AuthState::Authenticated);
@@ -690,7 +726,7 @@ impl AuthManager {
             let delay_ms = {
                 let st = self.state.lock().unwrap_or_else(|p| p.into_inner());
                 if st.refresh_failures == 0 {
-                    let Some(ref creds) = st.credentials else {
+                    let Some(creds) = st.phase.credentials() else {
                         return;
                     };
                     let remaining_s = self.seconds_until_expiry(creds.expires_at);
@@ -736,9 +772,7 @@ impl AuthManager {
 
     pub fn stop_background_tasks(&self) {
         let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(job) = st.refresh_loop.take() {
-            job.abort();
-        }
+        st.phase.abort_refresh_loop();
         if let Some(inflight) = st.refresh_in_flight.take() {
             inflight.handle.abort();
         }
@@ -753,13 +787,25 @@ impl AuthManager {
     }
 }
 
+#[uniffi::export]
+pub fn validate_username(username: &str) -> Result<(), ObscuraError> {
+    let valid = (3..=50).contains(&username.len())
+        && username
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    if !valid {
+        return Err(ObscuraError::invalid_arg("Invalid username"));
+    }
+    Ok(())
+}
+
 fn validate_login(username: &str, password: &str) -> Result<(), ObscuraError> {
     if username.trim().is_empty() || password.trim().is_empty() {
         return Err(ObscuraError::invalid_arg(
             "Username and password must not be blank",
         ));
     }
-    Ok(())
+    validate_username(username)
 }
 
 pub fn retry_delay_ms(failures: u32) -> u64 {

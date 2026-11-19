@@ -65,6 +65,18 @@ pub struct PreKeyUploadJson {
     pub kyber_pre_keys: Vec<KyberPreKeyJson>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreKeyBundleJson {
+    pub device_id: String,
+    pub registration_id: u32,
+    pub identity_key: String,
+    pub signed_pre_key: SignedPreKeyJson,
+    pub kyber_pre_key: KyberPreKeyJson,
+    #[serde(default)]
+    pub one_time_pre_key: Option<OneTimePreKeyJson>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PreKeyCounts {
     #[serde(rename = "oneTimePreKeyCount")]
@@ -184,11 +196,11 @@ pub fn generate_provisioning_keys_sync(
     }
 
     let state = PreKeyState {
-        next_signed_id: next_id(signed_id) as i64,
-        next_one_time_id: next_id(*one_time_ids.last().unwrap_or(&one_time_start)) as i64,
-        next_kyber_id: next_id(*kyber_ids.last().unwrap_or(&last_resort_id)) as i64,
-        active_signed_id: signed_id as i64,
-        active_last_resort_id: last_resort_id as i64,
+        next_signed_id: next_id(signed_id),
+        next_one_time_id: next_id(*one_time_ids.last().unwrap_or(&one_time_start)),
+        next_kyber_id: next_id(*kyber_ids.last().unwrap_or(&last_resort_id)),
+        active_signed_id: signed_id,
+        active_last_resort_id: last_resort_id,
         rotated_at: now_ms,
         synced_at: now_ms,
     };
@@ -270,20 +282,20 @@ pub async fn prepare_refill(
         let mut signed = None;
         let mut last_resort = None;
         if is_due(updated.rotated_at, now_ms) {
-            let s_id = updated.next_signed_id as u32;
-            let lr_id = updated.next_kyber_id as u32;
+            let s_id = updated.next_signed_id;
+            let lr_id = updated.next_kyber_id;
             let s_rec = generate_signed_pre_key(priv_key, s_id, now_ms)?;
             let lr_rec = generate_kyber_pre_key(priv_key, lr_id, now_ms)?;
-            updated.next_signed_id = next_id(s_id) as i64;
-            updated.next_kyber_id = next_id(lr_id) as i64;
+            updated.next_signed_id = next_id(s_id);
+            updated.next_kyber_id = next_id(lr_id);
             signed = Some((s_id, s_rec));
             last_resort = Some((lr_id, lr_rec));
         }
 
         let one_time = if counts.one_time < ONE_TIME_MINIMUM {
-            let batch_ids = ids(updated.next_one_time_id as u32, BATCH_SIZE);
+            let batch_ids = ids(updated.next_one_time_id, BATCH_SIZE);
             if let Some(&last) = batch_ids.last() {
-                updated.next_one_time_id = next_id(last) as i64;
+                updated.next_one_time_id = next_id(last);
             }
             batch_ids
                 .into_iter()
@@ -297,9 +309,9 @@ pub async fn prepare_refill(
         };
 
         let kyber = if counts.kyber < ONE_TIME_MINIMUM {
-            let batch_ids = ids(updated.next_kyber_id as u32, BATCH_SIZE);
+            let batch_ids = ids(updated.next_kyber_id, BATCH_SIZE);
             if let Some(&last) = batch_ids.last() {
-                updated.next_kyber_id = next_id(last) as i64;
+                updated.next_kyber_id = next_id(last);
             }
             let mut out = Vec::with_capacity(batch_ids.len());
             for id in batch_ids {
@@ -366,8 +378,8 @@ pub async fn confirm_refill(
         let mut state = SignalStore::pre_key_state(ctx.conn)?
             .ok_or_else(|| ObscuraError::storage("Pre-keys not provisioned"))?;
         if let (Some(s_id), Some(lr_id)) = (signed_id, last_resort_id) {
-            state.active_signed_id = s_id as i64;
-            state.active_last_resort_id = lr_id as i64;
+            state.active_signed_id = s_id;
+            state.active_last_resort_id = lr_id;
             state.rotated_at = now_ms;
         }
         state.synced_at = now_ms;

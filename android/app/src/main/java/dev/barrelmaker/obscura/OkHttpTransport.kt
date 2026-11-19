@@ -1,6 +1,5 @@
 package dev.barrelmaker.obscura
 
-import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -12,7 +11,6 @@ import okhttp3.ConnectionSpec
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
@@ -52,7 +50,6 @@ class OkHttpTransport(baseUrl: String) : Transport {
         val contentType = (request.headers["Content-Type"] ?: request.headers["content-type"])
             ?.toMediaTypeOrNull()
         val requestBody = when {
-            request.bodyFilePath != null -> File(request.bodyFilePath!!).asRequestBody(contentType)
             request.body != null -> request.body!!.toRequestBody(contentType)
             request.method == "POST" || request.method == "PUT" -> ByteArray(0).toRequestBody(contentType)
             else -> null
@@ -83,24 +80,9 @@ class OkHttpTransport(baseUrl: String) : Transport {
                     override fun onResponse(call: Call, response: Response) {
                         val result = try {
                             response.use { resp ->
-                                val status = resp.code
-                                val responseFilePath = request.responseFilePath
-                                val bodyBytes = if (status in 200..299 && responseFilePath != null) {
-                                    val outFile = File(responseFilePath)
-                                    outFile.parentFile?.mkdirs()
-                                    val stream = resp.body?.byteStream()
-                                    if (stream != null) {
-                                        outFile.outputStream().use { out -> stream.copyTo(out) }
-                                    } else {
-                                        outFile.writeBytes(ByteArray(0))
-                                    }
-                                    ByteArray(0)
-                                } else {
-                                    resp.body?.bytes() ?: ByteArray(0)
-                                }
                                 HttpResponse(
-                                    status = status.toUShort(),
-                                    body = bodyBytes,
+                                    status = resp.code.toUShort(),
+                                    body = resp.body?.bytes() ?: ByteArray(0),
                                     retryAfter = resp.header("Retry-After"),
                                 )
                             }

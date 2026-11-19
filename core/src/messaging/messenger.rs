@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -8,8 +9,9 @@ use libsignal_protocol::{
     SignalProtocolError, kem, message_decrypt, message_encrypt, process_prekey_bundle,
 };
 use prost::Message as _;
-use serde_json::Value;
 
+use crate::auth::AuthManager;
+use crate::crypto::prekeys::PreKeyBundleJson;
 use crate::error::ObscuraError;
 use crate::network::api::APIClient;
 use crate::proto::client::{ClientMessage, EncryptedMessage, encrypted_message};
@@ -55,136 +57,79 @@ impl PeerBundle {
     }
 }
 
-pub fn parse_peer_bundles(values: &[Value]) -> Result<Vec<PeerBundle>, ObscuraError> {
-    let mut out = Vec::with_capacity(values.len());
-    let mut seen = HashSet::with_capacity(values.len());
-    for v in values {
-        let b = parse_peer_bundle(v)?;
+impl TryFrom<PreKeyBundleJson> for PeerBundle {
+    type Error = ObscuraError;
+
+    fn try_from(raw: PreKeyBundleJson) -> Result<Self, Self::Error> {
+        let invalid_key =
+            |msg: &str| ObscuraError::protocol(format!("Invalid key in bundle: {msg}"));
+        if !is_uuid(&raw.device_id) {
+            return Err(ObscuraError::protocol("Invalid device id in bundle"));
+        }
+        let id_key_bytes = STANDARD
+            .decode(&raw.identity_key)
+            .map_err(|_| invalid_key("identityKey base64"))?;
+        let identity_key =
+            IdentityKey::decode(&id_key_bytes).map_err(|e| invalid_key(&e.to_string()))?;
+
+        let spk_pub_bytes = STANDARD
+            .decode(&raw.signed_pre_key.public_key)
+            .map_err(|_| invalid_key("signedPreKey.publicKey base64"))?;
+        let signed_pre_key =
+            PublicKey::deserialize(&spk_pub_bytes).map_err(|e| invalid_key(&e.to_string()))?;
+        let signed_pre_key_signature = STANDARD
+            .decode(&raw.signed_pre_key.signature)
+            .map_err(|_| invalid_key("signedPreKey.signature base64"))?;
+
+        let kyber_pub_bytes = STANDARD
+            .decode(&raw.kyber_pre_key.public_key)
+            .map_err(|_| invalid_key("kyberPreKey.publicKey base64"))?;
+        let kyber_pre_key = kem::PublicKey::deserialize(&kyber_pub_bytes)
+            .map_err(|e| invalid_key(&e.to_string()))?;
+        let kyber_pre_key_signature = STANDARD
+            .decode(&raw.kyber_pre_key.signature)
+            .map_err(|_| invalid_key("kyberPreKey.signature base64"))?;
+
+        let one_time_pre_key = match raw.one_time_pre_key {
+            None => None,
+            Some(otp) => {
+                let otp_pub_bytes = STANDARD
+                    .decode(&otp.public_key)
+                    .map_err(|_| invalid_key("oneTimePreKey.publicKey base64"))?;
+                let otp_pub = PublicKey::deserialize(&otp_pub_bytes)
+                    .map_err(|e| invalid_key(&e.to_string()))?;
+                Some((otp.key_id, otp_pub))
+            }
+        };
+
+        Ok(PeerBundle {
+            device_id: raw.device_id,
+            registration_id: raw.registration_id,
+            identity_key,
+            signed_pre_key_id: raw.signed_pre_key.key_id,
+            signed_pre_key,
+            signed_pre_key_signature,
+            kyber_pre_key_id: raw.kyber_pre_key.key_id,
+            kyber_pre_key,
+            kyber_pre_key_signature,
+            one_time_pre_key,
+        })
+    }
+}
+
+pub fn parse_peer_bundles(
+    raw_bundles: Vec<PreKeyBundleJson>,
+) -> Result<Vec<PeerBundle>, ObscuraError> {
+    let mut out = Vec::with_capacity(raw_bundles.len());
+    let mut seen = HashSet::with_capacity(raw_bundles.len());
+    for raw in raw_bundles {
+        let b = PeerBundle::try_from(raw)?;
         if !seen.insert(b.device_id.clone()) {
             return Err(ObscuraError::protocol("Duplicate device in bundles"));
         }
         out.push(b);
     }
     Ok(out)
-}
-
-pub fn parse_peer_bundle(v: &Value) -> Result<PeerBundle, ObscuraError> {
-    let malformed = |msg: &str| ObscuraError::protocol(format!("Malformed bundle: {msg}"));
-    let invalid_key = |msg: &str| ObscuraError::protocol(format!("Invalid key in bundle: {msg}"));
-
-    let device_id = v
-        .get("deviceId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| malformed("missing deviceId"))?
-        .to_owned();
-    if !is_uuid(&device_id) {
-        return Err(ObscuraError::protocol("Invalid device id in bundle"));
-    }
-
-    let registration_id = v
-        .get("registrationId")
-        .and_then(Value::as_u64)
-        .and_then(|n| u32::try_from(n).ok())
-        .ok_or_else(|| malformed("missing registrationId"))?;
-
-    let id_key_b64 = v
-        .get("identityKey")
-        .and_then(Value::as_str)
-        .ok_or_else(|| malformed("missing identityKey"))?;
-    let id_key_bytes = STANDARD
-        .decode(id_key_b64)
-        .map_err(|_| invalid_key("identityKey base64"))?;
-    let identity_key =
-        IdentityKey::decode(&id_key_bytes).map_err(|e| invalid_key(&e.to_string()))?;
-
-    let spk = v
-        .get("signedPreKey")
-        .and_then(Value::as_object)
-        .ok_or_else(|| malformed("missing signedPreKey"))?;
-    let signed_pre_key_id = spk
-        .get("keyId")
-        .and_then(Value::as_u64)
-        .and_then(|n| u32::try_from(n).ok())
-        .ok_or_else(|| malformed("missing signedPreKey.keyId"))?;
-    let spk_pub_bytes = STANDARD
-        .decode(
-            spk.get("publicKey")
-                .and_then(Value::as_str)
-                .ok_or_else(|| malformed("missing signedPreKey.publicKey"))?,
-        )
-        .map_err(|_| invalid_key("signedPreKey.publicKey base64"))?;
-    let signed_pre_key =
-        PublicKey::deserialize(&spk_pub_bytes).map_err(|e| invalid_key(&e.to_string()))?;
-    let signed_pre_key_signature = STANDARD
-        .decode(
-            spk.get("signature")
-                .and_then(Value::as_str)
-                .ok_or_else(|| malformed("missing signedPreKey.signature"))?,
-        )
-        .map_err(|_| invalid_key("signedPreKey.signature base64"))?;
-
-    let kyber = v
-        .get("kyberPreKey")
-        .and_then(Value::as_object)
-        .ok_or_else(|| malformed("missing kyberPreKey"))?;
-    let kyber_pre_key_id = kyber
-        .get("keyId")
-        .and_then(Value::as_u64)
-        .and_then(|n| u32::try_from(n).ok())
-        .ok_or_else(|| malformed("missing kyberPreKey.keyId"))?;
-    let kyber_pub_bytes = STANDARD
-        .decode(
-            kyber
-                .get("publicKey")
-                .and_then(Value::as_str)
-                .ok_or_else(|| malformed("missing kyberPreKey.publicKey"))?,
-        )
-        .map_err(|_| invalid_key("kyberPreKey.publicKey base64"))?;
-    let kyber_pre_key =
-        kem::PublicKey::deserialize(&kyber_pub_bytes).map_err(|e| invalid_key(&e.to_string()))?;
-    let kyber_pre_key_signature = STANDARD
-        .decode(
-            kyber
-                .get("signature")
-                .and_then(Value::as_str)
-                .ok_or_else(|| malformed("missing kyberPreKey.signature"))?,
-        )
-        .map_err(|_| invalid_key("kyberPreKey.signature base64"))?;
-
-    let one_time_pre_key = match v.get("oneTimePreKey") {
-        None | Some(Value::Null) => None,
-        Some(Value::Object(otp)) => {
-            let otp_id = otp
-                .get("keyId")
-                .and_then(Value::as_u64)
-                .and_then(|n| u32::try_from(n).ok())
-                .ok_or_else(|| malformed("missing oneTimePreKey.keyId"))?;
-            let otp_pub_bytes = STANDARD
-                .decode(
-                    otp.get("publicKey")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| malformed("missing oneTimePreKey.publicKey"))?,
-                )
-                .map_err(|_| invalid_key("oneTimePreKey.publicKey base64"))?;
-            let otp_pub =
-                PublicKey::deserialize(&otp_pub_bytes).map_err(|e| invalid_key(&e.to_string()))?;
-            Some((otp_id, otp_pub))
-        }
-        Some(_) => return Err(malformed("oneTimePreKey is not an object")),
-    };
-
-    Ok(PeerBundle {
-        device_id,
-        registration_id,
-        identity_key,
-        signed_pre_key_id,
-        signed_pre_key,
-        signed_pre_key_signature,
-        kyber_pre_key_id,
-        kyber_pre_key,
-        kyber_pre_key_signature,
-        one_time_pre_key,
-    })
 }
 
 pub fn require_consistent(bundles: &[PeerBundle]) -> Result<(), ObscuraError> {
@@ -330,20 +275,12 @@ pub enum DecryptCommitError {
 pub struct Messenger {
     db: DbHandle,
     api: APIClient,
-    local_device_id: std::sync::Arc<dyn Fn() -> Option<String> + Send + Sync>,
+    auth: Arc<AuthManager>,
 }
 
 impl Messenger {
-    pub fn new(
-        db: DbHandle,
-        api: APIClient,
-        local_device_id: std::sync::Arc<dyn Fn() -> Option<String> + Send + Sync>,
-    ) -> Self {
-        Self {
-            db,
-            api,
-            local_device_id,
-        }
+    pub fn new(db: DbHandle, api: APIClient, auth: Arc<AuthManager>) -> Self {
+        Self { db, api, auth }
     }
 
     pub async fn has_session(&self, device_id: &str) -> Result<bool, ObscuraError> {
@@ -358,8 +295,10 @@ impl Messenger {
         user_id: &str,
         peer: PeerBundle,
     ) -> Result<(), ObscuraError> {
-        let local_dev =
-            (self.local_device_id)().ok_or_else(|| ObscuraError::storage("No local device"))?;
+        let local_dev = self
+            .auth
+            .device_id()
+            .ok_or_else(|| ObscuraError::storage("No local device"))?;
         let uid = user_id.to_owned();
         let bundle = peer.to_libsignal_bundle()?;
         let peer_dev = peer.device_id;
@@ -392,8 +331,10 @@ impl Messenger {
         device_id: &str,
         message: &ClientMessage,
     ) -> Result<send_message_request::Submission, ObscuraError> {
-        let local_dev =
-            (self.local_device_id)().ok_or_else(|| ObscuraError::storage("No local device"))?;
+        let local_dev = self
+            .auth
+            .device_id()
+            .ok_or_else(|| ObscuraError::storage("No local device"))?;
         let dev = device_id.to_owned();
         let dev_bytes = uuid_to_bytes(device_id)?;
         let plaintext = message.encode_to_vec();
@@ -528,7 +469,7 @@ impl Messenger {
         T: Send + 'static,
         F: FnOnce(&mut DbContext<'_>, Vec<u8>) -> Result<T, ObscuraError> + Send + 'static,
     {
-        let Some(local_dev) = (self.local_device_id)() else {
+        let Some(local_dev) = self.auth.device_id() else {
             return Err(DecryptCommitError::DatabaseError(
                 "decrypt",
                 "No local device".to_owned(),

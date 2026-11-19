@@ -9,35 +9,35 @@ use obscura_core::crypto::prekeys::{
 };
 use obscura_core::error::ObscuraError;
 use obscura_core::network::transport::{
-    ClientEventListener, HttpRequest, HttpResponse, ObscuraLogger, SessionStorage, Transport,
-    WebSocketHandle, WebSocketSink,
+    ClientEventListener, HttpRequest, HttpResponse, ObscuraLogger, PersistedSession,
+    SessionStorage, Transport, WebSocketHandle, WebSocketSink,
 };
 use obscura_core::proto::server::{
     Envelope, EnvelopeBatch, SendMessageRequest, SendMessageResponse, WebSocketFrame,
     send_message_response, web_socket_frame,
 };
 use obscura_core::types::{
-    AuthState, ConnectionState, ConversationKind, EntryModel, FriendStatus, LoginScenario,
-    MediaType, ObscuraClientConfig,
+    AttachmentRef, AuthState, ConnectionState, ConversationContent, EntryModel, FriendStatus,
+    LoginScenario, MediaType, ObscuraClientConfig,
 };
 use obscura_core::wire::uuid_codec::{uuid_string, uuid_to_bytes};
-use obscura_core::{ObscuraClient, link_code_device_name};
+use obscura_core::{ObscuraClient, link_code_device_name, validate_username};
 use prost::Message as _;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 #[derive(Default)]
 struct MemorySessionStorage {
-    data: Mutex<Option<HashMap<String, String>>>,
+    data: Mutex<Option<PersistedSession>>,
 }
 
 impl SessionStorage for MemorySessionStorage {
-    fn save(&self, data: HashMap<String, String>) -> Result<(), ObscuraError> {
-        *self.data.lock().unwrap() = Some(data);
+    fn save(&self, session: PersistedSession) -> Result<(), ObscuraError> {
+        *self.data.lock().unwrap() = Some(session);
         Ok(())
     }
 
-    fn load(&self) -> Result<Option<HashMap<String, String>>, ObscuraError> {
+    fn load(&self) -> Result<Option<PersistedSession>, ObscuraError> {
         Ok(self.data.lock().unwrap().clone())
     }
 
@@ -82,6 +82,7 @@ struct TestListener {
     pub auth_states: Mutex<Vec<AuthState>>,
     pub conn_states: Mutex<Vec<ConnectionState>>,
     pub friends_changes: Mutex<u32>,
+    pub friend_requests_received: Mutex<u32>,
     pub models_received: Mutex<Vec<EntryModel>>,
     pub typing_events: Mutex<Vec<(String, bool)>>,
 }
@@ -95,6 +96,9 @@ impl ClientEventListener for TestListener {
     }
     fn on_friends_changed(&self) {
         *self.friends_changes.lock().unwrap() += 1;
+    }
+    fn on_friend_request_received(&self) {
+        *self.friend_requests_received.lock().unwrap() += 1;
     }
     fn on_message_received(&self, model: EntryModel) {
         self.models_received.lock().unwrap().push(model);
@@ -262,12 +266,7 @@ impl Transport for FakeServerTransport {
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, ObscuraError> {
         let parsed_url = url::Url::parse(&request.url).unwrap();
         let path = parsed_url.path().to_owned();
-
-        let body_bytes = if let Some(ref fpath) = request.body_file_path {
-            std::fs::read(fpath).unwrap_or_default()
-        } else {
-            request.body.clone().unwrap_or_default()
-        };
+        let body_bytes = request.body.clone().unwrap_or_default();
 
         let mut deliver_after: Vec<(Arc<WebSocketSink>, Vec<u8>)> = Vec::new();
         let response = {
@@ -704,19 +703,10 @@ impl Transport for FakeServerTransport {
                     let Some(bytes) = st.attachments.get(id).cloned() else {
                         return Ok(json_resp(404, json!({"error": "not found"})));
                     };
-                    if let Some(ref out_path) = request.response_file_path {
-                        std::fs::write(out_path, &bytes).unwrap();
-                        HttpResponse {
-                            status: 200,
-                            body: vec![],
-                            retry_after: None,
-                        }
-                    } else {
-                        HttpResponse {
-                            status: 200,
-                            body: bytes,
-                            retry_after: None,
-                        }
+                    HttpResponse {
+                        status: 200,
+                        body: bytes,
+                        retry_after: None,
                     }
                 }
                 ("PUT", "/v1/push-token") => {
@@ -951,12 +941,14 @@ async fn registration_login_linking_history_sync_and_cancel_link() {
     let bob_uid = bob.client.user_id().unwrap();
 
     wait_until(|| {
-        futures::executor::block_on(bob.client.get_friends())
-            .unwrap()
-            .iter()
-            .any(|f| f.user_id == alice_uid && f.status == FriendStatus::PendingReceived)
+        *bob.listener.friend_requests_received.lock().unwrap() == 1
+            && futures::executor::block_on(bob.client.get_friends())
+                .unwrap()
+                .iter()
+                .any(|f| f.user_id == alice_uid && f.status == FriendStatus::PendingReceived)
     })
     .await;
+    assert_eq!(*bob.listener.friend_requests_received.lock().unwrap(), 1);
 
     bob.client.accept_friend(alice_uid.clone()).await.unwrap();
     wait_until(|| {
@@ -1047,7 +1039,9 @@ async fn registration_login_linking_history_sync_and_cancel_link() {
     assert_eq!(alice_ipad.client.get_messages().await.unwrap().len(), 1);
     assert_eq!(
         alice_ipad.client.get_messages().await.unwrap()[0].content,
-        "Hello before link!"
+        ConversationContent::Message {
+            text: "Hello before link!".to_owned(),
+        }
     );
     assert_eq!(alice_ipad.client.get_profiles().await.unwrap().len(), 1);
 
@@ -1286,9 +1280,22 @@ async fn attachments_stories_seen_receipts_outbox_refresh_and_push_drain() {
 
     let bob_msgs = bob.client.get_messages().await.unwrap();
     assert_eq!(bob_msgs.len(), 1);
-    assert_eq!(bob_msgs[0].kind, ConversationKind::Pix);
-    assert_eq!(bob_msgs[0].caption.as_deref(), Some("Look at this"));
-    assert_eq!(bob_msgs[0].display_duration, 7);
+    let pix_att_id = match &bob_msgs[0].content {
+        ConversationContent::Pix { attachment, .. } => attachment.id.clone(),
+        _ => panic!("expected Pix"),
+    };
+    assert_eq!(
+        bob_msgs[0].content,
+        ConversationContent::Pix {
+            attachment: AttachmentRef {
+                id: pix_att_id,
+                media_type: MediaType::Photo,
+            },
+            caption: Some("Look at this".to_owned()),
+            caption_meta: Some("{\"y\":0.5}".to_owned()),
+            display_duration: 7,
+        }
+    );
 
     let cached_path = bob
         .client
@@ -1319,15 +1326,12 @@ async fn attachments_stories_seen_receipts_outbox_refresh_and_push_drain() {
         .await
         .unwrap_err();
     assert_eq!(err.code(), "SEND_FAILED");
-    assert!(
-        alice
-            .client
-            .get_messages()
-            .await
-            .unwrap()
-            .iter()
-            .any(|m| m.content == "Queued in outbox" && m.undelivered)
-    );
+    assert!(alice.client.get_messages().await.unwrap().iter().any(|m| {
+        m.content
+            == ConversationContent::Message {
+                text: "Queued in outbox".to_owned(),
+            }
+    }));
 
     server.set_fail_send_messages(false);
     let flushed = alice.client.flush_outbox().await.unwrap();
@@ -1336,7 +1340,12 @@ async fn attachments_stories_seen_receipts_outbox_refresh_and_push_drain() {
         futures::executor::block_on(bob.client.get_messages())
             .unwrap()
             .iter()
-            .any(|m| m.content == "Queued in outbox")
+            .any(|m| {
+                m.content
+                    == ConversationContent::Message {
+                        text: "Queued in outbox".to_owned(),
+                    }
+            })
     })
     .await;
 
@@ -1389,14 +1398,15 @@ async fn attachments_stories_seen_receipts_outbox_refresh_and_push_drain() {
         .unwrap();
     let drained = bob.client.process_pending_messages(1_500).await.unwrap();
     assert!(drained >= 1);
-    assert!(
-        bob.client
-            .get_messages()
-            .await
-            .unwrap()
-            .iter()
-            .any(|m| m.content == "While Bob offline")
-    );
+    assert!(bob.client.get_messages().await.unwrap().iter().any(|m| {
+        m.content
+            == ConversationContent::Message {
+                text: "While Bob offline".to_owned(),
+            }
+    }));
+    assert!(validate_username("alice_123").is_ok());
+    assert!(validate_username("ab").is_err());
+    assert!(validate_username("bad-name!").is_err());
     assert!(
         bob.listener
             .models_received

@@ -1,14 +1,27 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::ObscuraError;
 use crate::network::gateway::GatewayInner;
 use crate::types::{AuthState, ConnectionState, EntryModel};
 
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedSession {
+    pub token: String,
+    pub refresh_token: String,
+    pub expires_at: i64,
+    pub user_id: String,
+    pub device_id: String,
+    pub username: String,
+}
+
 #[uniffi::export(with_foreign)]
 pub trait SessionStorage: Send + Sync {
-    fn save(&self, data: HashMap<String, String>) -> Result<(), ObscuraError>;
-    fn load(&self) -> Result<Option<HashMap<String, String>>, ObscuraError>;
+    fn save(&self, session: PersistedSession) -> Result<(), ObscuraError>;
+    fn load(&self) -> Result<Option<PersistedSession>, ObscuraError>;
     fn clear(&self) -> Result<(), ObscuraError>;
 }
 
@@ -29,6 +42,7 @@ pub trait ClientEventListener: Send + Sync {
     fn on_connection_state_changed(&self, state: ConnectionState);
     fn on_auth_state_changed(&self, state: AuthState);
     fn on_friends_changed(&self);
+    fn on_friend_request_received(&self);
     fn on_message_received(&self, model: EntryModel);
     fn on_peer_typing_changed(&self, peer_user_id: String, is_typing: bool);
 }
@@ -39,8 +53,6 @@ pub struct HttpRequest {
     pub url: String,
     pub headers: HashMap<String, String>,
     pub body: Option<Vec<u8>>,
-    pub body_file_path: Option<String>,
-    pub response_file_path: Option<String>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
