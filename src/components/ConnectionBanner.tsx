@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useSession } from '../state/store';
+import { useConnState, useSessionStatus } from '../state/store';
 import { colors } from '../styles';
 
 /**
@@ -14,9 +14,10 @@ const GRACE_MS = 1200;
 
 export function ConnectionBanner() {
   const insets = useSafeAreaInsets();
-  const { authed, connState } = useSession();
+  const signedIn = useSessionStatus() === 'signedIn';
+  const connState = useConnState();
 
-  const notConnected = authed && connState !== 'connected';
+  const notConnected = signedIn && connState !== 'connected';
 
   const [shown, setShown] = useState(false);
   useEffect(() => {

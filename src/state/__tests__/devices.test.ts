@@ -7,7 +7,8 @@ import {
 } from '../devices';
 import { confirm, confirmAndApproveLink } from '../../components/confirm';
 import { subscribeToast, toast, type ToastItem } from '../toast';
-import { resetSession, useStore } from '../store';
+import { resetSession } from '../store';
+import { role, sessionStatus, signInAs } from './support';
 import { Obscura, type DeviceInfo } from '../../native/ObscuraModule';
 import { FAKE_LINK_DEVICE_NAME } from '../../native/__fixtures__/FakeObscuraBridge';
 import { Alert, getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
@@ -30,7 +31,7 @@ const TABLET: DeviceInfo = {
 beforeEach(() => {
   resetSession();
   bridge.__authenticate();
-  useStore.setState({ authed: true, isPrimary: true });
+  signInAs();
 });
 
 describe('loadDevices', () => {
@@ -72,7 +73,7 @@ describe('approveLink', () => {
 
     await expect(approveLink('code_1')).rejects.toMatchObject({ code: 'NOT_PRIMARY' });
 
-    expect(useStore.getState().isPrimary).toBe(false);
+    expect(role()).toBe('linked');
     expect(bridge.__approved).toEqual([]);
   });
 });
@@ -85,7 +86,7 @@ describe('primaryOnly', () => {
       code: 'INVALID_FRIEND_CODE',
     });
 
-    expect(useStore.getState().isPrimary).toBe(true);
+    expect(role()).toBe('primary');
   });
 
   it('refuses friend changes on a linked device', async () => {
@@ -95,7 +96,18 @@ describe('primaryOnly', () => {
       code: 'NOT_PRIMARY',
     });
 
-    expect(useStore.getState().isPrimary).toBe(false);
+    expect(role()).toBe('linked');
+  });
+
+  it('does not invent a session when the refusal lands after sign-out', async () => {
+    bridge.__setPrimary(false);
+    resetSession();
+
+    await expect(primaryOnly(() => Obscura.acceptFriend('u'))).rejects.toMatchObject({
+      code: 'NOT_PRIMARY',
+    });
+
+    expect(sessionStatus()).toBe('signedOut');
   });
 });
 
@@ -106,7 +118,7 @@ describe('unlinkDevice', () => {
     await unlinkDevice(TABLET);
 
     expect((await loadDevices()).map(d => d.deviceId)).toEqual(['device_self']);
-    expect(useStore.getState().authed).toBe(true);
+    expect(sessionStatus()).toBe('signedIn');
   });
 
   it('signs a linked device out when it unlinks itself', async () => {
@@ -116,7 +128,7 @@ describe('unlinkDevice', () => {
     await unlinkDevice(self);
 
     expect(bridge.authState).toBe('loggedOut');
-    expect(useStore.getState().authed).toBe(false);
+    expect(sessionStatus()).toBe('signedOut');
   });
 
   it('keeps the session when the unlink fails', async () => {
@@ -127,7 +139,7 @@ describe('unlinkDevice', () => {
       code: 'HTTP_ERROR',
     });
 
-    expect(useStore.getState().authed).toBe(true);
+    expect(sessionStatus()).toBe('signedIn');
   });
 
   it('refuses to unlink another device from a linked device', async () => {
@@ -135,7 +147,7 @@ describe('unlinkDevice', () => {
 
     await expect(unlinkDevice(TABLET)).rejects.toMatchObject({ code: 'NOT_PRIMARY' });
 
-    expect(useStore.getState().isPrimary).toBe(false);
+    expect(role()).toBe('linked');
   });
 });
 

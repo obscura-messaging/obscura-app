@@ -16,6 +16,7 @@ import { sendCapture, type Capture } from '../sendMedia';
 import { activityPreview, chatTimeline, friendActivities } from '../../domain/chats';
 import type { Friend } from '../../native/ObscuraModule';
 import { getFakeBridge } from '../../native/__fixtures__/reactNativeMock';
+import { role } from './support';
 
 const bridge = getFakeBridge();
 
@@ -46,17 +47,16 @@ describe('Scenario 1: device relink + friend handshake', () => {
     await linking;
 
     await loadSession();
-    expect(useStore.getState()).toMatchObject({
-      authed: true,
-      myUserId: ALICE,
-      myUsername: 'alice',
-      isPrimary: false,
+    expect(useStore.getState().session).toEqual({
+      status: 'signedIn',
+      me: { userId: ALICE, username: 'alice', deviceId: DEVICE },
+      role: 'linked',
     });
 
     // Switch to primary and run the friend lifecycle through store actions.
     bridge.__setPrimary(true);
     await loadSession();
-    expect(useStore.getState().isPrimary).toBe(true);
+    expect(role()).toBe('primary');
 
     await addFriend('obscura:friend:bob-code');
     expect(useStore.getState().friends).toEqual([

@@ -1,3 +1,5 @@
+import type { DeviceRole } from './session';
+
 export interface Friend {
   userId: string;
   username: string;
@@ -54,14 +56,9 @@ export function friendProfileEntries<P extends { userId: string }>(
   });
 }
 
-export function pendingFriendSubtitle(
-  friend: Pick<Friend, 'status'>,
-  isPrimary: boolean | null,
-): string {
+export function pendingFriendSubtitle(friend: Pick<Friend, 'status'>, role: DeviceRole): string {
   if (friend.status !== 'pending_received') return 'Request sent';
-  return isPrimary === false
-    ? 'Wants to be friends · accept on your primary'
-    : 'Wants to be friends';
+  return role === 'linked' ? 'Wants to be friends · accept on your primary' : 'Wants to be friends';
 }
 
 export function removeFriendPrompt(friend: Pick<Friend, 'username' | 'status'>): {
