@@ -35,7 +35,7 @@ describe('native exports match the bridge contract', () => {
     expect(sorted(implemented)).toEqual(sorted(methods));
   });
 
-  it('preserves the same deliberate error codes from both kits', () => {
+  it('preserves the same deliberate error codes from the Rust core', () => {
     const declaration = contract.statements
       .filter(ts.isTypeAliasDeclaration)
       .find(alias => alias.name.text === 'ObscuraErrorCode')!;
@@ -46,12 +46,8 @@ describe('native exports match the bridge contract', () => {
       }
       return type.literal.text;
     });
-    const kotlin = source('kotlin/lib/src/main/kotlin/dev/barrelmaker/obscura/kit/ObscuraError.kt');
-    const swiftErrors = source('swift/Sources/ObscuraKit/ObscuraError.swift');
-    expect(
-      sorted([...kotlin.matchAll(/ObscuraError\(\s*"([A-Z_]+)"/g)].map(match => match[1])),
-    ).toEqual(sorted(codes));
-    expect(sorted([...swiftErrors.matchAll(/return "([A-Z_]+)"/g)].map(match => match[1]))).toEqual(
+    const rustErrors = source('core/src/error.rs');
+    expect(sorted([...rustErrors.matchAll(/"([A-Z_]+)"/g)].map(match => match[1]))).toEqual(
       sorted(codes),
     );
   });

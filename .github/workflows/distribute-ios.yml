@@ -52,13 +52,11 @@ jobs:
         uses: ./.github/actions/setup
         with:
           node: true
+          rust: true
+          rust-targets: aarch64-apple-ios
 
       - name: Select Xcode
         uses: ./.github/actions/xcode
-
-      # The kit's protobuf bindings are generated before the archive.
-      - name: Install protobuf
-        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
 
       - name: Install secrets
         env:

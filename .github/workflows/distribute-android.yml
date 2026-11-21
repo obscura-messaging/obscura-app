@@ -52,6 +52,9 @@ jobs:
         with:
           node: true
           java: true
+          rust: true
+          rust-targets: aarch64-linux-android x86_64-linux-android
+          cargo-ndk: true
 
       - name: Install secrets
         env:

@@ -1,16 +1,16 @@
 # Application domain rationale
 
 Executable types, projections, and tests in `src/domain/`, `src/state/`, and
-ObscuraKit ([`KIT_API.md`](KIT_API.md)) define application behaviour. This
+`obscura-core` ([`docs/CORE.md`](CORE.md)) define application behaviour. This
 document records only **why** those boundaries and invariants exist.
 
-## Why the kit owns typed domain storage and wire encoding
+## Why the core owns typed domain storage and wire encoding
 
-ObscuraKit ([`KIT_API.md`](KIT_API.md)) handles Signal sessions, transport,
+`obscura-core` ([`docs/CORE.md`](CORE.md)) handles Signal sessions, transport,
 protobuf wire encoding, encrypted SQLite storage, merge, outbox retries, and
 expiry behind typed domain operations (`ConversationItem`, `StoryItem`,
 `ProfileItem`). Keeping wire encoding, transactional storage, and expiry inside
-the kits eliminates cross-bridge JSON round-trips and multi-step JS lock ordering,
+the core eliminates cross-bridge JSON round-trips and multi-step JS lock ordering,
 while `src/domain/` remains pure view-model projection logic.
 
 ## Why attribution and authorization ignore payloads

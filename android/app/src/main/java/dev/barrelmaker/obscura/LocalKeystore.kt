@@ -87,20 +87,15 @@ object LocalKeystore {
 
     /**
      * The SQLCipher key for one user's database: 32 random bytes, created on first use.
-     *
-     * Returned as SQLCipher's raw-key literal (`x'<hex>'`), so the full-entropy key is used as-is
-     * instead of being stretched through PBKDF2 on every open.
      */
     fun databaseKey(context: Context, username: String): ByteArray {
         val prefs = context.getSharedPreferences(KEYS_PREFS, Context.MODE_PRIVATE)
         val name = "db_$username"
-        val key = prefs.getString(name, null)?.let { unwrap(it) }
+        return prefs.getString(name, null)?.let { unwrap(it) }
             ?: ByteArray(32).also {
                 random.nextBytes(it)
                 check(prefs.edit().putString(name, wrap(it)).commit()) { "could not store database key" }
             }
-        val hex = key.joinToString("") { "%02x".format(it) }
-        return "x'$hex'".toByteArray(Charsets.US_ASCII)
     }
 
     /** Forget one user's database key and delete the database. */

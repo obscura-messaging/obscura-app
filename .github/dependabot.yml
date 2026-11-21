@@ -76,17 +76,19 @@ updates:
         patterns:
           - "androidx.lifecycle:*"
     ignore:
-      # Shared with the Kotlin kit (kotlin/gradle/libs.versions.toml), which
-      # Dependabot does not watch. Bump both together: bumping sqldelight in
-      # the app alone breaks compileReleaseKotlin against the kit's API.
-      - dependency-name: "org.signal:libsignal-android"
-      - dependency-name: "com.google.protobuf:protobuf-java"
-      - dependency-name: "app.cash.sqldelight:*"
       # RN owns the AGP/toolchain compatibility line. Wrapper updates are
-      # made manually and validated with the app and kit composite build.
+      # made manually and validated with the app build.
       - dependency-name: "com.android.tools.build:gradle"
       - dependency-name: "gradle"
       - dependency-name: "gradle-wrapper"
+
+  # ─── Rust core (cargo) ──────────────────────────────────
+  - package-ecosystem: "cargo"
+    directory: "/core"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
 
   # ─── GitHub Actions ─────────────────────────────────────
   - package-ecosystem: "github-actions"

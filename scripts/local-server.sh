@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Run a local obscura-server and its backing services for the kit integration
-# suites (`just kotlin-integration`, `just swift-integration`). CI calls this
-# script too, so the local server matches the one the integration jobs use.
+# Run a local obscura-server and its backing services for local integration
+# testing.
 #
 # Usage: scripts/local-server.sh ref|up [REF] | down | status | logs [LINES]
 #
@@ -371,7 +370,7 @@ cmd_up() {
     start_server
     echo "$sha" >"$RUN/REF"
     log "obscura-server ${sha:0:12} ready at $API ($mode services)"
-    log "Run: just kotlin-integration  |  just swift-integration  |  just server-down"
+    log "Run: just server-down"
 }
 
 cmd_down() {

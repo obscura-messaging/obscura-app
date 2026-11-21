@@ -73,8 +73,21 @@ react {
 // R8 + resource shrinking are on for release. Keep rules live in proguard-rules.pro.
 def enableProguardInReleaseBuilds =
     (findProperty("enableProguardInReleaseBuilds") ?: "true").toBoolean()
-def targetArchitectures =
-    (findProperty("reactNativeArchitectures") ?: "armeabi-v7a,arm64-v8a,x86,x86_64").split(",")
+def reactNativeArchitectures() {
+    def value = findProperty("reactNativeArchitectures")
+    return value ? value.toString().split(",").collect { it.trim() }.findAll { !it.isEmpty() } : ["arm64-v8a", "x86_64"]
+}
+def targetArchitectures = reactNativeArchitectures()
+def obscuraCoreJniLibsDir = file("$buildDir/generated/obscuraCore/jniLibs")
+def obscuraCoreKotlinDir = file("$buildDir/generated/obscuraCore/kotlin")
+
+def buildObscuraRustCore = tasks.register("buildObscuraRustCore", Exec) {
+    description = "Builds obscura-core JNI libraries and generates UniFFI Kotlin bindings."
+    workingDir projectDir
+    commandLine = ["../../core/scripts/build-android.sh", obscuraCoreJniLibsDir.absolutePath, obscuraCoreKotlinDir.absolutePath] + targetArchitectures
+}
+
+preBuild.dependsOn(buildObscuraRustCore)
 
 // JSC is intentionally unused — Hermes is enabled in gradle.properties.
 
@@ -118,27 +131,17 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    packaging {
-        // The libsignal-client JVM artifact bundles native libs for every desktop OS
-        // (macOS .dylib, Windows .dll, Linux/server .so) plus a `_testing` JNI variant
-        // we never call into. Strip them — they're ~90 MB of dead weight in the APK.
-        jniLibs {
-            excludes += [
-                "**/libsignal_jni_testing.so",
-            ]
+    sourceSets {
+        main {
+            jniLibs.srcDirs += [obscuraCoreJniLibsDir]
+            java.srcDirs += [obscuraCoreKotlinDir]
         }
+    }
+
+    packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/META-INF/DEPENDENCIES"
-            excludes += [
-                "**/*.dylib",
-                "**/*.dll",
-                "**/*.pdb",
-                // .so files inside JAR roots (libsignal-client ships server-side natives
-                // at the JAR root, not under jni/; the Android JNI libs come from the
-                // libsignal-android AAR and aren't matched by this glob).
-                "*.so",
-            ]
         }
     }
     // Per-ABI APKs cut sideload size ~4x. Disable ABI splits when building an AAB bundle.
@@ -191,18 +194,8 @@ dependencies {
     }
     // JSC fallback intentionally omitted — Hermes is on (gradle.properties).
 
-    // ObscuraKit — E2E encrypted data layer, built from ../kotlin (settings.gradle)
-    implementation("dev.barrelmaker.obscura.kit:obscura-kit")
-
-    // Android SQLDelight driver (replaces JVM driver from ObscuraKit)
-    implementation("app.cash.sqldelight:android-driver:2.0.2")
-    implementation("app.cash.sqldelight:coroutines-extensions:2.0.2")
-    // Database encryption at rest (SQLCipher), keyed from the Android Keystore.
-    implementation("net.zetetic:sqlcipher-android:4.20.0@aar")
-    implementation("androidx.sqlite:sqlite:2.7.1")
-
-    // libsignal Android native (replaces JVM variant from ObscuraKit)
-    implementation("org.signal:libsignal-android:0.106.2")
+    // JNA AAR required by UniFFI Kotlin bindings for obscura-core
+    implementation("net.java.dev.jna:jna:5.18.1@aar")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
@@ -216,7 +209,7 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:35.2.0"))
     implementation("com.google.firebase:firebase-messaging")
 
-    // Desugaring (required by libsignal-android)
+    // Desugaring
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
 

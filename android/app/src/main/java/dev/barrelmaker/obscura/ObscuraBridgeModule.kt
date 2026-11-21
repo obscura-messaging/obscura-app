@@ -4,25 +4,27 @@ import android.content.Context
 import android.util.Log
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
-import dev.barrelmaker.obscura.kit.AuthState
-import dev.barrelmaker.obscura.kit.ConnectionState
-import dev.barrelmaker.obscura.kit.ConversationItem
-import dev.barrelmaker.obscura.kit.ConversationKind
-import dev.barrelmaker.obscura.kit.DeviceInfo
-import dev.barrelmaker.obscura.kit.EntryModel
-import dev.barrelmaker.obscura.kit.LinkRequest
-import dev.barrelmaker.obscura.kit.LoginScenario
-import dev.barrelmaker.obscura.kit.MediaAttachment
-import dev.barrelmaker.obscura.kit.MediaType
-import dev.barrelmaker.obscura.kit.ObscuraClient
-import dev.barrelmaker.obscura.kit.ObscuraError
-import dev.barrelmaker.obscura.kit.ProfileItem
-import dev.barrelmaker.obscura.kit.StoryItem
-import dev.barrelmaker.obscura.kit.TypingState
-import dev.barrelmaker.obscura.kit.stores.Friend
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.sync.Mutex
+import uniffi.obscura_core.AttachmentRef
+import uniffi.obscura_core.AuthState
+import uniffi.obscura_core.ConnectionState
+import uniffi.obscura_core.ConversationContent
+import uniffi.obscura_core.ConversationItem
+import uniffi.obscura_core.DeviceInfo
+import uniffi.obscura_core.EntryModel
+import uniffi.obscura_core.Friend
+import uniffi.obscura_core.FriendStatus
+import uniffi.obscura_core.LinkRequest
+import uniffi.obscura_core.LoginScenario
+import uniffi.obscura_core.MediaType
+import uniffi.obscura_core.ObscuraClient
+import uniffi.obscura_core.ObscuraException
+import uniffi.obscura_core.ProfileItem
+import uniffi.obscura_core.StoryItem
+import uniffi.obscura_core.TypingState
+import uniffi.obscura_core.errorCode
+import uniffi.obscura_core.errorMessage
 
 private const val TAG = "ObscuraBridge"
 
@@ -39,7 +41,7 @@ private enum class BridgeEvent(val type: String) {
 }
 
 /**
- * Single mapping from the kit's [ConnectionState] to the JS wire string (the
+ * Single mapping from the core's [ConnectionState] to the JS wire string (the
  * `ConnectionState` union in ObscuraModule.ts). Kept in one place so getState and
  * the connectionChanged event can never drift.
  */
@@ -50,6 +52,28 @@ private fun ConnectionState.toJsString(): String = when (this) {
     ConnectionState.CONNECTED -> "connected"
 }
 
+private fun EntryModel.toJsString(): String = when (this) {
+    EntryModel.DIRECT_MESSAGE -> "directMessage"
+    EntryModel.PIX -> "pix"
+    EntryModel.SEEN -> "seen"
+    EntryModel.STORY -> "story"
+    EntryModel.PROFILE -> "profile"
+}
+
+private fun FriendStatus.toJsString(): String = when (this) {
+    FriendStatus.PENDING_SENT -> "pending_sent"
+    FriendStatus.PENDING_RECEIVED -> "pending_received"
+    FriendStatus.ACCEPTED -> "accepted"
+}
+
+private fun MediaType.toJsString(): String = when (this) {
+    MediaType.PHOTO -> "photo"
+    MediaType.VIDEO -> "video"
+}
+
+private fun mediaTypeFromWire(raw: String?): MediaType =
+    if (raw == "video") MediaType.VIDEO else MediaType.PHOTO
+
 /**
  * Thin React Native bridge. Owns NO Obscura state — all client lifecycle,
  * message dispatch, foreground tracking and notification posting lives in
@@ -57,7 +81,7 @@ private fun ConnectionState.toJsString(): String = when (this) {
  *
  *   - Registers itself as the session's [ObscuraSession.EventSink] so events
  *     reach JS
- *   - Translates @ReactMethod RPCs into kit calls on `ObscuraSession.client`
+ *   - Translates @ReactMethod RPCs into core calls on `ObscuraSession.client`
  *   - Marshals between RN [WritableMap]/Promise and Kotlin types
  *
  * If you need to mutate session state (create/destroy client, save prefs),
@@ -70,7 +94,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val authMutex = Mutex()
-    private val typingJobs = mutableMapOf<String, Job>()
 
     /** The link this device is waiting on. Its secrets never cross to JS, which holds only the code. */
     private class PendingLink(val client: ObscuraClient, val request: LinkRequest)
@@ -81,15 +104,15 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         get() = ObscuraSession.client
 
     private fun requireClient(): ObscuraClient =
-        client ?: throw ObscuraError.NotAuthenticated()
+        client ?: throw ObscuraException.NotAuthenticated()
 
     /**
-     * Reject a promise, preferring a kit [ObscuraError]'s stable [ObscuraError.code]
+     * Reject a promise, preferring an [ObscuraException]'s stable [errorCode]
      * over the per-method [fallbackCode] so JS can branch on *what* failed
-     * (e.g. "NOT_FRIENDS", "OFFLINE") instead of parsing an English message.
+     * (e.g. "NOT_PRIMARY", "STORAGE_ERROR") instead of parsing an English message.
      */
     private fun Promise.rejectKit(fallbackCode: String, t: Throwable) {
-        if (t is ObscuraError) reject(t.code, t.message, t) else reject(fallbackCode, t.message, t)
+        if (t is ObscuraException) reject(errorCode(t), errorMessage(t), t) else reject(fallbackCode, t.message, t)
     }
 
     /**
@@ -105,7 +128,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     private fun authenticate(promise: Promise, code: String, operation: suspend () -> Any?): Job? {
         if (!authMutex.tryLock()) {
-            promise.rejectKit(code, ObscuraError.InvalidArgument("Authentication already in progress"))
+            promise.rejectKit(code, ObscuraException.InvalidArgument("Authentication already in progress"))
             return null
         }
         return scope.launch {
@@ -116,17 +139,13 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    // ─── EventSink: kit events → JS ─────────────────────────────────────────
+    // ─── EventSink: core events → JS ────────────────────────────────────────
 
     private val eventSink = object : ObscuraSession.EventSink {
         override fun onConnectionChanged(state: ConnectionState) = emit(BridgeEvent.CONNECTION_CHANGED) {
             putString("state", state.toJsString())
         }
         override fun onAuthStateChanged(state: AuthState) {
-            if (state == AuthState.LOGGED_OUT) {
-                typingJobs.values.forEach { it.cancel() }
-                typingJobs.clear()
-            }
             emit(BridgeEvent.AUTH_STATE_CHANGED) {
                 putString("state", when (state) {
                     AuthState.LOGGED_OUT -> "loggedOut"
@@ -136,7 +155,12 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         }
         override fun onFriendsChanged() = emit(BridgeEvent.FRIENDS_CHANGED)
         override fun onMessageReceived(model: EntryModel) =
-            emit(BridgeEvent.MESSAGE_RECEIVED) { putString("model", model.value) }
+            emit(BridgeEvent.MESSAGE_RECEIVED) { putString("model", model.toJsString()) }
+        override fun onPeerTypingChanged(peerUserId: String, isTyping: Boolean) =
+            emit(BridgeEvent.TYPING_CHANGED) {
+                putString("peerUserId", peerUserId)
+                putBoolean("typing", isTyping)
+            }
         override fun onPushToken(token: String) = emit(BridgeEvent.PUSH_TOKEN_RECEIVED) { putString("token", token) }
         override fun onAppStateChanged(state: ObscuraSession.AppState) = emit(BridgeEvent.APP_STATE_CHANGED) {
             putString("state", when (state) {
@@ -255,17 +279,17 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
             val c = ObscuraSession.reuseOrCreateClient(username)
             val request = c.beginLink(username, password, ObscuraSession.deviceName)
             pendingLink = PendingLink(c, request)
-            request.code
+            request.code()
         }
     }
 
-    /** Cancellable with [cancelLink]; the kit bounds the wait by the link session's expiry. */
+    /** Cancellable with [cancelLink]; the core bounds the wait by the link session's expiry. */
     @ReactMethod
     fun completeLink(promise: Promise) {
         val pending = pendingLink
         pendingLink = null
         if (pending == null || pending.client !== client) {
-            promise.rejectKit("LINK_ERROR", ObscuraError.InvalidArgument("No link in progress"))
+            promise.rejectKit("LINK_ERROR", ObscuraException.InvalidArgument("No link in progress"))
             return
         }
         linkJob = authenticate(promise, "LINK_ERROR") {
@@ -281,6 +305,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
         val job = linkJob
         linkJob = null
         scope.launch {
+            client?.cancelLink()
             job?.cancelAndJoin()
             promise.resolve(null)
         }
@@ -289,7 +314,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     @ReactMethod
     fun connect(promise: Promise) {
         promise.settle("CONNECT_ERROR") {
-            // Kit's connect() refreshes the token and persists the rotated
+            // Core's connect() refreshes the token and persists the rotated
             // session itself — no app-side pre/post steps needed.
             requireClient().connect()
             null
@@ -322,7 +347,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun getConnectionState(promise: Promise) {
         scope.launch {
             ObscuraSession.waitForRestore()
-            val state = client?.connectionState?.value ?: ConnectionState.DISCONNECTED
+            val state = client?.connectionState() ?: ConnectionState.DISCONNECTED
             promise.resolve(state.toJsString())
         }
     }
@@ -331,7 +356,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun getFriends(promise: Promise) {
         promise.settle("GET_FRIENDS_ERROR") {
             Arguments.createArray().apply {
-                for (f in client?.getFriends().orEmpty()) pushMap(friendToMap(f, f.status.value))
+                for (f in client?.getFriends().orEmpty()) pushMap(friendToMap(f, f.status.toJsString()))
             }
         }
     }
@@ -340,7 +365,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun getAuthState(promise: Promise) {
         scope.launch {
             ObscuraSession.waitForRestore()
-            promise.resolve(when (client?.authState?.value ?: AuthState.LOGGED_OUT) {
+            promise.resolve(when (client?.authState() ?: AuthState.LOGGED_OUT) {
                 AuthState.LOGGED_OUT -> "loggedOut"
                 AuthState.AUTHENTICATED -> "authenticated"
             })
@@ -351,7 +376,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun getUserId(promise: Promise) {
         scope.launch {
             ObscuraSession.waitForRestore()
-            promise.resolve(client?.userId)
+            promise.resolve(client?.userId())
         }
     }
 
@@ -359,7 +384,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun getUsername(promise: Promise) {
         scope.launch {
             ObscuraSession.waitForRestore()
-            promise.resolve(client?.username)
+            promise.resolve(client?.username())
         }
     }
 
@@ -367,7 +392,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun getDeviceId(promise: Promise) {
         scope.launch {
             ObscuraSession.waitForRestore()
-            promise.resolve(client?.deviceId)
+            promise.resolve(client?.deviceId())
         }
     }
 
@@ -383,7 +408,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun linkCodeDeviceName(code: String, promise: Promise) {
-        try { promise.resolve(ObscuraClient.linkCodeDeviceName(code)) }
+        try { promise.resolve(uniffi.obscura_core.linkCodeDeviceName(code)) }
         catch (e: Exception) { promise.rejectKit("LINK_CODE_ERROR", e) }
     }
 
@@ -409,7 +434,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun unlinkDevice(deviceId: String, promise: Promise) {
         authenticate(promise, "UNLINK_ERROR") {
             val c = requireClient()
-            val self = deviceId == c.deviceId
+            val self = deviceId == c.deviceId()
             c.unlinkDevice(deviceId)
             if (self) ObscuraSession.destroyClient()
             null
@@ -475,33 +500,22 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun observeTyping(peerUserId: String, promise: Promise) {
-        if (typingJobs.containsKey(peerUserId)) { promise.resolve(null); return }
-        val flow = try {
+        try {
             requireClient().observePeerTyping(peerUserId)
+            promise.resolve(null)
         } catch (e: Exception) {
             promise.rejectKit("OBSERVE_TYPING_ERROR", e)
-            return
         }
-
-        typingJobs[peerUserId] = scope.launch {
-            flow.collectLatest { isTyping ->
-                emit(BridgeEvent.TYPING_CHANGED) {
-                    putString("peerUserId", peerUserId)
-                    putBoolean("typing", isTyping)
-                }
-            }
-        }
-        promise.resolve(null)
     }
 
     @ReactMethod
     fun stopObservingTyping(peerUserId: String, promise: Promise) {
-        typingJobs.remove(peerUserId)?.cancel()
+        client?.stopObservingPeerTyping(peerUserId)
         promise.resolve(null)
     }
 
     // ─── Attachments (path-based) ───────────────────────────────────────────
-    // Bytes and key material never cross the bridge. JS hands us a file path; the kit encrypts,
+    // Bytes and key material never cross the bridge. JS hands us a file path; the core encrypts,
     // uploads and keeps the keys. On download, JS names the entry and gets back a decrypted
     // cache path it can use directly as a `file://` URI.
 
@@ -514,8 +528,8 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
                 capture.getArray("recipientUserIds")?.toArrayList()?.map { it as String }.orEmpty()
             } else emptyList()
             val result = requireClient().sendCapture(
-                file = java.io.File(string("path") ?: ""),
-                mediaType = MediaType.of(string("mediaType")),
+                filePath = string("path") ?: "",
+                mediaType = mediaTypeFromWire(string("mediaType")),
                 caption = string("caption") ?: "",
                 captionMeta = string("captionMeta"),
                 displayDuration = if (capture.hasKey("displayDuration")) capture.getDouble("displayDuration").toInt() else 0,
@@ -532,7 +546,7 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     @ReactMethod
     fun downloadAttachment(entryId: String, promise: Promise) {
         promise.settle("DOWNLOAD_ERROR") {
-            requireClient().downloadAttachmentToCache(entryId).absolutePath
+            requireClient().downloadAttachmentToCache(entryId)
         }
     }
 
@@ -712,8 +726,6 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     override fun invalidate() {
         super.invalidate()
         ObscuraSession.unbindEventSink(eventSink)
-        typingJobs.values.forEach { it.cancel() }
-        typingJobs.clear()
         scope.cancel()
         instance = null
     }
@@ -807,34 +819,37 @@ class ObscuraBridgeModule(reactContext: ReactApplicationContext) :
     fun sweepExpired(promise: Promise) {
         promise.settle("SWEEP_EXPIRED_ERROR") {
             Arguments.createArray().apply {
-                for (model in requireClient().sweepExpired()) pushString(model.value)
+                for (model in requireClient().sweepExpired()) pushString(model.toJsString())
             }
         }
     }
 
-    private fun attachmentToMap(att: MediaAttachment): WritableMap =
+    private fun attachmentToMap(att: AttachmentRef): WritableMap =
         Arguments.createMap().apply {
             putString("id", att.id)
-            putString("mediaType", att.mediaType.value)
+            putString("mediaType", att.mediaType.toJsString())
         }
 
     private fun messageToMap(m: ConversationItem): WritableMap =
         Arguments.createMap().apply {
             putString("id", m.id)
             putString("peerUserId", m.peerUserId)
-            putString("kind", m.kind.value)
             putString("authorUserId", m.authorUserId)
             putDouble("sentAt", m.sentAt.toDouble())
             val viewedAt = m.viewedAt
             if (viewedAt != null) putDouble("viewedAt", viewedAt.toDouble()) else putNull("viewedAt")
-            if (m.kind == ConversationKind.PIX) {
-                val att = m.attachment
-                if (att != null) putMap("attachment", attachmentToMap(att)) else putNull("attachment")
-                putString("caption", m.caption)
-                putString("captionMeta", m.captionMeta)
-                putInt("displayDuration", m.displayDuration)
-            } else {
-                putString("content", m.content)
+            when (val c = m.content) {
+                is ConversationContent.Message -> {
+                    putString("kind", "message")
+                    putString("content", c.text)
+                }
+                is ConversationContent.Pix -> {
+                    putString("kind", "pix")
+                    putMap("attachment", attachmentToMap(c.attachment))
+                    putString("caption", c.caption)
+                    putString("captionMeta", c.captionMeta)
+                    putInt("displayDuration", c.displayDuration)
+                }
             }
         }
 

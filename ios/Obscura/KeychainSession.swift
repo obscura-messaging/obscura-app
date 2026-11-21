@@ -1,8 +1,37 @@
 import Foundation
 import Security
-import ObscuraKit
+import ObscuraCore
 
-final class KeychainSession: SessionStorage {
+private struct CodableSession: Codable {
+    let token: String
+    let refreshToken: String
+    let expiresAt: Int64
+    let userId: String
+    let deviceId: String
+    let username: String
+
+    init(_ session: PersistedSession) {
+        token = session.token
+        refreshToken = session.refreshToken
+        expiresAt = session.expiresAt
+        userId = session.userId
+        deviceId = session.deviceId
+        username = session.username
+    }
+
+    var persisted: PersistedSession {
+        PersistedSession(
+            token: token,
+            refreshToken: refreshToken,
+            expiresAt: expiresAt,
+            userId: userId,
+            deviceId: deviceId,
+            username: username
+        )
+    }
+}
+
+final class KeychainSession: SessionStorage, @unchecked Sendable {
     private func query(accessGroup: String?) -> [String: Any] {
         let bundleId = Bundle.main.bundleIdentifier ?? "dev.barrelmaker.obscura.dev"
         var query: [String: Any] = [
@@ -14,10 +43,16 @@ final class KeychainSession: SessionStorage {
         return query
     }
 
-    func save(_ session: [String: String]) throws {
+    func save(session: PersistedSession) throws {
+        let encoded: Data
+        do {
+            encoded = try JSONEncoder().encode(CodableSession(session))
+        } catch {
+            throw ObscuraError.StorageFailed(reason: "Failed to encode session: \(error.localizedDescription)")
+        }
         let identity = query(accessGroup: SharedContainer.keychainAccessGroup)
         let attributes: [String: Any] = [
-            kSecValueData as String: try JSONEncoder().encode(session),
+            kSecValueData as String: encoded,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
         var status = SecItemUpdate(identity as CFDictionary, attributes as CFDictionary)
@@ -31,7 +66,7 @@ final class KeychainSession: SessionStorage {
         try requireSuccess(status, operation: "save")
     }
 
-    func load() throws -> [String: String]? {
+    func load() throws -> PersistedSession? {
         var query = query(accessGroup: SharedContainer.keychainAccessGroup)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -40,9 +75,13 @@ final class KeychainSession: SessionStorage {
         if status == errSecItemNotFound { return nil }
         try requireSuccess(status, operation: "load")
         guard let data = result as? Data else {
-            throw ObscuraError.storageFailed("Session keychain item is not data")
+            throw ObscuraError.StorageFailed(reason: "Session keychain item is not data")
         }
-        return try JSONDecoder().decode([String: String].self, from: data)
+        do {
+            return try JSONDecoder().decode(CodableSession.self, from: data).persisted
+        } catch {
+            throw ObscuraError.StorageFailed(reason: "Failed to decode session: \(error.localizedDescription)")
+        }
     }
 
     func clear() throws {
@@ -55,7 +94,7 @@ final class KeychainSession: SessionStorage {
 
     private func requireSuccess(_ status: OSStatus, operation: String) throws {
         guard status == errSecSuccess else {
-            throw ObscuraError.storageFailed("Keychain session \(operation) failed (\(status))")
+            throw ObscuraError.StorageFailed(reason: "Keychain session \(operation) failed (\(status))")
         }
     }
 }

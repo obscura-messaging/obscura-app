@@ -74,6 +74,31 @@ format:
 # Run every JavaScript CI gate.
 check: test typecheck lint format-check
 
+# Format-check, lint and test the Rust core.
+core-check:
+    cd core && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --locked
+
+# Test the core's generated Kotlin bindings on the JVM against a host build.
+core-jvm-test:
+    ./android/gradlew -p core/bindings/kotlin-jvm-test test
+
+# Build the core for Android into a jniLibs dir and generate Kotlin bindings.
+core-android jnilibs kotlin *abis:
+    core/scripts/build-android.sh {{jnilibs}} {{kotlin}} {{abis}}
+
+# Build the core's iOS XCFramework (macOS): crypto is commoncrypto or openssl; slice is all, sim, or device.
+core-xcframework crypto="commoncrypto" slice="all":
+    core/scripts/build-xcframework.sh {{crypto}} {{slice}}
+
+# Test the core's generated Swift bindings on an iOS simulator (macOS).
+core-swift-test crypto="commoncrypto": (core-xcframework crypto "sim")
+    cd core/swift/ObscuraCore && xcodebuild -scheme ObscuraCore -derivedDataPath .build/DerivedData -destination "platform=iOS Simulator,id=$(../../../scripts/simulator.sh)" test
+
+# Run server-dependent integration tests against an explicit local endpoint.
+core-integration api="http://localhost:3000":
+    @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
+    OBSCURA_TEST_API="{{ api }}" ./android/gradlew -p core/bindings/kotlin-jvm-test integrationTest
+
 # Test the release verification script.
 release-script-test:
     python3 scripts/test-verify-release-build.py -q
@@ -93,15 +118,6 @@ bundle: ensure-node-modules
 protocol-lint:
     buf lint client-protocol
 
-# Validate protocol conformance fixtures.
-protocol-vectors:
-    python3 client-protocol/conformance/validate.py
-
-# Run protocol conformance, then the Kotlin unit tests with coverage reports
-# and thresholds, in one Gradle process.
-kotlin-check: protocol-vectors
-    cd kotlin && ./gradlew :lib:test :lib:koverHtmlReport :lib:koverXmlReport :lib:koverVerify
-
 # Build and start a local obscura-server with Postgres, Valkey and MinIO
 # (ref: server git ref, default its HEAD). See scripts/local-server.sh for
 # OBSCURA_SERVER_SRC and OBSCURA_SERVER_SERVICES.
@@ -119,38 +135,6 @@ server-status:
 # Print the end of the local obscura-server log.
 server-logs lines="200":
     ./scripts/local-server.sh logs {{quote(lines)}}
-
-# Run Kotlin server-dependent tests against an explicit local endpoint.
-kotlin-integration api="http://localhost:3000":
-    @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
-    cd kotlin && OBSCURA_TEST_API="{{ api }}" ./gradlew :lib:integrationTest
-
-# Generate the Swift protobuf bindings (needs protoc). Every Swift and iOS build runs this first.
-swift-proto:
-    ./swift/scripts/gen-proto.sh
-
-# The kit builds and tests for iOS only: libsignal's prebuilt core has no macOS slice.
-swift_xcodebuild := "xcodebuild -scheme ObscuraKit -derivedDataPath .build/DerivedData -skipPackagePluginValidation"
-
-# Build the Swift package for the iOS simulator.
-swift-build: swift-proto
-    cd swift && {{ swift_xcodebuild }} -destination 'generic/platform=iOS Simulator' build
-
-# Run Swift unit tests on an iOS simulator, with the coverage gate. Narrow the
-# run without the gate, e.g.: just swift-unit UnitTests/ClientTests
-swift-unit filter="UnitTests": swift-proto
-    cd swift && rm -rf .build/DerivedData/Build/ProfileData && mkdir -p .build/reports && \
-        {{ swift_xcodebuild }} -destination "platform=iOS Simulator,id=$(scripts/simulator.sh)" \
-        -only-testing:{{ quote(filter) }} -enableCodeCoverage YES test 2>&1 | tee .build/reports/unit-tests.log
-    {{ if filter == "UnitTests" { "./swift/scripts/coverage.sh" } else { "echo 'Coverage is gated only for the whole suite.'" } }}
-
-# Run Swift server-dependent tests on an iOS simulator against an explicit local
-# endpoint. xcodebuild hands TEST_RUNNER_ variables to the tests without the prefix.
-swift-integration api="http://localhost:3000" filter="ScenarioTests": swift-proto
-    @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
-    cd swift && mkdir -p .build/reports && TEST_RUNNER_OBSCURA_TEST_API={{ quote(api) }} \
-        {{ swift_xcodebuild }} -destination "platform=iOS Simulator,id=$(scripts/simulator.sh)" \
-        -only-testing:{{ quote(filter) }} test 2>&1 | tee .build/reports/integration-tests.log
 
 # Create or refresh the compile-only Firebase stub when no real config exists.
 android-config:
@@ -189,17 +173,17 @@ ios-clean:
 
 # Prepare all native iOS dependencies.
 [private]
-ios-prepare: ensure-node-modules swift-proto
+ios-prepare slice="all": ensure-node-modules (core-xcframework "commoncrypto" slice)
     cd ios && pod install
 
 # Build the iOS app for a generic simulator (env: dev or prod). Pass an
 # architecture for a faster compile-only build, for example: just ios-build arm64
-ios-build architecture="" env="dev": (check-env env) ios-prepare
+ios-build architecture="" env="dev": (check-env env) (ios-prepare "sim")
     GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura -configuration Debug -xcconfig ios/Config/{{capitalize(env)}}.xcconfig -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO {{ if architecture != "" { "ARCHS=" + quote(architecture) + " ONLY_ACTIVE_ARCH=YES" } else { "" } }} build
 
 # Archive the iOS device build for App Store Connect / TestFlight (env: dev or
 # prod). The version defaults to package.json's.
-ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="" env="dev": (check-env env) ios-prepare
+ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="" env="dev": (check-env env) (ios-prepare "device")
     #!/usr/bin/env bash
     set -euo pipefail
     version={{quote(version)}}

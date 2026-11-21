@@ -5,11 +5,3 @@ rootProject.name = 'Obscura'
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')
 
-// The Kotlin kit in ../kotlin is its own Gradle build, because CI also tests it
-// standalone. The app composes that build and substitutes its :lib project for
-// the kit dependency in app/build.gradle.
-includeBuild('../kotlin') {
-    dependencySubstitution {
-        substitute(module('dev.barrelmaker.obscura.kit:obscura-kit')).using(project(':lib'))
-    }
-}

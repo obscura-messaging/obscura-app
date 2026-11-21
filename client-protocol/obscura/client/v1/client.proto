@@ -3,7 +3,7 @@
 // The client-to-client payload carried inside the server transport's encrypted
 // bytes. The server never parses this layer.
 //
-// Behavioral contract: docs/KIT_API.md and client-protocol/conformance/.
+// Rationale: docs/CORE.md; wire and link vectors: core/tests/fixtures/.
 
 syntax = "proto3";
 package obscura.client.v1;
