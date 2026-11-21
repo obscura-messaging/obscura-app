@@ -27,7 +27,7 @@ uniffi = { version = "0.32.2", features = ["tokio"] }
 thiserror = "2.0.21"
 futures = { version = "0.3.34", default-features = false, features = ["executor", "alloc"] }
 async-trait = "0.1.79"
-rand = "0.9.4"
+rand = "0.10.3"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 tokio-util = "0.7.20"
 prost = "0.14.6"
