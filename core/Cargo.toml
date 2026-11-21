@@ -21,7 +21,7 @@ sqlcipher-openssl = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
 sqlcipher-commoncrypto = ["rusqlite/bundled-sqlcipher"]
 
 [dependencies]
-libsignal-protocol = { git = "https://github.com/signalapp/libsignal", tag = "v0.106.2" }
+libsignal-protocol = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.1" }
 rusqlite = "0.42.0"
 uniffi = { version = "0.32.2", features = ["tokio"] }
 thiserror = "2.0.21"
