@@ -52,15 +52,11 @@ jobs:
         uses: ./.github/actions/setup
         with:
           node: true
+          rust: true
+          rust-targets: aarch64-apple-ios
 
       - name: Select Xcode
         uses: ./.github/actions/xcode
-
-      - name: Install protobuf
-        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
-
-      - name: Install Rust
-        run: scripts/ci-install-rust.sh aarch64-apple-ios aarch64-apple-ios-sim
 
       - name: Install secrets
         env:

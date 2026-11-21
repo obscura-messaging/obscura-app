@@ -4,9 +4,12 @@
 # with the UniFFI C header and module map) and generates the Swift bindings, both into the
 # SwiftPM package at core/swift/ObscuraCore. macOS with Xcode only.
 #
-# Usage: core/scripts/build-xcframework.sh [commoncrypto|openssl]
+# Usage: core/scripts/build-xcframework.sh [commoncrypto|openssl] [all|sim|device]
 #   commoncrypto (default)  SQLCipher over Apple's CommonCrypto; no OpenSSL in the binary.
 #   openssl                 SQLCipher over vendored OpenSSL, the same crypto as Android.
+#   all (default)           Both iOS device (aarch64-apple-ios) and simulator (aarch64-apple-ios-sim).
+#   sim                     Simulator slice only (aarch64-apple-ios-sim).
+#   device                  Device slice only (aarch64-apple-ios).
 #
 set -euo pipefail
 
@@ -19,12 +22,27 @@ openssl | commoncrypto) ;;
     ;;
 esac
 
+slice="${2:-all}"
+case "$slice" in
+all)
+    targets=(aarch64-apple-ios aarch64-apple-ios-sim)
+    ;;
+sim)
+    targets=(aarch64-apple-ios-sim)
+    ;;
+device)
+    targets=(aarch64-apple-ios)
+    ;;
+*)
+    echo "error: unknown slice '$slice' (all, sim, or device)" >&2
+    exit 2
+    ;;
+esac
+
 core="$(cd "$(dirname "$0")/.." && pwd)"
 package="$core/swift/ObscuraCore"
 target_dir="${CARGO_TARGET_DIR:-$core/target}"
 features=(--no-default-features --features "sqlcipher-$crypto")
-# The arm64 simulator slice covers Apple silicon Macs and runners; add x86_64-apple-ios for Intel.
-targets=(aarch64-apple-ios aarch64-apple-ios-sim)
 # Matches the iOS deployment target so the static library links into the app without warnings.
 export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-16.0}"
 # libsqlite3-sys would use an OpenSSL named here instead of CommonCrypto or the vendored copy.
@@ -43,10 +61,11 @@ rust_seconds=$((SECONDS - start))
 t0=$SECONDS
 bindings="$target_dir/swift-bindings"
 rm -rf "$bindings"
+first_target="${targets[0]}"
 # Library mode reads the UniFFI metadata embedded in the static library; the bindgen binary
 # lives in a tiny workspace crate so Cargo does not compile libsignal/sqlcipher for the host.
 cargo run --locked --release -p obscura-core-bindgen --bin uniffi-bindgen -- \
-    generate --library "$target_dir/aarch64-apple-ios/release/libobscura_core.a" \
+    generate --library "$target_dir/$first_target/release/libobscura_core.a" \
     --language swift --out-dir "$bindings"
 echo "timing: bindings generated in $((SECONDS - t0))s"
 
@@ -76,6 +95,6 @@ for target in "${targets[@]}"; do
     echo "size: $target libobscura_core.a $(du -k "$lib" | cut -f1) KiB"
 done
 stripped="$target_dir/libobscura_core-stripped.a"
-xcrun strip -S -o "$stripped" "$target_dir/aarch64-apple-ios/release/libobscura_core.a"
-echo "size: aarch64-apple-ios libobscura_core.a without debug symbols $(du -k "$stripped" | cut -f1) KiB"
+xcrun strip -S -o "$stripped" "$target_dir/$first_target/release/libobscura_core.a"
+echo "size: $first_target libobscura_core.a without debug symbols $(du -k "$stripped" | cut -f1) KiB"
 echo "size: ObscuraCoreFFI.xcframework $(du -sk "$xcframework" | cut -f1) KiB"

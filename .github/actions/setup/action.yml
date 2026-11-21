@@ -1,11 +1,20 @@
 name: Setup
-description: Install just and, on request, Node with the npm dependencies, or the JDK from .java-version with Gradle.
+description: Install just and, on request, Node with npm dependencies, JDK/Gradle, or Rust/protoc/Cargo cache.
 inputs:
   node:
     description: Install Node from .nvmrc and run `just install`.
     default: 'false'
   java:
     description: Install Temurin from .java-version and set up Gradle.
+    default: 'false'
+  rust:
+    description: Install stable Rust, protoc, and cache Cargo artifacts.
+    default: 'false'
+  rust-targets:
+    description: Space-separated Rust targets to add when rust is true.
+    default: ''
+  cargo-ndk:
+    description: Install cargo-ndk when rust is true.
     default: 'false'
 runs:
   using: composite
@@ -35,3 +44,41 @@ runs:
     - name: Install Gradle
       if: inputs.java == 'true'
       uses: gradle/actions/setup-gradle@v6.4.1
+
+    - name: Install protobuf
+      if: inputs.rust == 'true'
+      shell: bash
+      run: |
+        if command -v protoc >/dev/null 2>&1; then
+          protoc --version
+        elif [[ "$(uname -s)" == "Darwin" ]]; then
+          brew list protobuf >/dev/null 2>&1 || brew install protobuf
+        else
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        fi
+
+    - name: Install Rust
+      if: inputs.rust == 'true'
+      shell: bash
+      # Intentionally word-split rust-targets into separate arguments.
+      run: scripts/ci-install-rust.sh ${{ inputs.rust-targets }}
+
+    - name: Cache Cargo
+      if: inputs.rust == 'true'
+      uses: actions/cache@v6.1.0
+      with:
+        path: |
+          ~/.cargo/bin/cargo-ndk
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          core/target
+        key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rust-targets }}-${{ hashFiles('core/Cargo.lock', 'core/Cargo.toml', 'core/bindgen/Cargo.toml') }}
+        restore-keys: |
+          cargo-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rust-targets }}-
+          cargo-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Install cargo-ndk
+      if: inputs.rust == 'true' && inputs.cargo-ndk == 'true'
+      shell: bash
+      run: command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked

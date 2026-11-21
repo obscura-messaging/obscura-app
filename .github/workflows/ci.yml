@@ -29,7 +29,6 @@ jobs:
     outputs:
       core: ${{ github.event_name != 'pull_request' || steps.filter.outputs.core == 'true' }}
       android: ${{ github.event_name != 'pull_request' || steps.filter.outputs.android == 'true' }}
-      core-ios: ${{ github.event_name != 'pull_request' || steps.filter.outputs.core_ios == 'true' }}
       ios: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ios == 'true' }}
     steps:
       - name: Filter paths
@@ -67,12 +66,6 @@ jobs:
               - 'core/**'
               - 'scripts/ci-install-rust.sh'
               - '.java-version'
-            core_ios:
-              - *shared
-              - '.xcode-version'
-              - 'core/**'
-              - 'scripts/ci-install-rust.sh'
-              - 'scripts/simulator.sh'
             ios:
               - *shared
               - '.xcode-version'
@@ -80,6 +73,7 @@ jobs:
               - 'ios/**'
               - 'core/**'
               - 'scripts/ci-install-rust.sh'
+              - 'scripts/simulator.sh'
 
   javascript:
     name: JavaScript
@@ -113,7 +107,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.core == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
@@ -124,6 +118,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           java: true
+          rust: true
 
       - name: Install buf
         uses: bufbuild/buf-action@v1.7.0
@@ -131,17 +126,8 @@ jobs:
           setup_only: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install protobuf
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Install Rust
-        run: scripts/ci-install-rust.sh
-
       - name: Lint protocol
         run: just protocol-lint
-
-      - name: Protocol vectors
-        run: just protocol-vectors
 
       - name: Rust core check
         run: just core-check
@@ -152,9 +138,9 @@ jobs:
   android:
     name: Android
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.android == 'true'
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
@@ -166,53 +152,19 @@ jobs:
         with:
           node: true
           java: true
+          rust: true
+          rust-targets: aarch64-linux-android
+          cargo-ndk: true
 
-      - name: Install protobuf
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Install Rust
-        run: scripts/ci-install-rust.sh aarch64-linux-android
-
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk --locked
-
-      # Main builds a signed bundle once in the separate release workflow.
       - name: Build app
         run: just android-build arm64-v8a false
-
-  core-ios:
-    name: Core iOS
-    needs: changes
-    if: needs.changes.outputs.core-ios == 'true'
-    runs-on: macos-26
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7.0.1
-        with:
-          submodules: recursive
-
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Select Xcode
-        uses: ./.github/actions/xcode
-
-      - name: Install protobuf
-        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
-
-      - name: Install Rust
-        run: scripts/ci-install-rust.sh aarch64-apple-ios aarch64-apple-ios-sim
-
-      - name: Swift XCFramework and binding tests
-        run: just core-swift-test
 
   ios:
     name: iOS
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true'
+    if: needs.changes.outputs.ios == 'true'
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
@@ -223,18 +175,17 @@ jobs:
         uses: ./.github/actions/setup
         with:
           node: true
+          rust: true
+          rust-targets: aarch64-apple-ios-sim
 
       - name: Select Xcode
         uses: ./.github/actions/xcode
 
-      - name: Install protobuf
-        run: brew list protobuf >/dev/null 2>&1 || brew install protobuf
-
-      - name: Install Rust
-        run: scripts/ci-install-rust.sh aarch64-apple-ios aarch64-apple-ios-sim
-
       - name: Install CocoaPods
         run: sudo gem install cocoapods -v 1.17.0 -N
+
+      - name: Swift XCFramework and binding tests
+        run: just core-swift-test
 
       - name: Build app
         run: just ios-build arm64
@@ -244,7 +195,7 @@ jobs:
   gate:
     name: Gate
     if: always()
-    needs: [changes, javascript, core, android, core-ios, ios]
+    needs: [changes, javascript, core, android, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

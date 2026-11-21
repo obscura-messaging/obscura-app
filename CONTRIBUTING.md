@@ -38,7 +38,7 @@ or `just ios-build arm64`.
   and `dev.barrelmaker.obscura`) into that path. It is gitignored. Never commit
   it, or any Firebase Admin credential.
 - **Rust core (`core/`).** Both Android and iOS build `obscura-core` from
-  `core/` ([`docs/RUST_CORE.md`](docs/RUST_CORE.md)). On Android, the
+  `core/` ([`docs/CORE.md`](docs/CORE.md)). On Android, the
   `buildObscuraRustCore` Gradle task runs `core/scripts/build-android.sh` to
   build the JNI `.so` libraries and generate UniFFI Kotlin bindings. On iOS,
   `just ios-prepare` runs `just core-xcframework` (`core/scripts/build-xcframework.sh`)
@@ -88,10 +88,9 @@ xcrun devicectl device install app --device <DEVICE_ID> \
 | CI job | Runs | On |
 | --- | --- | --- |
 | `JavaScript` | `just check`, `just release-script-test`, `just bundle` | PRs, `main` |
-| `Core` | `just protocol-lint`, `just protocol-vectors`, `just core-check`, `just core-jvm-test` | Core PRs, `main` |
-| `Core iOS` | `just core-swift-test` | Core iOS PRs, `main` |
-| `Android` | `just android-build arm64-v8a false` | Android PRs |
-| `iOS` | `just ios-build arm64` | iOS PRs |
+| `Core` | `just protocol-lint`, `just core-check`, `just core-jvm-test` | Core PRs, `main` |
+| `Android` | `just android-build arm64-v8a false` | Android PRs, `main` |
+| `iOS` | `just core-swift-test`, `just ios-build arm64` | iOS PRs, `main` |
 
 A PR runs a native job only when the job's inputs change: its platform
 directory, `core/`, `server-proto/`, `client-protocol/`, the `justfile`, its workflow, or (for app
@@ -111,6 +110,7 @@ well above its cold-cache duration, so a hung macOS job cannot run for the
 
 ```bash
 just server-up
+just core-integration
 just server-down
 ```
 

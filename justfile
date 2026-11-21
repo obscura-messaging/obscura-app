@@ -86,13 +86,18 @@ core-jvm-test:
 core-android jnilibs kotlin *abis:
     core/scripts/build-android.sh {{jnilibs}} {{kotlin}} {{abis}}
 
-# Build the core's iOS XCFramework (macOS): crypto is commoncrypto or openssl.
-core-xcframework crypto="commoncrypto":
-    core/scripts/build-xcframework.sh {{crypto}}
+# Build the core's iOS XCFramework (macOS): crypto is commoncrypto or openssl; slice is all, sim, or device.
+core-xcframework crypto="commoncrypto" slice="all":
+    core/scripts/build-xcframework.sh {{crypto}} {{slice}}
 
 # Test the core's generated Swift bindings on an iOS simulator (macOS).
-core-swift-test crypto="commoncrypto": (core-xcframework crypto)
+core-swift-test crypto="commoncrypto": (core-xcframework crypto "sim")
     cd core/swift/ObscuraCore && xcodebuild -scheme ObscuraCore -derivedDataPath .build/DerivedData -destination "platform=iOS Simulator,id=$(../../../scripts/simulator.sh)" test
+
+# Run server-dependent integration tests against an explicit local endpoint.
+core-integration api="http://localhost:3000":
+    @curl -fsS "{{ api }}/openapi.yaml" >/dev/null || { echo "error: no Obscura server at {{ api }}" >&2; exit 1; }
+    OBSCURA_TEST_API="{{ api }}" ./android/gradlew -p core/bindings/kotlin-jvm-test integrationTest
 
 # Test the release verification script.
 release-script-test:
@@ -112,10 +117,6 @@ bundle: ensure-node-modules
 # Lint the client-to-client protocol.
 protocol-lint:
     buf lint client-protocol
-
-# Validate protocol conformance fixtures.
-protocol-vectors:
-    python3 client-protocol/conformance/validate.py
 
 # Build and start a local obscura-server with Postgres, Valkey and MinIO
 # (ref: server git ref, default its HEAD). See scripts/local-server.sh for
@@ -172,17 +173,17 @@ ios-clean:
 
 # Prepare all native iOS dependencies.
 [private]
-ios-prepare: ensure-node-modules core-xcframework
+ios-prepare slice="all": ensure-node-modules (core-xcframework "commoncrypto" slice)
     cd ios && pod install
 
 # Build the iOS app for a generic simulator (env: dev or prod). Pass an
 # architecture for a faster compile-only build, for example: just ios-build arm64
-ios-build architecture="" env="dev": (check-env env) ios-prepare
+ios-build architecture="" env="dev": (check-env env) (ios-prepare "sim")
     GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all xcodebuild -workspace ios/Obscura.xcworkspace -scheme Obscura -configuration Debug -xcconfig ios/Config/{{capitalize(env)}}.xcconfig -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO {{ if architecture != "" { "ARCHS=" + quote(architecture) + " ONLY_ACTIVE_ARCH=YES" } else { "" } }} build
 
 # Archive the iOS device build for App Store Connect / TestFlight (env: dev or
 # prod). The version defaults to package.json's.
-ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="" env="dev": (check-env env) ios-prepare
+ios-archive archive_path="ios/build/Obscura.xcarchive" build_number="" version="" env="dev": (check-env env) (ios-prepare "device")
     #!/usr/bin/env bash
     set -euo pipefail
     version={{quote(version)}}

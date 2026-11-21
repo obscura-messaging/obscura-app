@@ -82,6 +82,14 @@ updates:
       - dependency-name: "gradle"
       - dependency-name: "gradle-wrapper"
 
+  # ─── Rust core (cargo) ──────────────────────────────────
+  - package-ecosystem: "cargo"
+    directory: "/core"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+
   # ─── GitHub Actions ─────────────────────────────────────
   - package-ecosystem: "github-actions"
     # The workflows and the local composite actions they use.

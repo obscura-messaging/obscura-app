@@ -52,15 +52,9 @@ jobs:
         with:
           node: true
           java: true
-
-      - name: Install protobuf
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Install Rust
-        run: scripts/ci-install-rust.sh aarch64-linux-android x86_64-linux-android
-
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk --locked
+          rust: true
+          rust-targets: aarch64-linux-android x86_64-linux-android
+          cargo-ndk: true
 
       - name: Install secrets
         env:

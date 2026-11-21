@@ -1,12 +1,12 @@
 # Application domain rationale
 
 Executable types, projections, and tests in `src/domain/`, `src/state/`, and
-`obscura-core` ([`KIT_API.md`](KIT_API.md)) define application behaviour. This
+`obscura-core` ([`docs/CORE.md`](CORE.md)) define application behaviour. This
 document records only **why** those boundaries and invariants exist.
 
 ## Why the core owns typed domain storage and wire encoding
 
-`obscura-core` ([`KIT_API.md`](KIT_API.md)) handles Signal sessions, transport,
+`obscura-core` ([`docs/CORE.md`](CORE.md)) handles Signal sessions, transport,
 protobuf wire encoding, encrypted SQLite storage, merge, outbox retries, and
 expiry behind typed domain operations (`ConversationItem`, `StoryItem`,
 `ProfileItem`). Keeping wire encoding, transactional storage, and expiry inside

@@ -9,13 +9,13 @@ A **pix** is a direct, disappearing photo or video message, not the app's name.
 ## Layer boundaries
 
 Code and tests are the authority on behaviour; Markdown documents explain only
-**why** boundaries and constraints exist. The exception is
-[`docs/KIT_API.md`](docs/KIT_API.md), the behaviour contract the native core implements.
+**why** boundaries and constraints exist.
 
-- **Bridge & storage (`src/native/`, `android/`, `ios/`, `core/`):**
+- **Core & bridge (`core/`, `src/native/`, `android/`, `ios/`):**
+  `obscura-core` (`core/`) owns Signal sessions, SQLCipher storage, protobuf
+  wire encoding, and client protocol orchestration ([`docs/CORE.md`](docs/CORE.md)).
   Native hosts manage OS lifecycle, permissions, files, push, transport I/O, and
-  React Native marshalling, exposing typed domain operations over `obscura-core`
-  ([`docs/RUST_CORE.md`](docs/RUST_CORE.md)).
+  React Native marshalling ([`docs/BRIDGE.md`](docs/BRIDGE.md)).
 - **Domain (`src/domain/`):** Pure, synchronous logic and narrowed view-model
   projections. Independent of React, React Native, native bridges, and stateful
   orchestration. Domain types make invalid UI states unrepresentable before
@@ -28,10 +28,12 @@ Code and tests are the authority on behaviour; Markdown documents explain only
 
 ## Rationale & guides
 
+- [`docs/CORE.md`](docs/CORE.md): why the Rust core and protocol rules are
+  shaped as they are.
 - [`docs/DOMAIN_CONTRACT.md`](docs/DOMAIN_CONTRACT.md): why the domain rules are
   shaped as they are.
 - [`docs/BRIDGE.md`](docs/BRIDGE.md): why the React Native bridge is constrained
-  as it is ([kit contract](docs/KIT_API.md)).
+  as it is.
 - [`docs/PUSH_NOTIFICATIONS.md`](docs/PUSH_NOTIFICATIONS.md): push privacy
   rationale.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): setup, `just check`, and native pin.

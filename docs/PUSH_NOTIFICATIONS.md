@@ -18,8 +18,8 @@ every push payload in transit.
   banner rather than accumulating a visible count or history of received items on
   the lock screen.
 - **Process-scoped background drain:** On Android, an FCM data message wakes the
-  process without mounting React Native. `ObscuraSession` restores the kit
-  session and drains envelopes ([kit push](KIT_API.md#typing-attachments-and-push))
+  process without mounting React Native. `ObscuraSession` restores the core
+  session and drains envelopes ([`CORE.md`](CORE.md))
   within the service execution budget, posting generic copy only while the app
   is backgrounded.
 

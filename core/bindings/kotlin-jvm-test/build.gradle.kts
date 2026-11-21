@@ -52,9 +52,28 @@ dependencies {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags("integration")
+    }
     dependsOn(buildHostCore)
     systemProperty("uniffi.component.obscura_core.libraryOverride", hostLibrary.asFile.path)
+    testLogging {
+        events("passed", "failed", "skipped")
+        showStandardStreams = true
+    }
+}
+
+tasks.register<Test>("integrationTest") {
+    description = "Runs live-server integration tests against OBSCURA_TEST_API."
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    dependsOn(buildHostCore)
+    useJUnitPlatform {
+        includeTags("integration")
+    }
+    systemProperty("uniffi.component.obscura_core.libraryOverride", hostLibrary.asFile.path)
+    environment("OBSCURA_TEST_API", System.getenv("OBSCURA_TEST_API") ?: "http://localhost:3000")
     testLogging {
         events("passed", "failed", "skipped")
         showStandardStreams = true

@@ -17,7 +17,7 @@ use prost::Message as _;
 use serde_json::Value;
 
 fn read_vector_file(name: &str) -> Value {
-    let path = format!("../client-protocol/conformance/{name}");
+    let path = format!("tests/fixtures/{name}");
     let text = fs::read_to_string(&path).expect("failed to read conformance vector file");
     serde_json::from_str(&text).expect("failed to parse conformance JSON")
 }
