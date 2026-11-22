@@ -3,7 +3,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useSession } from '../state/store';
+import { useSignedIn } from '../state/store';
 import type { RootStackParamList } from '../navigation/types';
 import { AddFriendIcon } from './icons';
 import { Avatar } from './Avatar';
@@ -16,7 +16,7 @@ interface MainHeaderOverlayProps {
 }
 
 export function MainHeaderOverlay({ camera }: MainHeaderOverlayProps) {
-  const { myUsername } = useSession();
+  const { me } = useSignedIn();
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
 
@@ -34,7 +34,7 @@ export function MainHeaderOverlay({ camera }: MainHeaderOverlayProps) {
         style={s.action}
         accessibilityLabel="Profile"
       >
-        <Avatar name={myUsername} size={32} />
+        <Avatar name={me.username} size={32} />
       </TouchableOpacity>
       <Text style={s.title} pointerEvents="none">
         obscura

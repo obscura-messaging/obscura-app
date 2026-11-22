@@ -6,12 +6,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { activityPreview, friendActivities, type PixBadge } from '../domain/chats';
 import { pendingFriendSubtitle, removeFriendPrompt } from '../domain/friends';
 import {
-  useSession,
+  useSignedIn,
   useMessages,
   useAcceptedFriends,
   usePendingFriends,
   acceptFriend,
   removeFriend,
+  type DeviceRole,
   type Friend,
 } from '../state/store';
 import { StoriesRow } from '../components/StoriesRow';
@@ -56,15 +57,15 @@ function PixAvatar({ badge, friend }: { badge: PixBadge; friend: Friend }) {
 interface PendingRowProps {
   friend: Friend;
   accepting: boolean;
-  /** Only the primary accepts; null until the session loads. */
-  isPrimary: boolean | null;
+  /** Only the primary accepts. */
+  role: DeviceRole;
   onAccept?: () => void;
   onLongPress?: () => void;
 }
 
-function PendingRow({ friend, accepting, isPrimary, onAccept, onLongPress }: PendingRowProps) {
+function PendingRow({ friend, accepting, role, onAccept, onLongPress }: PendingRowProps) {
   const received = friend.status === 'pending_received';
-  const actionable = received && isPrimary === true;
+  const actionable = received && role === 'primary';
   const content = (
     <>
       <Avatar
@@ -75,7 +76,7 @@ function PendingRow({ friend, accepting, isPrimary, onAccept, onLongPress }: Pen
       />
       <View style={cl.info}>
         <Text style={cl.username}>{friend.username}</Text>
-        <Text style={cl.preview}>{pendingFriendSubtitle(friend, isPrimary)}</Text>
+        <Text style={cl.preview}>{pendingFriendSubtitle(friend, role)}</Text>
       </View>
       {actionable && (
         <View style={cl.acceptBtn}>
@@ -105,7 +106,10 @@ function PendingRow({ friend, accepting, isPrimary, onAccept, onLongPress }: Pen
 export function ChatListScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
-  const { myUserId, isPrimary } = useSession();
+  const {
+    me: { userId: myUserId },
+    role,
+  } = useSignedIn();
   const friends = useAcceptedFriends();
   const pending = usePendingFriends();
   const items = useMessages();
@@ -132,7 +136,7 @@ export function ChatListScreen() {
     nav.navigate('Chat', { userId: friend.userId, username: friend.username });
 
   const confirmRemoveFriend = async (friend: Friend) => {
-    if (isPrimary !== true) return;
+    if (role !== 'primary') return;
     const { title, body, actionLabel } = removeFriendPrompt(friend);
     const confirmed = await confirm(title, body, actionLabel, true);
     if (!confirmed) return;
@@ -163,9 +167,9 @@ export function ChatListScreen() {
                 key={f.userId}
                 friend={f}
                 accepting={acceptingUserId === f.userId}
-                isPrimary={isPrimary}
+                role={role}
                 onAccept={acceptingUserId === null ? () => accept(f) : undefined}
-                onLongPress={isPrimary === true ? () => confirmRemoveFriend(f) : undefined}
+                onLongPress={role === 'primary' ? () => confirmRemoveFriend(f) : undefined}
               />
             ))}
           </>
@@ -180,7 +184,7 @@ export function ChatListScreen() {
                   ? openPixViewer(nav, item.friend, item.unopenedPix)
                   : openChat(item.friend)
               }
-              onLongPress={isPrimary === true ? () => confirmRemoveFriend(item.friend) : undefined}
+              onLongPress={role === 'primary' ? () => confirmRemoveFriend(item.friend) : undefined}
             >
               <PixAvatar badge={item.badge} friend={item.friend} />
               <View style={cl.chatZone}>

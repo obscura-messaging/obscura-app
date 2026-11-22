@@ -324,6 +324,8 @@ fn link_conformance_vectors() {
             device_name: code_vec["deviceName"].as_str().unwrap().to_owned(),
         };
         assert_eq!(link::decode_code(&link::encode_code(&own)).unwrap(), own);
+        let decorated = format!(" \n{}\u{00AD} {}\t ", &code_str[..4], &code_str[4..]);
+        assert_eq!(link::decode_code(&decorated).unwrap(), own);
         assert_eq!(decoded, own);
     }
 
