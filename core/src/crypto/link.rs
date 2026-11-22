@@ -69,10 +69,14 @@ pub fn encode_code(code: &LinkCode) -> String {
 
 pub fn decode_code(text: &str) -> Result<LinkCode, ObscuraError> {
     let invalid = || ObscuraError::invalid_arg("Invalid link code");
-    if text.contains('=') {
+    let cleaned: String = text
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '\u{00AD}')
+        .collect();
+    if cleaned.is_empty() || cleaned.contains('=') {
         return Err(invalid());
     }
-    let bytes = URL_SAFE_NO_PAD.decode(text).map_err(|_| invalid())?;
+    let bytes = URL_SAFE_NO_PAD.decode(&cleaned).map_err(|_| invalid())?;
     let code = LinkCode::decode(&bytes[..]).map_err(|_| invalid())?;
     if code.session_id.is_empty() || public_key(&code).is_err() {
         return Err(invalid());

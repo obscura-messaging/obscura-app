@@ -18,7 +18,8 @@ import { toast } from '../components/Toast';
 import { confirm } from '../components/confirm';
 import type { RootStackParamList } from '../navigation/types';
 import {
-  useSession,
+  useSignedIn,
+  useConnState,
   useIdentity,
   useProfiles,
   saveOwnProfile,
@@ -41,7 +42,10 @@ const DEBUG_LOG_POLL_MS = 2000;
 export function ProfileScreen() {
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
-  const { myUserId, myUsername, connState } = useSession();
+  const {
+    me: { userId: myUserId, username: myUsername },
+  } = useSignedIn();
+  const connState = useConnState();
   const identity = useIdentity();
   const profiles = useProfiles();
   const ownProfile = profiles.find(p => p.userId === myUserId);
@@ -187,14 +191,11 @@ export function ProfileScreen() {
 
         {showLog && debugLog.length > 0 && (
           <View style={pf.logBox}>
-            {debugLog
-              .slice()
-              .reverse()
-              .map((line, i) => (
-                <Text key={i} style={pf.logLine}>
-                  {line}
-                </Text>
-              ))}
+            {debugLog.map((line, i) => (
+              <Text key={i} style={pf.logLine}>
+                {line}
+              </Text>
+            ))}
           </View>
         )}
 

@@ -1,11 +1,13 @@
 import { Obscura } from '../native/ObscuraModule';
-import { useStore } from './store';
+import { startSession, useStore } from './store';
 
 export const MIN_PASSWORD_LENGTH = 12;
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,50}$/;
 
 /** Why these credentials cannot be submitted, or `null` when they can. */
 export function credentialsProblem(username: string, password: string): string | null {
   if (username === '') return 'Enter a username';
+  if (!USERNAME_RE.test(username)) return 'Username must be 3–50 letters, numbers, or _';
   if (password.length < MIN_PASSWORD_LENGTH)
     return `Password must be ${MIN_PASSWORD_LENGTH}+ chars`;
   return null;
@@ -13,7 +15,7 @@ export function credentialsProblem(username: string, password: string): string |
 
 async function signIn(): Promise<void> {
   await Obscura.connect();
-  useStore.setState({ authed: true });
+  await startSession();
 }
 
 export async function register(username: string, password: string): Promise<void> {
@@ -67,7 +69,7 @@ export async function linkThisDevice(
   }
   onCode(code);
   await Obscura.completeLink();
-  useStore.setState({ authed: true });
+  await startSession();
 }
 
 export function cancelLink(): Promise<void> {
@@ -76,7 +78,7 @@ export function cancelLink(): Promise<void> {
 }
 
 export function cancelPendingLinkOnUnmount(): Promise<void> {
-  if (useStore.getState().authed) return Promise.resolve();
+  if (useStore.getState().session.status === 'signedIn') return Promise.resolve();
   return cancelLink();
 }
 
