@@ -22,7 +22,7 @@ sqlcipher-commoncrypto = ["rusqlite/bundled-sqlcipher"]
 
 [dependencies]
 libsignal-protocol = { git = "https://github.com/signalapp/libsignal", tag = "v0.106.2" }
-rusqlite = "0.42.0"
+rusqlite = "0.43.0"
 uniffi = { version = "0.32.2", features = ["tokio"] }
 thiserror = "2.0.21"
 futures = { version = "0.3.34", default-features = false, features = ["executor", "alloc"] }
