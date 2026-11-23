@@ -63,11 +63,18 @@ pub fn open(envelope_bytes: &[u8], own: &PrivateKey) -> Result<Vec<u8>, ObscuraE
         .map_err(|_| ObscuraError::link_failed("Link envelope does not decrypt"))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedLinkCode {
+    pub session_id: String,
+    pub peer_public_key: PublicKey,
+    pub device_name: String,
+}
+
 pub fn encode_code(code: &LinkCode) -> String {
     URL_SAFE_NO_PAD.encode(code.encode_to_vec())
 }
 
-pub fn decode_code(text: &str) -> Result<LinkCode, ObscuraError> {
+pub fn decode_code(text: &str) -> Result<DecodedLinkCode, ObscuraError> {
     let invalid = || ObscuraError::invalid_arg("Invalid link code");
     let cleaned: String = text
         .chars()
@@ -78,15 +85,16 @@ pub fn decode_code(text: &str) -> Result<LinkCode, ObscuraError> {
     }
     let bytes = URL_SAFE_NO_PAD.decode(&cleaned).map_err(|_| invalid())?;
     let code = LinkCode::decode(&bytes[..]).map_err(|_| invalid())?;
-    if code.session_id.is_empty() || public_key(&code).is_err() {
+    if code.session_id.is_empty() {
         return Err(invalid());
     }
-    Ok(code)
-}
-
-pub fn public_key(code: &LinkCode) -> Result<PublicKey, ObscuraError> {
-    PublicKey::deserialize(&code.ephemeral_public_key)
-        .map_err(|_| ObscuraError::invalid_arg("Invalid link code"))
+    let peer_public_key =
+        PublicKey::deserialize(&code.ephemeral_public_key).map_err(|_| invalid())?;
+    Ok(DecodedLinkCode {
+        session_id: code.session_id,
+        peer_public_key,
+        device_name: code.device_name,
+    })
 }
 
 #[uniffi::export]

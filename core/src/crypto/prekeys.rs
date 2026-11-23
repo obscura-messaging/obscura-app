@@ -89,12 +89,10 @@ pub struct PreKeyCounts {
 pub struct ProvisioningKeys {
     pub identity: IdentityKeyPair,
     pub registration_id: u32,
-    pub signed_pre_key_id: u32,
     pub signed_pre_key: SignedPreKeyRecord,
-    pub last_resort_id: u32,
     pub last_resort_kyber_pre_key: KyberPreKeyRecord,
-    pub one_time_pre_keys: Vec<(u32, PreKeyRecord)>,
-    pub kyber_pre_keys: Vec<(u32, KyberPreKeyRecord)>,
+    pub one_time_pre_keys: Vec<PreKeyRecord>,
+    pub kyber_pre_keys: Vec<KyberPreKeyRecord>,
     pub state: PreKeyState,
 }
 
@@ -103,20 +101,17 @@ impl ProvisioningKeys {
         Ok(DeviceKeysJson {
             identity_key: STANDARD.encode(self.identity.public_key().serialize()),
             registration_id: self.registration_id,
-            signed_pre_key: signed_to_json(self.signed_pre_key_id, &self.signed_pre_key)?,
-            last_resort_kyber_pre_key: kyber_to_json(
-                self.last_resort_id,
-                &self.last_resort_kyber_pre_key,
-            )?,
+            signed_pre_key: signed_to_json(&self.signed_pre_key)?,
+            last_resort_kyber_pre_key: kyber_to_json(&self.last_resort_kyber_pre_key)?,
             one_time_pre_keys: self
                 .one_time_pre_keys
                 .iter()
-                .map(|(id, r)| one_time_to_json(*id, r))
+                .map(one_time_to_json)
                 .collect::<Result<Vec<_>, _>>()?,
             kyber_pre_keys: self
                 .kyber_pre_keys
                 .iter()
-                .map(|(id, r)| kyber_to_json(*id, r))
+                .map(kyber_to_json)
                 .collect::<Result<Vec<_>, _>>()?,
         })
     }
@@ -124,10 +119,10 @@ impl ProvisioningKeys {
 
 #[derive(Clone)]
 pub struct PreKeyRefill {
-    pub signed_pre_key: Option<(u32, SignedPreKeyRecord)>,
-    pub last_resort_kyber_pre_key: Option<(u32, KyberPreKeyRecord)>,
-    pub one_time_pre_keys: Vec<(u32, PreKeyRecord)>,
-    pub kyber_pre_keys: Vec<(u32, KyberPreKeyRecord)>,
+    pub signed_pre_key: Option<SignedPreKeyRecord>,
+    pub last_resort_kyber_pre_key: Option<KyberPreKeyRecord>,
+    pub one_time_pre_keys: Vec<PreKeyRecord>,
+    pub kyber_pre_keys: Vec<KyberPreKeyRecord>,
 }
 
 impl PreKeyRefill {
@@ -143,22 +138,22 @@ impl PreKeyRefill {
             signed_pre_key: self
                 .signed_pre_key
                 .as_ref()
-                .map(|(id, r)| signed_to_json(*id, r))
+                .map(signed_to_json)
                 .transpose()?,
             last_resort_kyber_pre_key: self
                 .last_resort_kyber_pre_key
                 .as_ref()
-                .map(|(id, r)| kyber_to_json(*id, r))
+                .map(kyber_to_json)
                 .transpose()?,
             one_time_pre_keys: self
                 .one_time_pre_keys
                 .iter()
-                .map(|(id, r)| one_time_to_json(*id, r))
+                .map(one_time_to_json)
                 .collect::<Result<Vec<_>, _>>()?,
             kyber_pre_keys: self
                 .kyber_pre_keys
                 .iter()
-                .map(|(id, r)| kyber_to_json(*id, r))
+                .map(kyber_to_json)
                 .collect::<Result<Vec<_>, _>>()?,
         })
     }
@@ -180,20 +175,17 @@ pub fn generate_provisioning_keys_sync(
     let signed_pre_key = generate_signed_pre_key(identity.private_key(), signed_id, now_ms)?;
     let last_resort_kyber_pre_key =
         generate_kyber_pre_key(identity.private_key(), last_resort_id, now_ms)?;
-    let one_time_pre_keys: Vec<(u32, PreKeyRecord)> = one_time_ids
+    let one_time_pre_keys: Vec<PreKeyRecord> = one_time_ids
         .iter()
         .map(|&id| {
             let pair = KeyPair::generate(&mut rand::rng());
-            (id, PreKeyRecord::new(id.into(), &pair))
+            PreKeyRecord::new(id.into(), &pair)
         })
         .collect();
-    let mut kyber_pre_keys = Vec::with_capacity(kyber_ids.len());
-    for &id in &kyber_ids {
-        kyber_pre_keys.push((
-            id,
-            generate_kyber_pre_key(identity.private_key(), id, now_ms)?,
-        ));
-    }
+    let kyber_pre_keys = kyber_ids
+        .iter()
+        .map(|&id| generate_kyber_pre_key(identity.private_key(), id, now_ms))
+        .collect::<Result<Vec<_>, _>>()?;
 
     let state = PreKeyState {
         next_signed_id: next_id(signed_id),
@@ -208,9 +200,7 @@ pub fn generate_provisioning_keys_sync(
     Ok(ProvisioningKeys {
         identity,
         registration_id,
-        signed_pre_key_id: signed_id,
         signed_pre_key,
-        last_resort_id,
         last_resort_kyber_pre_key,
         one_time_pre_keys,
         kyber_pre_keys,
@@ -222,29 +212,29 @@ pub async fn generate_provisioning_keys(
     identity: IdentityKeyPair,
     now_ms: i64,
 ) -> Result<ProvisioningKeys, ObscuraError> {
-    let identity_bytes = identity.serialize().into_vec();
-    crate::runtime::spawn_blocking(move || {
-        let pair = IdentityKeyPair::try_from(&identity_bytes[..]).map_err(map_signal_error)?;
-        generate_provisioning_keys_sync(pair, now_ms)
-    })
-    .await
-    .map_err(|e| ObscuraError::storage(format!("Pre-key generation task failed: {e}")))?
+    crate::runtime::spawn_blocking(move || generate_provisioning_keys_sync(identity, now_ms))
+        .await
+        .map_err(|e| ObscuraError::storage(format!("Pre-key generation task failed: {e}")))?
 }
 
 pub fn install(conn: &Connection, keys: &ProvisioningKeys) -> Result<(), ObscuraError> {
     SignalStore::install_identity(conn, &keys.identity, keys.registration_id)?;
-    SignalStore::store_signed_pre_key(conn, keys.signed_pre_key_id, &keys.signed_pre_key)?;
+    SignalStore::store_signed_pre_key(
+        conn,
+        signed_pre_key_id(&keys.signed_pre_key)?,
+        &keys.signed_pre_key,
+    )?;
     SignalStore::store_kyber_pre_key(
         conn,
-        keys.last_resort_id,
+        kyber_pre_key_id(&keys.last_resort_kyber_pre_key)?,
         &keys.last_resort_kyber_pre_key,
         true,
     )?;
-    for (id, rec) in &keys.one_time_pre_keys {
-        SignalStore::store_pre_key(conn, *id, rec)?;
+    for rec in &keys.one_time_pre_keys {
+        SignalStore::store_pre_key(conn, pre_key_id(rec)?, rec)?;
     }
-    for (id, rec) in &keys.kyber_pre_keys {
-        SignalStore::store_kyber_pre_key(conn, *id, rec, false)?;
+    for rec in &keys.kyber_pre_keys {
+        SignalStore::store_kyber_pre_key(conn, kyber_pre_key_id(rec)?, rec, false)?;
     }
     SignalStore::save_pre_key_state(conn, &keys.state)
 }
@@ -263,19 +253,18 @@ pub async fn prepare_refill(
     counts: PreKeyCounts,
     now_ms: i64,
 ) -> Result<PreKeyRefill, ObscuraError> {
-    let (state, identity_bytes) = db
+    let (state, identity) = db
         .read(|conn| {
             let state = SignalStore::pre_key_state(conn)?
                 .ok_or_else(|| ObscuraError::storage("Pre-keys not provisioned"))?;
             let (identity, _) = SignalStore::get_local_identity(conn)?
                 .ok_or_else(|| ObscuraError::storage("Identity not initialized"))?;
-            Ok((state, identity.serialize().into_vec()))
+            Ok((state, identity))
         })
         .await?;
 
     let state_snapshot = state.clone();
     let (refill, updated) = crate::runtime::spawn_blocking(move || -> Result<_, ObscuraError> {
-        let identity = IdentityKeyPair::try_from(&identity_bytes[..]).map_err(map_signal_error)?;
         let priv_key = identity.private_key();
         let mut updated = state;
 
@@ -288,8 +277,8 @@ pub async fn prepare_refill(
             let lr_rec = generate_kyber_pre_key(priv_key, lr_id, now_ms)?;
             updated.next_signed_id = next_id(s_id);
             updated.next_kyber_id = next_id(lr_id);
-            signed = Some((s_id, s_rec));
-            last_resort = Some((lr_id, lr_rec));
+            signed = Some(s_rec);
+            last_resort = Some(lr_rec);
         }
 
         let one_time = if counts.one_time < ONE_TIME_MINIMUM {
@@ -301,7 +290,7 @@ pub async fn prepare_refill(
                 .into_iter()
                 .map(|id| {
                     let pair = KeyPair::generate(&mut rand::rng());
-                    (id, PreKeyRecord::new(id.into(), &pair))
+                    PreKeyRecord::new(id.into(), &pair)
                 })
                 .collect()
         } else {
@@ -313,11 +302,10 @@ pub async fn prepare_refill(
             if let Some(&last) = batch_ids.last() {
                 updated.next_kyber_id = next_id(last);
             }
-            let mut out = Vec::with_capacity(batch_ids.len());
-            for id in batch_ids {
-                out.push((id, generate_kyber_pre_key(priv_key, id, now_ms)?));
-            }
-            out
+            batch_ids
+                .into_iter()
+                .map(|id| generate_kyber_pre_key(priv_key, id, now_ms))
+                .collect::<Result<Vec<_>, _>>()?
         } else {
             Vec::new()
         };
@@ -342,22 +330,22 @@ pub async fn prepare_refill(
         if current != state_snapshot {
             return Err(ObscuraError::storage("Pre-key state changed during a sync"));
         }
-        if let Some((id, ref rec)) = refill_for_db.signed_pre_key {
-            SignalStore::store_signed_pre_key(ctx.conn, id, rec)?;
+        if let Some(ref rec) = refill_for_db.signed_pre_key {
+            SignalStore::store_signed_pre_key(ctx.conn, signed_pre_key_id(rec)?, rec)?;
         }
-        if let Some((id, ref rec)) = refill_for_db.last_resort_kyber_pre_key {
-            SignalStore::store_kyber_pre_key(ctx.conn, id, rec, true)?;
+        if let Some(ref rec) = refill_for_db.last_resort_kyber_pre_key {
+            SignalStore::store_kyber_pre_key(ctx.conn, kyber_pre_key_id(rec)?, rec, true)?;
         }
         if !refill_for_db.one_time_pre_keys.is_empty() {
             SignalStore::mark_one_time_ec_pre_keys_stale(ctx.conn, now_ms)?;
-            for (id, rec) in &refill_for_db.one_time_pre_keys {
-                SignalStore::store_pre_key(ctx.conn, *id, rec)?;
+            for rec in &refill_for_db.one_time_pre_keys {
+                SignalStore::store_pre_key(ctx.conn, pre_key_id(rec)?, rec)?;
             }
         }
         if !refill_for_db.kyber_pre_keys.is_empty() {
             SignalStore::mark_one_time_kyber_pre_keys_stale(ctx.conn, now_ms)?;
-            for (id, rec) in &refill_for_db.kyber_pre_keys {
-                SignalStore::store_kyber_pre_key(ctx.conn, *id, rec, false)?;
+            for rec in &refill_for_db.kyber_pre_keys {
+                SignalStore::store_kyber_pre_key(ctx.conn, kyber_pre_key_id(rec)?, rec, false)?;
             }
         }
         SignalStore::save_pre_key_state(ctx.conn, &updated)
@@ -372,8 +360,16 @@ pub async fn confirm_refill(
     refill: &PreKeyRefill,
     now_ms: i64,
 ) -> Result<(), ObscuraError> {
-    let signed_id = refill.signed_pre_key.as_ref().map(|(id, _)| *id);
-    let last_resort_id = refill.last_resort_kyber_pre_key.as_ref().map(|(id, _)| *id);
+    let signed_id = refill
+        .signed_pre_key
+        .as_ref()
+        .map(signed_pre_key_id)
+        .transpose()?;
+    let last_resort_id = refill
+        .last_resort_kyber_pre_key
+        .as_ref()
+        .map(kyber_pre_key_id)
+        .transpose()?;
     db.write_tx(move |ctx| {
         let mut state = SignalStore::pre_key_state(ctx.conn)?
             .ok_or_else(|| ObscuraError::storage("Pre-keys not provisioned"))?;
@@ -437,30 +433,45 @@ pub fn generate_kyber_pre_key(
     ))
 }
 
-fn signed_to_json(id: u32, rec: &SignedPreKeyRecord) -> Result<SignedPreKeyJson, ObscuraError> {
+fn pre_key_id(rec: &PreKeyRecord) -> Result<u32, ObscuraError> {
+    Ok(u32::from(rec.id().map_err(map_signal_error)?))
+}
+
+fn signed_pre_key_id(rec: &SignedPreKeyRecord) -> Result<u32, ObscuraError> {
+    Ok(u32::from(rec.id().map_err(map_signal_error)?))
+}
+
+fn kyber_pre_key_id(rec: &KyberPreKeyRecord) -> Result<u32, ObscuraError> {
+    Ok(u32::from(rec.id().map_err(map_signal_error)?))
+}
+
+fn signed_to_json(rec: &SignedPreKeyRecord) -> Result<SignedPreKeyJson, ObscuraError> {
+    let key_id = signed_pre_key_id(rec)?;
     let pub_key = rec.public_key().map_err(map_signal_error)?.serialize();
     let sig = rec.signature().map_err(map_signal_error)?;
     Ok(SignedPreKeyJson {
-        key_id: id,
+        key_id,
         public_key: STANDARD.encode(pub_key),
         signature: STANDARD.encode(sig),
     })
 }
 
-fn kyber_to_json(id: u32, rec: &KyberPreKeyRecord) -> Result<KyberPreKeyJson, ObscuraError> {
+fn kyber_to_json(rec: &KyberPreKeyRecord) -> Result<KyberPreKeyJson, ObscuraError> {
+    let key_id = kyber_pre_key_id(rec)?;
     let pub_key = rec.public_key().map_err(map_signal_error)?.serialize();
     let sig = rec.signature().map_err(map_signal_error)?;
     Ok(KyberPreKeyJson {
-        key_id: id,
+        key_id,
         public_key: STANDARD.encode(pub_key),
         signature: STANDARD.encode(sig),
     })
 }
 
-fn one_time_to_json(id: u32, rec: &PreKeyRecord) -> Result<OneTimePreKeyJson, ObscuraError> {
+fn one_time_to_json(rec: &PreKeyRecord) -> Result<OneTimePreKeyJson, ObscuraError> {
+    let key_id = pre_key_id(rec)?;
     let pub_key = rec.public_key().map_err(map_signal_error)?.serialize();
     Ok(OneTimePreKeyJson {
-        key_id: id,
+        key_id,
         public_key: STANDARD.encode(pub_key),
     })
 }

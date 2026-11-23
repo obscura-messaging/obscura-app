@@ -295,12 +295,11 @@ impl<'a> SignalStore<'a> {
     ) -> Result<Vec<SignedPreKeyRecord>, ObscuraError> {
         let mut stmt = conn.prepare("SELECT record FROM signal_signed_prekeys")?;
         let rows = stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
-        let mut out = Vec::new();
-        for row in rows {
+        rows.map(|row| {
             let raw = row?;
-            out.push(SignedPreKeyRecord::deserialize(&raw).map_err(map_signal_error)?);
-        }
-        Ok(out)
+            SignedPreKeyRecord::deserialize(&raw).map_err(map_signal_error)
+        })
+        .collect()
     }
 
     pub fn load_last_resort_kyber_pre_keys(
@@ -309,12 +308,11 @@ impl<'a> SignalStore<'a> {
         let mut stmt =
             conn.prepare("SELECT record FROM signal_kyber_prekeys WHERE last_resort = 1")?;
         let rows = stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
-        let mut out = Vec::new();
-        for row in rows {
+        rows.map(|row| {
             let raw = row?;
-            out.push(KyberPreKeyRecord::deserialize(&raw).map_err(map_signal_error)?);
-        }
-        Ok(out)
+            KyberPreKeyRecord::deserialize(&raw).map_err(map_signal_error)
+        })
+        .collect()
     }
 
     pub fn contains_session(conn: &Connection, device_id: &str) -> Result<bool, ObscuraError> {

@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use libsignal_protocol::{IdentityKeyPair, KeyPair, PrivateKey};
+use libsignal_protocol::{IdentityKeyPair, KeyPair};
 use prost::Message as _;
 use rand::Rng;
 use tokio::sync::{Mutex as AsyncMutex, Notify, mpsc, watch};
@@ -33,7 +33,8 @@ use crate::store::{DbContext, DbHandle, EffectDispatcher, PostCommitEffect, hist
 use crate::types::{
     AuthState, CaptureResult, ConnectionState, ConversationItem, DeviceInfo, EntryModel, Friend,
     FriendStatus, LinkRequest, LoginScenario, MediaType, ObscuraClientConfig, ProfileItem,
-    StoredAttachment, StoryItem, SubmissionStatus, TypingState, clamp_future_timestamp,
+    StoredAttachment, StoryItem, SubmissionResult, SubmissionStatus, TypingState,
+    clamp_future_timestamp,
 };
 use crate::wire::codec::{self, PayloadDisposition, payload_disposition};
 use crate::wire::friend_code;
@@ -65,44 +66,40 @@ impl AttachmentUpload {
 }
 
 #[derive(Default)]
-struct LinkCoordinator {
-    state: Mutex<LinkCoordinatorState>,
-    done_notify: Notify,
+enum LinkPhase {
+    #[default]
+    Idle,
+    InFlight(CancellationToken),
 }
 
 #[derive(Default)]
-struct LinkCoordinatorState {
-    cancel: Option<CancellationToken>,
-    in_flight: bool,
+struct LinkCoordinator {
+    phase: Mutex<LinkPhase>,
+    done_notify: Notify,
 }
 
 impl LinkCoordinator {
     fn begin(&self) -> CancellationToken {
         let token = CancellationToken::new();
-        let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(prev) = st.cancel.replace(token.clone()) {
+        let mut phase = self.phase.lock().unwrap_or_else(|p| p.into_inner());
+        if let LinkPhase::InFlight(prev) =
+            std::mem::replace(&mut *phase, LinkPhase::InFlight(token.clone()))
+        {
             prev.cancel();
         }
-        st.in_flight = true;
         token
     }
 
     fn finish(&self) {
-        let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        st.in_flight = false;
-        drop(st);
+        *self.phase.lock().unwrap_or_else(|p| p.into_inner()) = LinkPhase::Idle;
         self.done_notify.notify_waiters();
     }
 
     fn cancel_now(&self) {
-        if let Some(t) = self
-            .state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .cancel
-            .take()
+        if let LinkPhase::InFlight(ref token) =
+            *self.phase.lock().unwrap_or_else(|p| p.into_inner())
         {
-            t.cancel();
+            token.cancel();
         }
     }
 
@@ -110,12 +107,10 @@ impl LinkCoordinator {
         self.cancel_now();
         loop {
             let notified = self.done_notify.notified();
-            if !self
-                .state
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .in_flight
-            {
+            if matches!(
+                *self.phase.lock().unwrap_or_else(|p| p.into_inner()),
+                LinkPhase::Idle
+            ) {
                 break;
             }
             notified.await;
@@ -123,17 +118,14 @@ impl LinkCoordinator {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum FriendFollowUp {
+enum ReceiveFollowUp {
     None,
-    Sync,
-    Accept,
-    ReplyAccept,
-}
-
-struct StoredReceive {
-    message: ClientMessage,
-    friend_follow_up: FriendFollowUp,
+    Typing {
+        context_id: String,
+        state: Option<TypingState>,
+    },
+    SyncFriendList,
+    FriendReply(PendingFriendReply),
 }
 
 #[derive(uniffi::Object)]
@@ -156,7 +148,6 @@ pub struct ObscuraClient {
     prekey_check_interval_ms: AtomicI64,
     prekey_sync_spacing_ms: AtomicI64,
     processed_envelopes_tx: watch::Sender<u64>,
-    processed_envelopes_rx: watch::Receiver<u64>,
     last_processed_at_ms: AtomicI64,
     drain_mutex: AsyncMutex<()>,
     session_task_mutex: AsyncMutex<()>,
@@ -332,7 +323,7 @@ impl ObscuraClient {
             session_id: session.id,
             user_id: session.user_id,
             expires_at: session.expires_at,
-            ephemeral_private_key: ephemeral.private_key.serialize(),
+            ephemeral_private_key: ephemeral.private_key,
             username,
             device_name,
         }))
@@ -352,7 +343,6 @@ impl ObscuraClient {
     pub async fn approve_link(&self, code: String) -> Result<(), ObscuraError> {
         let self_creds = self.require_primary().await?;
         let link_code = link::decode_code(&code)?;
-        let peer_pub = link::public_key(&link_code)?;
 
         let (identity_bytes, friend_list) = self
             .db
@@ -371,14 +361,10 @@ impl ObscuraClient {
             primary_device_id: self_creds.device_id,
             username: self_creds.username,
             friend_list_version: friend_list.version,
-            friends: friend_list
-                .friends
-                .iter()
-                .map(codec::encode_friend)
-                .collect(),
+            friends: friend_list.friends.iter().map(Friend::to_proto).collect(),
             history,
         };
-        let envelope = link::seal(&bundle.encode_to_vec(), &peer_pub)?;
+        let envelope = link::seal(&bundle.encode_to_vec(), &link_code.peer_public_key)?;
         match self
             .api
             .approve_link_session(&link_code.session_id, envelope.encode_to_vec())
@@ -449,7 +435,7 @@ impl ObscuraClient {
 
     pub async fn process_pending_messages(&self, timeout_ms: i64) -> Result<i32, ObscuraError> {
         let _guard = self.drain_mutex.lock().await;
-        let start = *self.processed_envelopes_rx.borrow();
+        let start = *self.processed_envelopes_tx.borrow();
         let deadline = (self.clock)().saturating_add(timeout_ms);
         let started_connected = self.connection_state() == ConnectionState::Connected;
         if !started_connected && !self.try_connect().await {
@@ -457,7 +443,7 @@ impl ObscuraClient {
         }
         self.await_idle(deadline).await;
         if started_connected
-            && *self.processed_envelopes_rx.borrow() == start
+            && *self.processed_envelopes_tx.borrow() == start
             && (self.clock)() - self.last_processed_at_ms.load(Ordering::SeqCst)
                 > PUSH_RECENT_ACTIVITY_MS
         {
@@ -467,7 +453,7 @@ impl ObscuraClient {
                 self.await_idle(deadline).await;
             }
         }
-        let end = *self.processed_envelopes_rx.borrow();
+        let end = *self.processed_envelopes_tx.borrow();
         Ok(end.saturating_sub(start) as i32)
     }
 
@@ -567,12 +553,7 @@ impl ObscuraClient {
         let report = self
             .send_to_peers_and_self(&self_creds.user_id, &peers, &item.to_client_message(None))
             .await;
-        if peers.is_empty()
-            || !report
-                .recipients
-                .iter()
-                .any(|r| r.status == SubmissionStatus::Accepted)
-        {
+        if peers.is_empty() || !report.any_accepted() {
             let id_clone = id.clone();
             self.db
                 .write_tx(move |ctx| {
@@ -754,12 +735,7 @@ impl ObscuraClient {
         let report = self
             .send_to_peers_and_self(&self_creds.user_id, &peers, &item.to_client_message())
             .await;
-        if !peers.is_empty()
-            && !report
-                .recipients
-                .iter()
-                .any(|r| r.status == SubmissionStatus::Accepted)
-        {
+        if !peers.is_empty() && !report.any_accepted() {
             let uid = self_creds.user_id;
             self.db
                 .write_tx(move |ctx| {
@@ -793,11 +769,7 @@ impl ObscuraClient {
                     &row.to_client_message(att.as_ref()),
                 )
                 .await;
-            if report
-                .recipients
-                .iter()
-                .any(|r| r.status == SubmissionStatus::Accepted)
-            {
+            if report.any_accepted() {
                 let row_id = row.id;
                 self.db
                     .write_tx(move |ctx| {
@@ -817,12 +789,7 @@ impl ObscuraClient {
                     &row.to_client_message(att.as_ref()),
                 )
                 .await;
-            if all_accepted.is_empty()
-                || report
-                    .recipients
-                    .iter()
-                    .any(|r| r.status == SubmissionStatus::Accepted)
-            {
+            if all_accepted.is_empty() || report.any_accepted() {
                 let row_id = row.id;
                 self.db
                     .write_tx(move |ctx| {
@@ -845,12 +812,7 @@ impl ObscuraClient {
                     &row.to_client_message(),
                 )
                 .await;
-            if all_accepted.is_empty()
-                || report
-                    .recipients
-                    .iter()
-                    .any(|r| r.status == SubmissionStatus::Accepted)
-            {
+            if all_accepted.is_empty() || report.any_accepted() {
                 let uid = row.user_id;
                 let updated_at = row.updated_at;
                 self.db
@@ -994,9 +956,7 @@ impl ObscuraClient {
         }));
 
         let listener_for_auth = Arc::clone(&listener);
-        let mut api_slot = None;
-        let mut gateway_slot = None;
-        let auth = AuthManager::new(
+        let (auth, (api, gateway)) = AuthManager::new(
             db.clone(),
             session_storage,
             config.device_name.clone(),
@@ -1070,13 +1030,9 @@ impl ObscuraClient {
                     );
                 });
 
-                api_slot = Some(api.clone());
-                gateway_slot = Some(gateway);
-                (api, on_rejected)
+                (api.clone(), on_rejected, (api, gateway))
             },
         );
-        let api = api_slot.expect("initialized in AuthManager::new");
-        let gateway = gateway_slot.expect("initialized in AuthManager::new");
 
         let messenger = Messenger::new(db.clone(), api.clone(), Arc::clone(&auth));
         let sender = MessageSender::new(
@@ -1088,7 +1044,7 @@ impl ObscuraClient {
         );
 
         let (prekey_sync_tx, mut prekey_sync_rx) = mpsc::unbounded_channel::<()>();
-        let (processed_envelopes_tx, processed_envelopes_rx) = watch::channel(0u64);
+        let (processed_envelopes_tx, _) = watch::channel(0u64);
 
         let client = Arc::new(Self {
             db: db.clone(),
@@ -1109,7 +1065,6 @@ impl ObscuraClient {
             prekey_check_interval_ms: AtomicI64::new(prekeys::CHECK_INTERVAL_MS as i64),
             prekey_sync_spacing_ms: AtomicI64::new(prekeys::SYNC_SPACING_MS as i64),
             processed_envelopes_tx,
-            processed_envelopes_rx,
             last_processed_at_ms: AtomicI64::new(0),
             drain_mutex: AsyncMutex::new(()),
             session_task_mutex: AsyncMutex::new(()),
@@ -1329,12 +1284,12 @@ impl ObscuraClient {
             )
             .await;
 
-        let stored = match decrypt_res {
-            Ok(Some((stored, logs))) => {
+        let follow_up = match decrypt_res {
+            Ok(Some((follow_up, logs))) => {
                 for l in logs {
                     self.log(l);
                 }
-                Some(stored)
+                Some(follow_up)
             }
             Ok(None) => {
                 self.log(format!(
@@ -1371,20 +1326,18 @@ impl ObscuraClient {
             return;
         }
 
-        if let Some(stored) = stored {
-            let arm_name = codec::kind(stored.message.payload.as_ref());
-            if let Err(e) = self
-                .follow_up(stored, &sender_user_id, &sender_device_id, &envelope_id)
+        if let Some(follow_up) = follow_up
+            && let Err(e) = self
+                .follow_up(follow_up, &sender_user_id, &sender_device_id)
                 .await
-            {
-                self.log(format!("RECV {arm_name} not stored: {e}"));
-                self.logger.database_error(
-                    "receive".to_owned(),
-                    arm_name.to_owned(),
-                    e.to_string(),
-                );
-                return;
-            }
+        {
+            self.log(format!("RECV FRIEND_REQUEST not stored: {e}"));
+            self.logger.database_error(
+                "receive".to_owned(),
+                "FRIEND_REQUEST".to_owned(),
+                e.to_string(),
+            );
+            return;
         }
 
         if self.auth.generation() != session_gen {
@@ -1409,7 +1362,7 @@ impl ObscuraClient {
         let env_id = envelope_id.to_owned();
         let self_uid = self.auth.credentials().map(|c| c.user_id);
         let now_ms = (self.clock)();
-        let (stored, logs) = self
+        let (follow_up, logs) = self
             .db
             .write_tx(move |ctx| {
                 store_decrypted_in_tx(
@@ -1426,66 +1379,40 @@ impl ObscuraClient {
         for l in logs {
             self.log(l);
         }
-        self.follow_up(stored, sender_user_id, sender_device_id, envelope_id)
+        self.follow_up(follow_up, sender_user_id, sender_device_id)
             .await
     }
 
     async fn follow_up(
         &self,
-        stored: StoredReceive,
+        follow_up: ReceiveFollowUp,
         sender_user_id: &str,
         sender_device_id: &str,
-        envelope_id: &str,
     ) -> Result<(), ObscuraError> {
-        match payload_disposition(stored.message.payload.as_ref()) {
-            PayloadDisposition::Content => Ok(()),
-            PayloadDisposition::Droppable => {
-                if let Some(Payload::TypingSignal(ref signal)) = stored.message.payload
-                    && !signal.context_id.trim().is_empty()
-                {
-                    match codec::decode_typing_state(signal.state) {
-                        Some(TypingState::Started) => {
-                            self.typing.started(
-                                &signal.context_id,
-                                sender_user_id,
-                                sender_device_id,
-                            );
-                        }
-                        Some(TypingState::Stopped) => {
-                            self.typing.stopped(&signal.context_id, sender_device_id);
-                        }
-                        None => {
-                            self.log(format!(
-                                "TYPING with unspecified state from {sender_user_id}; ignored"
-                            ));
-                        }
+        match follow_up {
+            ReceiveFollowUp::None => Ok(()),
+            ReceiveFollowUp::Typing { context_id, state } => {
+                match state {
+                    Some(TypingState::Started) => {
+                        self.typing
+                            .started(&context_id, sender_user_id, sender_device_id);
+                    }
+                    Some(TypingState::Stopped) => {
+                        self.typing.stopped(&context_id, sender_device_id);
+                    }
+                    None => {
+                        self.log(format!(
+                            "TYPING with unspecified state from {sender_user_id}; ignored"
+                        ));
                     }
                 }
                 Ok(())
             }
-            PayloadDisposition::KitInternal => match stored.friend_follow_up {
-                FriendFollowUp::None => Ok(()),
-                FriendFollowUp::Sync => {
-                    self.sync_friend_list().await;
-                    Ok(())
-                }
-                FriendFollowUp::Accept => {
-                    self.execute_pending_friend_reply(&PendingFriendReply {
-                        envelope_id: envelope_id.to_owned(),
-                        peer_user_id: sender_user_id.to_owned(),
-                        action: FriendReplyAction::Accept,
-                    })
-                    .await
-                }
-                FriendFollowUp::ReplyAccept => {
-                    self.execute_pending_friend_reply(&PendingFriendReply {
-                        envelope_id: envelope_id.to_owned(),
-                        peer_user_id: sender_user_id.to_owned(),
-                        action: FriendReplyAction::ReplyAccept,
-                    })
-                    .await
-                }
-            },
+            ReceiveFollowUp::SyncFriendList => {
+                self.sync_friend_list().await;
+                Ok(())
+            }
+            ReceiveFollowUp::FriendReply(reply) => self.execute_pending_friend_reply(&reply).await,
         }
     }
 
@@ -1523,8 +1450,8 @@ impl ObscuraClient {
         }
         self.last_processed_at_ms
             .store((self.clock)(), Ordering::SeqCst);
-        let next = self.processed_envelopes_rx.borrow().saturating_add(1);
-        let _ = self.processed_envelopes_tx.send(next);
+        self.processed_envelopes_tx
+            .send_modify(|n| *n = n.saturating_add(1));
     }
 
     async fn complete_link_inner(
@@ -1534,9 +1461,7 @@ impl ObscuraClient {
     ) -> Result<(), ObscuraError> {
         self.auth.require_unprovisioned().await?;
         let envelope_bytes = self.await_approval(request, token).await?;
-        let ephem_priv = PrivateKey::deserialize(&request.ephemeral_private_key)
-            .map_err(|_| ObscuraError::link_failed("Invalid ephemeral key"))?;
-        let bundle_bytes = link::open(&envelope_bytes, &ephem_priv)?;
+        let bundle_bytes = link::open(&envelope_bytes, &request.ephemeral_private_key)?;
         let bundle = LinkBundle::decode(&bundle_bytes[..])
             .map_err(|_| ObscuraError::protocol("Invalid link bundle"))?;
 
@@ -1551,12 +1476,14 @@ impl ObscuraClient {
         let identity = IdentityKeyPair::try_from(&bundle.identity_key_pair[..])
             .map_err(|_| ObscuraError::protocol("Invalid identity in link bundle"))?;
 
-        let mut friends = Vec::with_capacity(bundle.friends.len());
-        for rec in &bundle.friends {
-            let f = codec::decode_friend(rec)
-                .ok_or_else(|| ObscuraError::protocol("Invalid friend in link bundle"))?;
-            friends.push(f);
-        }
+        let friends = bundle
+            .friends
+            .iter()
+            .map(|rec| {
+                Friend::from_proto(rec)
+                    .ok_or_else(|| ObscuraError::protocol("Invalid friend in link bundle"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let friend_list = FriendList {
             version: bundle.friend_list_version,
             friends,
@@ -1721,12 +1648,7 @@ impl ObscuraClient {
                 &item.to_client_message(attachment.as_ref()),
             )
             .await;
-        if !peers.is_empty()
-            && !report
-                .recipients
-                .iter()
-                .any(|r| r.status == SubmissionStatus::Accepted)
-        {
+        if !peers.is_empty() && !report.any_accepted() {
             let id_clone = id.clone();
             self.db
                 .write_tx(move |ctx| {
@@ -1787,12 +1709,7 @@ impl ObscuraClient {
                 &item.to_client_message(Some(&attachment)),
             )
             .await;
-        if peers.is_empty()
-            || !report
-                .recipients
-                .iter()
-                .any(|r| r.status == SubmissionStatus::Accepted)
-        {
+        if peers.is_empty() || !report.any_accepted() {
             let id_clone = id.clone();
             self.db
                 .write_tx(move |ctx| {
@@ -1822,15 +1739,10 @@ impl ObscuraClient {
             timestamp: (self.clock)().max(0) as u64,
             payload: Some(Payload::TypingSignal(TypingSignal {
                 context_id: context_id.to_owned(),
-                state: codec::encode_typing_state(state),
+                state: state.to_proto(),
             })),
         };
-        let mut peers = Vec::new();
-        for r in recipient_user_ids {
-            if r != &self_creds.user_id && !peers.contains(r) {
-                peers.push(r.clone());
-            }
-        }
+        let peers = dedup_peers(recipient_user_ids, &self_creds.user_id);
         let results = self.sender.send(&peers, &msg).await;
         for recipient in &peers {
             let rec_results: Vec<_> = results.iter().filter(|r| &r.user_id == recipient).collect();
@@ -1840,7 +1752,7 @@ impl ObscuraClient {
             {
                 let reasons = rec_results
                     .iter()
-                    .map(|r| r.error.clone().unwrap_or_else(|| format!("{:?}", r.status)))
+                    .map(|r| r.failure_reason())
                     .collect::<Vec<_>>()
                     .join(", ");
                 self.log(format!("TYPING not delivered to {recipient}: {reasons}"));
@@ -1911,7 +1823,7 @@ impl ObscuraClient {
                 timestamp: (self.clock)().max(0) as u64,
                 payload: Some(Payload::FriendListSync(FriendListSync {
                     version: list.version,
-                    friends: list.friends.iter().map(codec::encode_friend).collect(),
+                    friends: list.friends.iter().map(Friend::to_proto).collect(),
                 })),
             };
             let results = self.sender.send_one(&self_creds.user_id, &msg).await;
@@ -1983,7 +1895,7 @@ impl ObscuraClient {
     }
 
     async fn await_idle(&self, deadline: i64) {
-        let mut rx = self.processed_envelopes_rx.clone();
+        let mut rx = self.processed_envelopes_tx.subscribe();
         let mut seen = *rx.borrow_and_update();
         loop {
             let remaining = deadline - (self.clock)();
@@ -2063,12 +1975,7 @@ impl ObscuraClient {
         peers: &[String],
         message: &ClientMessage,
     ) -> SendReport {
-        let mut targets = Vec::new();
-        for p in peers {
-            if p != self_user_id && !targets.contains(p) {
-                targets.push(p.clone());
-            }
-        }
+        let mut targets = dedup_peers(peers, self_user_id);
         targets.push(self_user_id.to_owned());
         let results = self.sender.send(&targets, message).await;
         let (self_sync, recipients) = results.into_iter().partition(|r| r.user_id == self_user_id);
@@ -2096,22 +2003,16 @@ fn store_decrypted_in_tx(
     envelope_id: &str,
     self_user_id: Option<&str>,
     now_ms: i64,
-) -> Result<(StoredReceive, Vec<String>), ObscuraError> {
+) -> Result<(ReceiveFollowUp, Vec<String>), ObscuraError> {
     let mut logs = Vec::new();
     match payload_disposition(message.payload.as_ref()) {
         PayloadDisposition::Content => {
             if !content_store::record_envelope(ctx.conn, envelope_id)? {
                 logs.push(format!("RECV duplicate envelope {envelope_id}"));
-                return Ok((
-                    StoredReceive {
-                        message,
-                        friend_follow_up: FriendFollowUp::None,
-                    },
-                    logs,
-                ));
+                return Ok((ReceiveFollowUp::None, logs));
             }
             let sent_at = clamp_future_timestamp(message.timestamp, now_ms);
-            match &message.payload {
+            match message.payload {
                 Some(Payload::DirectMessage(dm)) => {
                     let Some(peer) =
                         resolve_peer_user_id(sender_user_id, &dm.peer_user_id, self_user_id)
@@ -2119,13 +2020,7 @@ fn store_decrypted_in_tx(
                         logs.push(format!(
                             "RECV DIRECT_MESSAGE with blank id or invalid peer from {sender_user_id}; ignored"
                         ));
-                        return Ok((
-                            StoredReceive {
-                                message,
-                                friend_follow_up: FriendFollowUp::None,
-                            },
-                            logs,
-                        ));
+                        return Ok((ReceiveFollowUp::None, logs));
                     };
                     if dm.id.trim().is_empty() {
                         logs.push(format!(
@@ -2133,11 +2028,11 @@ fn store_decrypted_in_tx(
                         ));
                     } else if content_store::can_insert_conversation(ctx.conn, &dm.id)? {
                         let item = ConversationItem::message(
-                            dm.id.clone(),
+                            dm.id,
                             peer,
                             sender_user_id.to_owned(),
                             sent_at,
-                            dm.content.clone(),
+                            dm.content,
                             None,
                         );
                         content_store::insert_conversation(ctx.conn, &item, None)?;
@@ -2155,13 +2050,7 @@ fn store_decrypted_in_tx(
                         logs.push(format!(
                             "RECV PIX with invalid fields from {sender_user_id}; ignored"
                         ));
-                        return Ok((
-                            StoredReceive {
-                                message,
-                                friend_follow_up: FriendFollowUp::None,
-                            },
-                            logs,
-                        ));
+                        return Ok((ReceiveFollowUp::None, logs));
                     };
                     if pix.id.trim().is_empty() {
                         logs.push(format!(
@@ -2169,13 +2058,13 @@ fn store_decrypted_in_tx(
                         ));
                     } else if content_store::can_insert_conversation(ctx.conn, &pix.id)? {
                         let item = ConversationItem::pix(
-                            pix.id.clone(),
+                            pix.id,
                             peer,
                             sender_user_id.to_owned(),
                             sent_at,
                             att.as_ref(),
-                            (!pix.caption.is_empty()).then(|| pix.caption.clone()),
-                            (!pix.caption_meta.is_empty()).then(|| pix.caption_meta.clone()),
+                            (!pix.caption.is_empty()).then_some(pix.caption),
+                            (!pix.caption_meta.is_empty()).then_some(pix.caption_meta),
                             pix.display_duration_secs as i32,
                             None,
                         );
@@ -2212,12 +2101,12 @@ fn store_decrypted_in_tx(
                             .as_ref()
                             .and_then(StoredAttachment::from_proto);
                         let item = StoryItem::new(
-                            st.id.clone(),
+                            st.id,
                             sender_user_id.to_owned(),
                             sent_at,
-                            st.content.clone(),
+                            st.content,
                             att.as_ref().map(StoredAttachment::as_ref),
-                            (!st.caption_meta.is_empty()).then(|| st.caption_meta.clone()),
+                            (!st.caption_meta.is_empty()).then_some(st.caption_meta),
                         );
                         content_store::insert_story(ctx.conn, &item, att.as_ref())?;
                         ctx.push_effect(PostCommitEffect::EntryInboxed(EntryModel::Story));
@@ -2230,8 +2119,8 @@ fn store_decrypted_in_tx(
                             user_id: sender_user_id.to_owned(),
                             author_device_id: sender_device_id.to_owned(),
                             updated_at: sent_at,
-                            display_name: pr.display_name.clone(),
-                            bio: pr.bio.clone(),
+                            display_name: pr.display_name,
+                            bio: pr.bio,
                         },
                     )?;
                     if updated {
@@ -2240,59 +2129,56 @@ fn store_decrypted_in_tx(
                 }
                 _ => {}
             }
-            Ok((
-                StoredReceive {
-                    message,
-                    friend_follow_up: FriendFollowUp::None,
-                },
-                logs,
-            ))
+            Ok((ReceiveFollowUp::None, logs))
         }
         PayloadDisposition::KitInternal => {
             let follow_up = apply_friend_message_in_tx(
                 ctx,
-                &message,
+                message,
                 sender_user_id,
                 sender_device_id,
                 envelope_id,
                 self_user_id,
                 &mut logs,
             )?;
-            Ok((
-                StoredReceive {
-                    message,
-                    friend_follow_up: follow_up,
-                },
-                logs,
-            ))
+            Ok((follow_up, logs))
         }
         PayloadDisposition::Droppable => {
             let _ = content_store::record_envelope(ctx.conn, envelope_id)?;
-            if !matches!(message.payload, Some(Payload::TypingSignal(_))) {
-                logs.push(format!(
-                    "RECV unknown client message arm from {sender_user_id}; ignored"
-                ));
+            match message.payload {
+                Some(Payload::TypingSignal(signal)) => {
+                    if signal.context_id.trim().is_empty() {
+                        Ok((ReceiveFollowUp::None, logs))
+                    } else {
+                        Ok((
+                            ReceiveFollowUp::Typing {
+                                context_id: signal.context_id,
+                                state: TypingState::from_proto(signal.state),
+                            },
+                            logs,
+                        ))
+                    }
+                }
+                _ => {
+                    logs.push(format!(
+                        "RECV unknown client message arm from {sender_user_id}; ignored"
+                    ));
+                    Ok((ReceiveFollowUp::None, logs))
+                }
             }
-            Ok((
-                StoredReceive {
-                    message,
-                    friend_follow_up: FriendFollowUp::None,
-                },
-                logs,
-            ))
         }
     }
 }
 
 fn apply_friend_message_in_tx(
     ctx: &mut DbContext<'_>,
-    message: &ClientMessage,
+    message: ClientMessage,
     sender_user_id: &str,
     sender_device_id: &str,
     envelope_id: &str,
     self_user_id: Option<&str>,
     logs: &mut Vec<String>,
-) -> Result<FriendFollowUp, ObscuraError> {
+) -> Result<ReceiveFollowUp, ObscuraError> {
     let local = device_store::get_local(ctx.conn)?;
     if let Some(Payload::FriendListSync(ref sync)) = message.payload {
         apply_friend_list_sync_in_tx(
@@ -2305,7 +2191,7 @@ fn apply_friend_message_in_tx(
             logs,
         )?;
         let _ = content_store::record_envelope(ctx.conn, envelope_id)?;
-        return Ok(FriendFollowUp::None);
+        return Ok(ReceiveFollowUp::None);
     }
 
     if !local.as_ref().is_some_and(LocalDevice::is_primary) {
@@ -2314,11 +2200,11 @@ fn apply_friend_message_in_tx(
             "{arm} from {sender_user_id} on a linked device; unchanged"
         ));
         let _ = content_store::record_envelope(ctx.conn, envelope_id)?;
-        return Ok(FriendFollowUp::None);
+        return Ok(ReceiveFollowUp::None);
     }
 
     let existing = friend_store::get(ctx.conn, sender_user_id)?;
-    match &message.payload {
+    match message.payload {
         Some(Payload::FriendRequest(req)) => match existing.as_ref().map(|f| f.status) {
             None => {
                 friend_store::add(
@@ -2329,50 +2215,60 @@ fn apply_friend_message_in_tx(
                 )?;
                 ctx.push_effect(PostCommitEffect::FriendRequestReceived);
                 let _ = content_store::record_envelope(ctx.conn, envelope_id)?;
-                Ok(FriendFollowUp::Sync)
+                Ok(ReceiveFollowUp::SyncFriendList)
             }
             Some(FriendStatus::PendingSent) => {
+                let reply = PendingFriendReply {
+                    envelope_id: envelope_id.to_owned(),
+                    peer_user_id: sender_user_id.to_owned(),
+                    action: FriendReplyAction::Accept,
+                };
                 content_store::put_pending_friend_reply(
                     ctx.conn,
-                    envelope_id,
-                    sender_user_id,
-                    FriendReplyAction::Accept,
+                    &reply.envelope_id,
+                    &reply.peer_user_id,
+                    reply.action.clone(),
                 )?;
-                Ok(FriendFollowUp::Accept)
+                Ok(ReceiveFollowUp::FriendReply(reply))
             }
             Some(FriendStatus::Accepted) => {
+                let reply = PendingFriendReply {
+                    envelope_id: envelope_id.to_owned(),
+                    peer_user_id: sender_user_id.to_owned(),
+                    action: FriendReplyAction::ReplyAccept,
+                };
                 content_store::put_pending_friend_reply(
                     ctx.conn,
-                    envelope_id,
-                    sender_user_id,
-                    FriendReplyAction::ReplyAccept,
+                    &reply.envelope_id,
+                    &reply.peer_user_id,
+                    reply.action.clone(),
                 )?;
-                Ok(FriendFollowUp::ReplyAccept)
+                Ok(ReceiveFollowUp::FriendReply(reply))
             }
             Some(FriendStatus::PendingReceived) => {
                 logs.push(format!(
                     "FRIEND_REQUEST from known peer {sender_user_id} (pending_received); unchanged"
                 ));
                 let _ = content_store::record_envelope(ctx.conn, envelope_id)?;
-                Ok(FriendFollowUp::None)
+                Ok(ReceiveFollowUp::None)
             }
         },
         Some(Payload::FriendAccept(_)) => {
             if existing.as_ref().map(|f| f.status) == Some(FriendStatus::PendingSent) {
                 friend_store::update_status(ctx, sender_user_id, FriendStatus::Accepted)?;
                 let _ = content_store::record_envelope(ctx.conn, envelope_id)?;
-                Ok(FriendFollowUp::Sync)
+                Ok(ReceiveFollowUp::SyncFriendList)
             } else {
                 logs.push(format!(
                     "FRIEND_ACCEPT from {sender_user_id} without a pending request; ignored"
                 ));
                 let _ = content_store::record_envelope(ctx.conn, envelope_id)?;
-                Ok(FriendFollowUp::None)
+                Ok(ReceiveFollowUp::None)
             }
         }
         _ => {
             let _ = content_store::record_envelope(ctx.conn, envelope_id)?;
-            Ok(FriendFollowUp::None)
+            Ok(ReceiveFollowUp::None)
         }
     }
 }
@@ -2387,8 +2283,8 @@ fn apply_friend_list_sync_in_tx(
     logs: &mut Vec<String>,
 ) -> Result<(), ObscuraError> {
     let current_version = friend_store::version(ctx.conn)?;
-    let decoded_records: Vec<Option<Friend>> =
-        sync.friends.iter().map(codec::decode_friend).collect();
+    let decoded_friends: Option<Vec<Friend>> =
+        sync.friends.iter().map(Friend::from_proto).collect();
     let reason = if local.is_none_or(LocalDevice::is_primary) {
         Some("this device is not a linked device".to_owned())
     } else if Some(sender_user_id) != self_user_id
@@ -2397,7 +2293,7 @@ fn apply_friend_list_sync_in_tx(
         Some("not from this account's primary".to_owned())
     } else if sync.version <= current_version {
         Some(format!("version {} is not newer", sync.version))
-    } else if decoded_records.iter().any(Option::is_none) {
+    } else if decoded_friends.is_none() {
         Some("it has an invalid friend record".to_owned())
     } else {
         None
@@ -2410,14 +2306,22 @@ fn apply_friend_list_sync_in_tx(
         return Ok(());
     }
 
-    let friends: Vec<Friend> = decoded_records.into_iter().flatten().collect();
     friend_store::replace(
         ctx,
         &FriendList {
             version: sync.version,
-            friends,
+            friends: decoded_friends.unwrap_or_default(),
         },
     )
+}
+
+fn dedup_peers(peers: &[String], self_user_id: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    peers
+        .iter()
+        .filter(|p| p.as_str() != self_user_id && seen.insert(p.as_str()))
+        .cloned()
+        .collect()
 }
 
 fn resolve_peer_user_id(
@@ -2448,11 +2352,7 @@ fn send_failed(model: EntryModel, report: &SendReport) -> ObscuraError {
     let reasons: Vec<String> = report
         .recipients
         .iter()
-        .map(|r| {
-            r.error
-                .clone()
-                .unwrap_or_else(|| format!("{:?}", r.status).to_ascii_lowercase())
-        })
+        .map(SubmissionResult::failure_reason)
         .collect();
     if reasons.is_empty() {
         ObscuraError::send_failed(format!("{} reached none of its recipients", model.as_str()))

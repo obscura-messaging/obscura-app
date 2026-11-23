@@ -305,7 +305,7 @@ fn link_conformance_vectors() {
         let decoded = link::decode_code(code_str).unwrap();
         assert_eq!(decoded.session_id, code_vec["sessionId"].as_str().unwrap());
         assert_eq!(
-            hex::encode(&decoded.ephemeral_public_key),
+            hex::encode(decoded.peer_public_key.serialize()),
             code_vec["ephemeralPublicKey"].as_str().unwrap()
         );
         assert_eq!(
@@ -323,10 +323,12 @@ fn link_conformance_vectors() {
                 .unwrap(),
             device_name: code_vec["deviceName"].as_str().unwrap().to_owned(),
         };
-        assert_eq!(link::decode_code(&link::encode_code(&own)).unwrap(), own);
+        assert_eq!(
+            link::decode_code(&link::encode_code(&own)).unwrap(),
+            decoded
+        );
         let decorated = format!(" \n{}\u{00AD} {}\t ", &code_str[..4], &code_str[4..]);
-        assert_eq!(link::decode_code(&decorated).unwrap(), own);
-        assert_eq!(decoded, own);
+        assert_eq!(link::decode_code(&decorated).unwrap(), decoded);
     }
 
     let own_priv = KeyPair::generate(&mut rand::rng()).private_key;

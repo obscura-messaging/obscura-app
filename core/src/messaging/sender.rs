@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::Mutex as AsyncMutex;
@@ -6,7 +6,8 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::auth::AuthManager;
 use crate::error::ObscuraError;
 use crate::messaging::messenger::{
-    Messenger, PeerBundle, UserSubmission, parse_peer_bundles, require_consistent,
+    DeviceSubmissionOutcome, DeviceSubmissionStatus, Messenger, PeerBundle, UserSubmission,
+    parse_peer_bundles, require_consistent,
 };
 use crate::network::api::APIClient;
 use crate::network::transport::ObscuraLogger;
@@ -21,6 +22,22 @@ pub const MAX_ROUNDS: usize = 3;
 pub struct SendReport {
     pub recipients: Vec<SubmissionResult>,
     pub self_sync: Vec<SubmissionResult>,
+}
+
+impl SendReport {
+    pub fn any_accepted(&self) -> bool {
+        self.recipients
+            .iter()
+            .any(|r| r.status == SubmissionStatus::Accepted)
+    }
+}
+
+impl SubmissionResult {
+    pub fn failure_reason(&self) -> String {
+        self.error
+            .clone()
+            .unwrap_or_else(|| format!("{:?}", self.status).to_ascii_lowercase())
+    }
 }
 
 #[derive(Clone)]
@@ -69,7 +86,7 @@ impl MessageSender {
         } else {
             let reason = results
                 .iter()
-                .map(|r| r.error.clone().unwrap_or_else(|| format!("{:?}", r.status)))
+                .map(SubmissionResult::failure_reason)
                 .collect::<Vec<_>>()
                 .join(", ");
             Err(ObscuraError::send_failed(reason))
@@ -81,12 +98,12 @@ impl MessageSender {
         user_ids: &[String],
         message: &ClientMessage,
     ) -> Vec<SubmissionResult> {
-        let mut users = Vec::new();
-        for u in user_ids {
-            if !users.contains(u) {
-                users.push(u.clone());
-            }
-        }
+        let mut seen = HashSet::new();
+        let users: Vec<String> = user_ids
+            .iter()
+            .filter(|u| seen.insert(u.as_str()))
+            .cloned()
+            .collect();
         if users.is_empty() {
             return Vec::new();
         }
@@ -139,25 +156,8 @@ impl MessageSender {
                         next_pending.push(user_id.clone());
                         continue;
                     }
-                    Ok(Some(targets)) => {
-                        let uid_clone = user_id.clone();
-                        let known = match self
-                            .db
-                            .read(move |conn| device_store::devices_of(conn, &uid_clone))
-                            .await
-                        {
-                            Ok(k) => k,
-                            Err(e) => {
-                                self.logger
-                                    .session_establish_failed(user_id.clone(), e.to_string());
-                                settled.insert(
-                                    user_id.clone(),
-                                    vec![rejected(user_id, e.to_string())],
-                                );
-                                continue;
-                            }
-                        };
-                        if known.is_empty() {
+                    Ok(Some((targets, is_self))) => {
+                        if targets.is_empty() && !is_self {
                             settled.insert(
                                 user_id.clone(),
                                 vec![rejected(user_id, "No devices found")],
@@ -166,10 +166,11 @@ impl MessageSender {
                         }
                         let mut subs = Vec::with_capacity(targets.len());
                         let mut prep_err = None;
-                        for dev in &targets {
-                            match self.messenger.prepare_submission(dev, message).await {
+                        for dev in targets {
+                            match self.messenger.prepare_submission(&dev, message).await {
                                 Ok(sub) => subs.push(UserSubmission {
                                     user_id: user_id.clone(),
+                                    device_id: dev,
                                     submission: sub,
                                 }),
                                 Err(e) => {
@@ -184,8 +185,6 @@ impl MessageSender {
                             settled.insert(user_id.clone(), vec![rejected(user_id, e.to_string())]);
                             continue;
                         }
-                        let self_dev = self.auth.device_id();
-                        let is_self = self_dev.is_some_and(|s| known.contains(&s));
                         target_users.push((user_id.clone(), is_self));
                         batch_submissions.extend(subs);
                     }
@@ -207,13 +206,11 @@ impl MessageSender {
 
                 let mut invalid_by_user: BTreeMap<String, Vec<String>> = BTreeMap::new();
                 for sub in &outcome.submitted {
-                    if sub.invalid_device
-                        && let Some(ref dev_id) = sub.result.device_id
-                    {
+                    if sub.status == DeviceSubmissionStatus::InvalidDevice {
                         invalid_by_user
-                            .entry(sub.result.user_id.clone())
+                            .entry(sub.user_id.clone())
                             .or_default()
-                            .push(dev_id.clone());
+                            .push(sub.device_id.clone());
                     }
                 }
                 for (u, invalid_devs) in invalid_by_user {
@@ -227,8 +224,9 @@ impl MessageSender {
                     let kept: Vec<SubmissionResult> = outcome
                         .submitted
                         .iter()
-                        .filter(|s| s.result.user_id == user_id && !s.invalid_device)
-                        .map(|s| s.result.clone())
+                        .filter(|s| s.user_id == user_id)
+                        .cloned()
+                        .filter_map(DeviceSubmissionOutcome::into_submission_result)
                         .collect();
 
                     if let Some(missing) = outcome.mismatches.get(&user_id).cloned() {
@@ -289,40 +287,39 @@ impl MessageSender {
 
         drop(guards);
 
-        let mut final_results = Vec::new();
-        for u in &users {
-            if let Some(res) = settled.remove(u) {
-                final_results.extend(res);
-            }
-        }
-        final_results
+        users
+            .iter()
+            .filter_map(|u| settled.remove(u))
+            .flatten()
+            .collect()
     }
 
-    async fn targets_of(&self, user_id: &str) -> Result<Vec<String>, ObscuraError> {
+    async fn targets_of(&self, user_id: &str) -> Result<(Vec<String>, bool), ObscuraError> {
         let uid = user_id.to_owned();
         let all = self
             .db
             .read(move |conn| device_store::devices_of(conn, &uid))
             .await?;
         let self_dev = self.auth.device_id();
-        Ok(all
+        let is_self = self_dev.as_ref().is_some_and(|s| all.contains(s));
+        let targets = all
             .into_iter()
             .filter(|d| self_dev.as_deref() != Some(d.as_str()))
-            .collect())
+            .collect();
+        Ok((targets, is_self))
     }
 
-    async fn session_targets(&self, user_id: &str) -> Result<Option<Vec<String>>, ObscuraError> {
-        let uid = user_id.to_owned();
-        let existing_devices = self
-            .db
-            .read(move |conn| device_store::devices_of(conn, &uid))
-            .await?;
-        if existing_devices.is_empty() {
+    async fn session_targets(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<(Vec<String>, bool)>, ObscuraError> {
+        let (existing_targets, is_self) = self.targets_of(user_id).await?;
+        if existing_targets.is_empty() && !is_self {
             let bundles = self.fetch_all(user_id).await?;
             self.establish(user_id, bundles).await?;
         }
 
-        let current_targets = self.targets_of(user_id).await?;
+        let (current_targets, _) = self.targets_of(user_id).await?;
         let mut missing_bundles = Vec::new();
         for dev in current_targets {
             if !self.messenger.has_session(&dev).await?
@@ -333,13 +330,13 @@ impl MessageSender {
         }
         self.establish(user_id, missing_bundles).await?;
 
-        let final_targets = self.targets_of(user_id).await?;
+        let (final_targets, is_self) = self.targets_of(user_id).await?;
         for dev in &final_targets {
             if !self.messenger.has_session(dev).await? {
                 return Ok(None);
             }
         }
-        Ok(Some(final_targets))
+        Ok(Some((final_targets, is_self)))
     }
 
     async fn fetch_all(&self, user_id: &str) -> Result<Vec<PeerBundle>, ObscuraError> {

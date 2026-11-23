@@ -120,16 +120,17 @@ impl TryFrom<PreKeyBundleJson> for PeerBundle {
 pub fn parse_peer_bundles(
     raw_bundles: Vec<PreKeyBundleJson>,
 ) -> Result<Vec<PeerBundle>, ObscuraError> {
-    let mut out = Vec::with_capacity(raw_bundles.len());
     let mut seen = HashSet::with_capacity(raw_bundles.len());
-    for raw in raw_bundles {
-        let b = PeerBundle::try_from(raw)?;
-        if !seen.insert(b.device_id.clone()) {
-            return Err(ObscuraError::protocol("Duplicate device in bundles"));
-        }
-        out.push(b);
-    }
-    Ok(out)
+    raw_bundles
+        .into_iter()
+        .map(|raw| {
+            let b = PeerBundle::try_from(raw)?;
+            if !seen.insert(b.device_id.clone()) {
+                return Err(ObscuraError::protocol("Duplicate device in bundles"));
+            }
+            Ok(b)
+        })
+        .collect()
 }
 
 pub fn require_consistent(bundles: &[PeerBundle]) -> Result<(), ObscuraError> {
@@ -170,18 +171,45 @@ pub fn require_consistent(bundles: &[PeerBundle]) -> Result<(), ObscuraError> {
 #[derive(Debug, Clone)]
 pub struct UserSubmission {
     pub user_id: String,
+    pub device_id: String,
     pub submission: send_message_request::Submission,
 }
 
-#[derive(Debug, Clone)]
-pub struct Submitted {
-    pub result: SubmissionResult,
-    pub invalid_device: bool,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeviceSubmissionStatus {
+    Accepted,
+    InvalidDevice,
+    Rejected(String),
+    Unknown(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceSubmissionOutcome {
+    pub user_id: String,
+    pub device_id: String,
+    pub status: DeviceSubmissionStatus,
+}
+
+impl DeviceSubmissionOutcome {
+    pub fn into_submission_result(self) -> Option<SubmissionResult> {
+        let (status, error) = match self.status {
+            DeviceSubmissionStatus::InvalidDevice => return None,
+            DeviceSubmissionStatus::Accepted => (SubmissionStatus::Accepted, None),
+            DeviceSubmissionStatus::Rejected(err) => (SubmissionStatus::Rejected, Some(err)),
+            DeviceSubmissionStatus::Unknown(err) => (SubmissionStatus::Unknown, Some(err)),
+        };
+        Some(SubmissionResult {
+            user_id: self.user_id,
+            device_id: Some(self.device_id),
+            status,
+            error,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct SubmitOutcome {
-    pub submitted: Vec<Submitted>,
+    pub submitted: Vec<DeviceSubmissionOutcome>,
     pub mismatches: HashMap<String, Vec<String>>,
 }
 
@@ -190,12 +218,8 @@ pub fn decode_submission_results(
     submissions: &[UserSubmission],
     response: &SendMessageResponse,
 ) -> Result<SubmitOutcome, ObscuraError> {
-    let mut targeted_devices = HashSet::new();
-    for s in submissions {
-        let dev_id = uuid_string(&s.submission.device_id)
-            .ok_or_else(|| ObscuraError::invalid_arg("Submission has invalid device ID"))?;
-        targeted_devices.insert(dev_id);
-    }
+    let targeted_devices: HashSet<&str> =
+        submissions.iter().map(|s| s.device_id.as_str()).collect();
 
     let mut invalid_devices = HashSet::new();
     for bytes in &response.invalid_device_ids {
@@ -204,7 +228,7 @@ pub fn decode_submission_results(
                 "Response contains unknown or duplicate invalid device IDs",
             ));
         };
-        if !targeted_devices.contains(&id) || !invalid_devices.insert(id) {
+        if !targeted_devices.contains(id.as_str()) || !invalid_devices.insert(id) {
             return Err(ObscuraError::protocol(
                 "Response contains unknown or duplicate invalid device IDs",
             ));
@@ -224,40 +248,34 @@ pub fn decode_submission_results(
                 "Response contains an inconsistent device mismatch",
             ));
         }
-        let mut missing = Vec::with_capacity(m.missing_device_ids.len());
-        for dev_bytes in &m.missing_device_ids {
-            let dev = uuid_string(dev_bytes)
-                .ok_or_else(|| ObscuraError::protocol("Response contains an invalid device ID"))?;
-            missing.push(dev);
-        }
+        let missing = m
+            .missing_device_ids
+            .iter()
+            .map(|dev_bytes| {
+                uuid_string(dev_bytes)
+                    .ok_or_else(|| ObscuraError::protocol("Response contains an invalid device ID"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         mismatches.insert(user, missing);
     }
 
-    let mut submitted = Vec::with_capacity(submissions.len());
-    for sub in submissions {
-        let device_id = uuid_string(&sub.submission.device_id)
-            .ok_or_else(|| ObscuraError::invalid_arg("Submission has invalid device ID"))?;
-        let is_invalid = invalid_devices.contains(&device_id);
-        let missing = mismatches.get(&sub.user_id);
-        let error = if is_invalid {
-            Some("Device not found".to_owned())
-        } else {
-            missing.map(|m| format!("Devices not covered: {m:?}"))
-        };
-        submitted.push(Submitted {
-            result: SubmissionResult {
+    let submitted = submissions
+        .iter()
+        .map(|sub| {
+            let status = if invalid_devices.contains(&sub.device_id) {
+                DeviceSubmissionStatus::InvalidDevice
+            } else if let Some(missing) = mismatches.get(&sub.user_id) {
+                DeviceSubmissionStatus::Rejected(format!("Devices not covered: {missing:?}"))
+            } else {
+                DeviceSubmissionStatus::Accepted
+            };
+            DeviceSubmissionOutcome {
                 user_id: sub.user_id.clone(),
-                device_id: Some(device_id),
-                status: if error.is_none() {
-                    SubmissionStatus::Accepted
-                } else {
-                    SubmissionStatus::Rejected
-                },
-                error,
-            },
-            invalid_device: is_invalid,
-        });
-    }
+                device_id: sub.device_id.clone(),
+                status,
+            }
+        })
+        .collect();
 
     Ok(SubmitOutcome {
         submitted,
@@ -403,15 +421,16 @@ impl Messenger {
                     .push(sub.submission.clone());
             }
             let mut seen_users = HashSet::new();
-            let mut recipients = Vec::new();
-            for uid in user_ids {
-                if seen_users.insert(uid.as_str()) {
-                    recipients.push(send_message_request::Recipient {
+            let recipients = user_ids
+                .iter()
+                .filter(|uid| seen_users.insert(uid.as_str()))
+                .map(|uid| {
+                    Ok(send_message_request::Recipient {
                         user_id: uuid_to_bytes(uid)?,
                         submissions: by_user.remove(uid.as_str()).unwrap_or_default(),
-                    });
-                }
-            }
+                    })
+                })
+                .collect::<Result<Vec<_>, ObscuraError>>()?;
             let req = SendMessageRequest { recipients };
             let resp_bytes = self.api.send_message(req.encode_to_vec()).await?;
             let resp = SendMessageResponse::decode(&resp_bytes[..])
@@ -433,21 +452,14 @@ impl Messenger {
                 let err_str = e.to_string();
                 let submitted = submissions
                     .iter()
-                    .map(|sub| {
-                        let dev_id = uuid_string(&sub.submission.device_id);
-                        Submitted {
-                            result: SubmissionResult {
-                                user_id: sub.user_id.clone(),
-                                device_id: dev_id,
-                                status: if definitive {
-                                    SubmissionStatus::Rejected
-                                } else {
-                                    SubmissionStatus::Unknown
-                                },
-                                error: Some(err_str.clone()),
-                            },
-                            invalid_device: false,
-                        }
+                    .map(|sub| DeviceSubmissionOutcome {
+                        user_id: sub.user_id.clone(),
+                        device_id: sub.device_id.clone(),
+                        status: if definitive {
+                            DeviceSubmissionStatus::Rejected(err_str.clone())
+                        } else {
+                            DeviceSubmissionStatus::Unknown(err_str.clone())
+                        },
                     })
                     .collect();
                 SubmitOutcome {
