@@ -11,10 +11,21 @@ pub const THROTTLE_MS: i64 = 2_000;
 
 pub type PeerTypingCallback = Arc<dyn Fn(&str, bool) + Send + Sync>;
 
+struct ActiveTyping {
+    user_id: String,
+    generation: u64,
+    expiry: JoinHandle<()>,
+}
+
+impl Drop for ActiveTyping {
+    fn drop(&mut self) {
+        self.expiry.abort();
+    }
+}
+
 struct Inner {
-    // context_id -> sender_device_id -> (sender_user_id, generation)
-    typing: HashMap<String, HashMap<String, (String, u64)>>,
-    expiries: HashMap<(String, String), (u64, JoinHandle<()>)>,
+    // context_id -> sender_device_id -> ActiveTyping
+    typing: HashMap<String, HashMap<String, ActiveTyping>>,
     last_sent: HashMap<(String, TypingState), i64>,
     // peer_user_id -> (context_id, last_emitted_typing)
     observed_peers: BTreeMap<String, (String, bool)>,
@@ -47,7 +58,6 @@ impl TypingTracker {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 typing: HashMap::new(),
-                expiries: HashMap::new(),
                 last_sent: HashMap::new(),
                 observed_peers: BTreeMap::new(),
                 next_generation: 0,
@@ -74,28 +84,26 @@ impl TypingTracker {
             let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
             inner.next_generation += 1;
             let generation = inner.next_generation;
-            let key = (context_id.to_owned(), sender_device_id.to_owned());
-            if let Some((_, old_handle)) = inner.expiries.remove(&key) {
-                old_handle.abort();
-            }
+            let tracker = self.clone();
+            let ctx = context_id.to_owned();
+            let dev = sender_device_id.to_owned();
+            let delay_ms = self.expire_ms;
+            let expiry = crate::runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                tracker.expire_device(&ctx, &dev, generation);
+            });
             inner
                 .typing
                 .entry(context_id.to_owned())
                 .or_default()
                 .insert(
                     sender_device_id.to_owned(),
-                    (sender_user_id.to_owned(), generation),
+                    ActiveTyping {
+                        user_id: sender_user_id.to_owned(),
+                        generation,
+                        expiry,
+                    },
                 );
-
-            let tracker = self.clone();
-            let ctx = context_id.to_owned();
-            let dev = sender_device_id.to_owned();
-            let delay_ms = self.expire_ms;
-            let handle = crate::runtime::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                tracker.expire_device(&ctx, &dev, generation);
-            });
-            inner.expiries.insert(key, (generation, handle));
             collect_notifications(&mut inner, context_id)
         };
         dispatch_notifications(notifications);
@@ -104,10 +112,6 @@ impl TypingTracker {
     pub fn stopped(&self, context_id: &str, sender_device_id: &str) {
         let notifications = {
             let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            let key = (context_id.to_owned(), sender_device_id.to_owned());
-            if let Some((_, old_handle)) = inner.expiries.remove(&key) {
-                old_handle.abort();
-            }
             remove_device(&mut inner, context_id, sender_device_id);
             collect_notifications(&mut inner, context_id)
         };
@@ -117,11 +121,14 @@ impl TypingTracker {
     fn expire_device(&self, context_id: &str, sender_device_id: &str, generation: u64) {
         let notifications = {
             let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            let key = (context_id.to_owned(), sender_device_id.to_owned());
-            if inner.expiries.get(&key).map(|(g, _)| *g) != Some(generation) {
+            let is_current = inner
+                .typing
+                .get(context_id)
+                .and_then(|devs| devs.get(sender_device_id))
+                .is_some_and(|t| t.generation == generation);
+            if !is_current {
                 return;
             }
-            inner.expiries.remove(&key);
             remove_device(&mut inner, context_id, sender_device_id);
             collect_notifications(&mut inner, context_id)
         };
@@ -136,9 +143,7 @@ impl TypingTracker {
     pub fn observe_peer(&self, peer_user_id: &str, context_id: &str) {
         let notification = {
             let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            let is_typing = active_users_locked(&inner, context_id)
-                .iter()
-                .any(|u| u == peer_user_id);
+            let is_typing = is_user_typing(&inner, context_id, peer_user_id);
             inner
                 .observed_peers
                 .insert(peer_user_id.to_owned(), (context_id.to_owned(), is_typing));
@@ -159,20 +164,24 @@ impl TypingTracker {
 
     pub fn clear(&self) {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        for (_, (_, handle)) in inner.expiries.drain() {
-            handle.abort();
-        }
         inner.typing.clear();
         inner.last_sent.clear();
         inner.observed_peers.clear();
     }
 }
 
+fn is_user_typing(inner: &Inner, context_id: &str, user_id: &str) -> bool {
+    inner
+        .typing
+        .get(context_id)
+        .is_some_and(|devices| devices.values().any(|t| t.user_id == user_id))
+}
+
 fn active_users_locked(inner: &Inner, context_id: &str) -> Vec<String> {
     let Some(devices) = inner.typing.get(context_id) else {
         return Vec::new();
     };
-    let mut users: Vec<String> = devices.values().map(|(u, _)| u.clone()).collect();
+    let mut users: Vec<String> = devices.values().map(|t| t.user_id.clone()).collect();
     users.sort();
     users.dedup();
     users
@@ -194,11 +203,12 @@ fn collect_notifications(
     let Some(cb) = inner.on_peer_typing_changed.clone() else {
         return Vec::new();
     };
-    let active = active_users_locked(inner, context_id);
+    let devices = inner.typing.get(context_id);
     let mut out = Vec::new();
     for (peer_user_id, (obs_ctx, last_state)) in inner.observed_peers.iter_mut() {
         if obs_ctx == context_id {
-            let now_typing = active.iter().any(|u| u == peer_user_id);
+            let now_typing =
+                devices.is_some_and(|devs| devs.values().any(|t| &t.user_id == peer_user_id));
             if *last_state != now_typing {
                 *last_state = now_typing;
                 out.push((cb.clone(), peer_user_id.clone(), now_typing));

@@ -49,6 +49,23 @@ pub enum TypingState {
     Stopped,
 }
 
+impl TypingState {
+    pub fn from_proto(raw: i32) -> Option<Self> {
+        match client::TypingState::try_from(raw) {
+            Ok(client::TypingState::Started) => Some(TypingState::Started),
+            Ok(client::TypingState::Stopped) => Some(TypingState::Stopped),
+            Ok(client::TypingState::Unspecified) | Err(_) => None,
+        }
+    }
+
+    pub fn to_proto(self) -> i32 {
+        match self {
+            TypingState::Started => client::TypingState::Started as i32,
+            TypingState::Stopped => client::TypingState::Stopped as i32,
+        }
+    }
+}
+
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaType {
     Photo,
@@ -149,6 +166,38 @@ pub struct Friend {
     pub user_id: String,
     pub username: String,
     pub status: FriendStatus,
+}
+
+impl Friend {
+    pub fn to_proto(&self) -> client::FriendRecord {
+        let status = match self.status {
+            FriendStatus::PendingSent => client::FriendStatus::PendingSent as i32,
+            FriendStatus::PendingReceived => client::FriendStatus::PendingReceived as i32,
+            FriendStatus::Accepted => client::FriendStatus::Accepted as i32,
+        };
+        client::FriendRecord {
+            user_id: self.user_id.clone(),
+            username: self.username.clone(),
+            status,
+        }
+    }
+
+    pub fn from_proto(record: &client::FriendRecord) -> Option<Self> {
+        if record.user_id.trim().is_empty() {
+            return None;
+        }
+        let status = match client::FriendStatus::try_from(record.status) {
+            Ok(client::FriendStatus::PendingSent) => FriendStatus::PendingSent,
+            Ok(client::FriendStatus::PendingReceived) => FriendStatus::PendingReceived,
+            Ok(client::FriendStatus::Accepted) => FriendStatus::Accepted,
+            Ok(client::FriendStatus::Unspecified) | Err(_) => return None,
+        };
+        Some(Friend {
+            user_id: record.user_id.clone(),
+            username: record.username.clone(),
+            status,
+        })
+    }
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
@@ -571,15 +620,27 @@ fn extract_port(authority: &str) -> Option<&str> {
     }
 }
 
-#[derive(uniffi::Object, Debug, Clone)]
+#[derive(uniffi::Object, Clone)]
 pub struct LinkRequest {
     pub(crate) code: String,
     pub(crate) session_id: String,
     pub(crate) user_id: String,
     pub(crate) expires_at: i64,
-    pub(crate) ephemeral_private_key: Vec<u8>,
+    pub(crate) ephemeral_private_key: libsignal_protocol::PrivateKey,
     pub(crate) username: String,
     pub(crate) device_name: String,
+}
+
+impl std::fmt::Debug for LinkRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LinkRequest")
+            .field("session_id", &self.session_id)
+            .field("user_id", &self.user_id)
+            .field("expires_at", &self.expires_at)
+            .field("username", &self.username)
+            .field("device_name", &self.device_name)
+            .finish_non_exhaustive()
+    }
 }
 
 #[uniffi::export]

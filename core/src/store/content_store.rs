@@ -53,19 +53,12 @@ pub fn contains_envelope(conn: &Connection, envelope_id: &str) -> Result<bool, O
 }
 
 pub fn record_envelope(conn: &Connection, envelope_id: &str) -> Result<bool, ObscuraError> {
-    if contains_envelope(conn, envelope_id)? {
-        return Ok(false);
-    }
     conn.execute(
         "INSERT OR IGNORE INTO processed_envelopes (envelope_id) VALUES (?1)",
         params![envelope_id],
-    )?;
-    if !contains_envelope(conn, envelope_id)? {
-        return Err(ObscuraError::storage(format!(
-            "processed envelope {envelope_id} is absent after insert"
-        )));
-    }
-    Ok(true)
+    )
+    .map(|rows| rows > 0)
+    .map_err(ObscuraError::from)
 }
 
 pub fn get_pending_friend_reply(

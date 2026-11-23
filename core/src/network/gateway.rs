@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -22,13 +23,17 @@ pub type LogFn = Arc<dyn Fn(String) + Send + Sync>;
 struct PendingAttempt {
     id: u64,
     tx: watch::Sender<Option<Result<(), ObscuraError>>>,
-    rx: watch::Receiver<Option<Result<(), ObscuraError>>>,
+    opened_early: AtomicBool,
 }
 
 impl PendingAttempt {
     fn new(id: u64) -> Self {
-        let (tx, rx) = watch::channel(None);
-        Self { id, tx, rx }
+        let (tx, _) = watch::channel(None);
+        Self {
+            id,
+            tx,
+            opened_early: AtomicBool::new(false),
+        }
     }
 
     fn complete(&self, res: Result<(), ObscuraError>) {
@@ -36,13 +41,72 @@ impl PendingAttempt {
     }
 }
 
+enum ReconnectStep {
+    Backoff(JoinHandle<()>),
+    Opening {
+        attempt: Arc<PendingAttempt>,
+        socket: Option<Arc<dyn WebSocketHandle>>,
+    },
+}
+
+enum GatewayPhase {
+    Disconnected,
+    Connecting {
+        attempt: Arc<PendingAttempt>,
+        socket: Option<Arc<dyn WebSocketHandle>>,
+    },
+    Connected {
+        socket: Arc<dyn WebSocketHandle>,
+    },
+    Reconnecting(ReconnectStep),
+}
+
+impl GatewayPhase {
+    fn connection_state(&self) -> ConnectionState {
+        match self {
+            GatewayPhase::Disconnected => ConnectionState::Disconnected,
+            GatewayPhase::Connecting { .. } => ConnectionState::Connecting,
+            GatewayPhase::Connected { .. } => ConnectionState::Connected,
+            GatewayPhase::Reconnecting(_) => ConnectionState::Reconnecting,
+        }
+    }
+
+    fn pending_attempt(&self) -> Option<&Arc<PendingAttempt>> {
+        match self {
+            GatewayPhase::Connecting { attempt, .. }
+            | GatewayPhase::Reconnecting(ReconnectStep::Opening { attempt, .. }) => Some(attempt),
+            GatewayPhase::Disconnected
+            | GatewayPhase::Connected { .. }
+            | GatewayPhase::Reconnecting(ReconnectStep::Backoff(_)) => None,
+        }
+    }
+
+    fn socket(&self) -> Option<Arc<dyn WebSocketHandle>> {
+        match self {
+            GatewayPhase::Connected { socket } => Some(Arc::clone(socket)),
+            GatewayPhase::Connecting { socket, .. }
+            | GatewayPhase::Reconnecting(ReconnectStep::Opening { socket, .. }) => socket.clone(),
+            GatewayPhase::Disconnected | GatewayPhase::Reconnecting(ReconnectStep::Backoff(_)) => {
+                None
+            }
+        }
+    }
+
+    fn take_opening_socket(&mut self) -> Option<Arc<dyn WebSocketHandle>> {
+        match self {
+            GatewayPhase::Connecting { socket, .. }
+            | GatewayPhase::Reconnecting(ReconnectStep::Opening { socket, .. }) => socket.take(),
+            GatewayPhase::Disconnected
+            | GatewayPhase::Connected { .. }
+            | GatewayPhase::Reconnecting(ReconnectStep::Backoff(_)) => None,
+        }
+    }
+}
+
 struct State {
-    connection_state: ConnectionState,
-    socket: Option<Arc<dyn WebSocketHandle>>,
+    phase: GatewayPhase,
     generation: u64,
     next_attempt_id: u64,
-    pending: Option<Arc<PendingAttempt>>,
-    reconnect_job: Option<JoinHandle<()>>,
     reconnect_attempts: u32,
     envelopes: VecDeque<Envelope>,
 }
@@ -79,12 +143,9 @@ impl Gateway {
                 log,
                 envelope_notify: Arc::new(Notify::new()),
                 state: Mutex::new(State {
-                    connection_state: ConnectionState::Disconnected,
-                    socket: None,
+                    phase: GatewayPhase::Disconnected,
                     generation: 0,
                     next_attempt_id: 0,
-                    pending: None,
-                    reconnect_job: None,
                     reconnect_attempts: 0,
                     envelopes: VecDeque::new(),
                 }),
@@ -110,7 +171,8 @@ impl Gateway {
             .state
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .connection_state
+            .phase
+            .connection_state()
     }
 
     pub async fn connect(&self) -> Result<(), ObscuraError> {
@@ -124,7 +186,7 @@ impl Gateway {
     pub fn ack(&self, envelope_id: Vec<u8>) -> Result<(), ObscuraError> {
         let socket = {
             let st = self.inner.state.lock().unwrap_or_else(|p| p.into_inner());
-            st.socket.clone()
+            st.phase.socket()
         }
         .ok_or_else(|| ObscuraError::connection("Not connected"))?;
 
@@ -141,19 +203,24 @@ impl GatewayInner {
     async fn connect(self: &Arc<Self>) -> Result<(), ObscuraError> {
         let (attempt, owner, state_change) = {
             let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            if st.connection_state == ConnectionState::Connected {
+            if matches!(st.phase, GatewayPhase::Connected { .. }) {
                 return Ok(());
             }
-            if let Some(ref existing) = st.pending {
+            if let Some(existing) = st.phase.pending_attempt() {
                 (Arc::clone(existing), false, None)
             } else {
                 st.next_attempt_id += 1;
                 let attempt = Arc::new(PendingAttempt::new(st.next_attempt_id));
-                st.pending = Some(Arc::clone(&attempt));
-                if let Some(job) = st.reconnect_job.take() {
+                if let GatewayPhase::Reconnecting(ReconnectStep::Backoff(ref job)) = st.phase {
                     job.abort();
                 }
-                let change = set_state(&mut st, ConnectionState::Connecting);
+                let change = transition(
+                    &mut st,
+                    GatewayPhase::Connecting {
+                        attempt: Arc::clone(&attempt),
+                        socket: None,
+                    },
+                );
                 (attempt, true, change)
             }
         };
@@ -162,14 +229,20 @@ impl GatewayInner {
         }
 
         if owner && let Err(e) = self.open_attempt(&attempt).await {
-            let state_change = {
+            let (closing, state_change) = {
                 let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                if abandon_locked(&mut st, &attempt) {
-                    set_state(&mut st, ConnectionState::Disconnected)
+                if st.phase.pending_attempt().map(|p| p.id) == Some(attempt.id) {
+                    st.generation += 1;
+                    let sock = st.phase.take_opening_socket();
+                    let change = transition(&mut st, GatewayPhase::Disconnected);
+                    (sock, change)
                 } else {
-                    None
+                    (None, None)
                 }
             };
+            if let Some(sock) = closing {
+                sock.close_socket();
+            }
             if let Some(new_state) = state_change {
                 (self.on_state_changed)(new_state);
             }
@@ -183,14 +256,26 @@ impl GatewayInner {
         let (closing, attempt, state_change) = {
             let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
             st.generation += 1;
-            if let Some(job) = st.reconnect_job.take() {
-                job.abort();
-            }
             st.reconnect_attempts = 0;
             st.envelopes.clear();
-            let change = set_state(&mut st, ConnectionState::Disconnected);
-            let socket = st.socket.take();
-            let pending = st.pending.take();
+            let prev_state = st.phase.connection_state();
+            let (socket, pending, job) =
+                match std::mem::replace(&mut st.phase, GatewayPhase::Disconnected) {
+                    GatewayPhase::Disconnected => (None, None, None),
+                    GatewayPhase::Connecting { attempt, socket }
+                    | GatewayPhase::Reconnecting(ReconnectStep::Opening { attempt, socket }) => {
+                        (socket, Some(attempt), None)
+                    }
+                    GatewayPhase::Connected { socket } => (Some(socket), None, None),
+                    GatewayPhase::Reconnecting(ReconnectStep::Backoff(job)) => {
+                        (None, None, Some(job))
+                    }
+                };
+            if let Some(j) = job {
+                j.abort();
+            }
+            let change = (prev_state != ConnectionState::Disconnected)
+                .then_some(ConnectionState::Disconnected);
             (socket, pending, change)
         };
         if let Some(att) = attempt {
@@ -215,7 +300,7 @@ impl GatewayInner {
 
             let generation = {
                 let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                if st.pending.as_ref().map(|p| p.id) != Some(attempt.id) {
+                if st.phase.pending_attempt().map(|p| p.id) != Some(attempt.id) {
                     return Err(ObscuraError::connection("Disconnected"));
                 }
                 st.generation += 1;
@@ -225,24 +310,36 @@ impl GatewayInner {
             let sink = Arc::new(WebSocketSink::new(Arc::downgrade(self), generation));
             let handle = self.transport.open_websocket(url, sink)?;
 
-            let stale_handle = {
+            let (stale_handle, early_open_change) = {
                 let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
                 if st.generation != generation
-                    || st.pending.as_ref().map(|p| p.id) != Some(attempt.id)
+                    || st.phase.pending_attempt().map(|p| p.id) != Some(attempt.id)
                 {
-                    if st.connection_state == ConnectionState::Connected {
-                        None
-                    } else {
-                        Some(handle)
-                    }
+                    (Some(handle), None)
+                } else if attempt.opened_early.load(Ordering::SeqCst) {
+                    st.reconnect_attempts = 0;
+                    let change = transition(&mut st, GatewayPhase::Connected { socket: handle });
+                    (None, Some(change))
                 } else {
-                    st.socket = Some(handle);
-                    None
+                    match &mut st.phase {
+                        GatewayPhase::Connecting { socket, .. }
+                        | GatewayPhase::Reconnecting(ReconnectStep::Opening { socket, .. }) => {
+                            *socket = Some(handle);
+                        }
+                        _ => {}
+                    }
+                    (None, None)
                 }
             };
             if let Some(h) = stale_handle {
                 h.close_socket();
                 return Err(ObscuraError::connection("Disconnected"));
+            }
+            if let Some(change) = early_open_change {
+                if let Some(new_state) = change {
+                    (self.on_state_changed)(new_state);
+                }
+                attempt.complete(Ok(()));
             }
 
             await_attempt(attempt).await
@@ -261,17 +358,25 @@ impl GatewayInner {
             if st.generation != generation {
                 return;
             }
+            let (att, sock) = match &mut st.phase {
+                GatewayPhase::Connecting { attempt, socket }
+                | GatewayPhase::Reconnecting(ReconnectStep::Opening { attempt, socket }) => {
+                    (Arc::clone(attempt), socket.take())
+                }
+                _ => return,
+            };
+            let Some(socket) = sock else {
+                att.opened_early.store(true, Ordering::SeqCst);
+                return;
+            };
             st.reconnect_attempts = 0;
-            let att = st.pending.take();
-            let change = set_state(&mut st, ConnectionState::Connected);
+            let change = transition(&mut st, GatewayPhase::Connected { socket });
             (att, change)
         };
         if let Some(new_state) = state_change {
             (self.on_state_changed)(new_state);
         }
-        if let Some(att) = attempt {
-            att.complete(Ok(()));
-        }
+        attempt.complete(Ok(()));
     }
 
     pub(crate) fn on_binary(self: &Arc<Self>, generation: u64, bytes: Vec<u8>) {
@@ -349,10 +454,15 @@ impl GatewayInner {
                 return;
             }
             st.generation += 1;
-            let sock = st.socket.take();
-            let was_open = st.connection_state == ConnectionState::Connected;
-            let att = st.pending.clone();
-            (was_open, sock, att)
+            match &mut st.phase {
+                GatewayPhase::Connected { socket } => (true, Some(Arc::clone(socket)), None),
+                GatewayPhase::Connecting { attempt, socket }
+                | GatewayPhase::Reconnecting(ReconnectStep::Opening { attempt, socket }) => {
+                    (false, socket.take(), Some(Arc::clone(attempt)))
+                }
+                GatewayPhase::Disconnected
+                | GatewayPhase::Reconnecting(ReconnectStep::Backoff(_)) => (false, None, None),
+            }
         };
         if close_socket && let Some(sock) = old_socket {
             sock.close_socket();
@@ -375,28 +485,43 @@ impl GatewayInner {
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                 let attempt = {
                     let mut st = gw.state.lock().unwrap_or_else(|p| p.into_inner());
-                    if st.pending.is_some() || st.connection_state == ConnectionState::Disconnected
-                    {
+                    if !matches!(
+                        st.phase,
+                        GatewayPhase::Reconnecting(ReconnectStep::Backoff(_))
+                    ) {
                         return;
                     }
                     st.next_attempt_id += 1;
                     let att = Arc::new(PendingAttempt::new(st.next_attempt_id));
-                    st.pending = Some(Arc::clone(&att));
+                    st.phase = GatewayPhase::Reconnecting(ReconnectStep::Opening {
+                        attempt: Arc::clone(&att),
+                        socket: None,
+                    });
                     att
                 };
                 if let Err(e) = gw.open_attempt(&attempt).await {
                     (gw.log)(format!("GATEWAY reconnect failed: {e}"));
-                    let should_reschedule = {
+                    let (closing, should_reschedule) = {
                         let mut st = gw.state.lock().unwrap_or_else(|p| p.into_inner());
-                        abandon_locked(&mut st, &attempt)
+                        if st.phase.pending_attempt().map(|p| p.id) == Some(attempt.id) {
+                            st.generation += 1;
+                            (st.phase.take_opening_socket(), true)
+                        } else {
+                            (None, false)
+                        }
                     };
+                    if let Some(sock) = closing {
+                        sock.close_socket();
+                    }
                     if should_reschedule {
                         gw.schedule_reconnect();
                     }
                 }
             });
-            st.reconnect_job = Some(job);
-            set_state(&mut st, ConnectionState::Reconnecting)
+            transition(
+                &mut st,
+                GatewayPhase::Reconnecting(ReconnectStep::Backoff(job)),
+            )
         };
         if let Some(new_state) = state_change {
             (self.on_state_changed)(new_state);
@@ -412,29 +537,15 @@ impl GatewayInner {
     }
 }
 
-fn abandon_locked(st: &mut State, attempt: &Arc<PendingAttempt>) -> bool {
-    if st.pending.as_ref().map(|p| p.id) != Some(attempt.id) {
-        return false;
-    }
-    st.pending = None;
-    st.generation += 1;
-    if let Some(sock) = st.socket.take() {
-        sock.close_socket();
-    }
-    true
-}
-
-fn set_state(st: &mut State, next: ConnectionState) -> Option<ConnectionState> {
-    if st.connection_state != next {
-        st.connection_state = next;
-        Some(next)
-    } else {
-        None
-    }
+fn transition(st: &mut State, next: GatewayPhase) -> Option<ConnectionState> {
+    let prev_state = st.phase.connection_state();
+    let next_state = next.connection_state();
+    st.phase = next;
+    (prev_state != next_state).then_some(next_state)
 }
 
 async fn await_attempt(attempt: &PendingAttempt) -> Result<(), ObscuraError> {
-    let mut rx = attempt.rx.clone();
+    let mut rx = attempt.tx.subscribe();
     loop {
         if let Some(res) = rx.borrow().clone() {
             return res;

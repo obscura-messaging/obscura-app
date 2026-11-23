@@ -1,5 +1,5 @@
 use crate::proto::client::{self, client_message::Payload};
-use crate::types::{Friend, FriendStatus, TypingState};
+use crate::types::{Friend, TypingState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PayloadDisposition {
@@ -40,46 +40,17 @@ pub fn kind(payload: Option<&Payload>) -> &'static str {
 }
 
 pub fn decode_typing_state(raw: i32) -> Option<TypingState> {
-    match client::TypingState::try_from(raw) {
-        Ok(client::TypingState::Started) => Some(TypingState::Started),
-        Ok(client::TypingState::Stopped) => Some(TypingState::Stopped),
-        Ok(client::TypingState::Unspecified) | Err(_) => None,
-    }
+    TypingState::from_proto(raw)
 }
 
 pub fn encode_typing_state(state: TypingState) -> i32 {
-    match state {
-        TypingState::Started => client::TypingState::Started as i32,
-        TypingState::Stopped => client::TypingState::Stopped as i32,
-    }
+    state.to_proto()
 }
 
 pub fn encode_friend(friend: &Friend) -> client::FriendRecord {
-    let status = match friend.status {
-        FriendStatus::PendingSent => client::FriendStatus::PendingSent as i32,
-        FriendStatus::PendingReceived => client::FriendStatus::PendingReceived as i32,
-        FriendStatus::Accepted => client::FriendStatus::Accepted as i32,
-    };
-    client::FriendRecord {
-        user_id: friend.user_id.clone(),
-        username: friend.username.clone(),
-        status,
-    }
+    friend.to_proto()
 }
 
 pub fn decode_friend(record: &client::FriendRecord) -> Option<Friend> {
-    if record.user_id.trim().is_empty() {
-        return None;
-    }
-    let status = match client::FriendStatus::try_from(record.status) {
-        Ok(client::FriendStatus::PendingSent) => FriendStatus::PendingSent,
-        Ok(client::FriendStatus::PendingReceived) => FriendStatus::PendingReceived,
-        Ok(client::FriendStatus::Accepted) => FriendStatus::Accepted,
-        Ok(client::FriendStatus::Unspecified) | Err(_) => return None,
-    };
-    Some(Friend {
-        user_id: record.user_id.clone(),
-        username: record.username.clone(),
-        status,
-    })
+    Friend::from_proto(record)
 }
