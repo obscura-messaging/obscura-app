@@ -26,7 +26,7 @@ defaults:
 jobs:
   build:
     name: Build
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 90
     environment: ios-${{ inputs.env }}
     outputs:
@@ -177,7 +177,7 @@ jobs:
   distribute:
     name: Upload
     needs: build
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 45
     environment: ios-${{ inputs.env }}
     env:

@@ -163,7 +163,7 @@ jobs:
     name: iOS
     needs: changes
     if: needs.changes.outputs.ios == 'true'
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 45
     steps:
       - name: Checkout
