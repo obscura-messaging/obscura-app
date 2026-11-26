@@ -36,8 +36,11 @@ impl PendingAttempt {
         }
     }
 
+    /// Stores the outcome even when no one is awaiting yet: `await_attempt`
+    /// subscribes lazily, and `watch::Sender::send` drops the value when there
+    /// are no receivers.
     fn complete(&self, res: Result<(), ObscuraError>) {
-        let _ = self.tx.send(Some(res));
+        self.tx.send_replace(Some(res));
     }
 }
 
