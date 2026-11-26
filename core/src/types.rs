@@ -629,6 +629,7 @@ pub struct LinkRequest {
     pub(crate) ephemeral_private_key: libsignal_protocol::PrivateKey,
     pub(crate) username: String,
     pub(crate) device_name: String,
+    pub(crate) ticket: crate::client::LinkTicket,
 }
 
 impl std::fmt::Debug for LinkRequest {

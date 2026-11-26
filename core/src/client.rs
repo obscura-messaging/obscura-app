@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -65,41 +65,90 @@ impl AttachmentUpload {
     }
 }
 
+/// Identifies one `begin_link` request. Its token is minted when the request is,
+/// so a `cancel_link` that lands before `complete_link` starts still cancels it.
+#[derive(Clone)]
+pub(crate) struct LinkTicket {
+    id: u64,
+    token: CancellationToken,
+}
+
 #[derive(Default)]
 enum LinkPhase {
     #[default]
     Idle,
-    InFlight(CancellationToken),
+    /// The newest request, not being completed right now.
+    Requested(LinkTicket),
+    /// The newest request, inside `complete_link`.
+    InFlight(LinkTicket),
 }
 
 #[derive(Default)]
 struct LinkCoordinator {
     phase: Mutex<LinkPhase>,
+    next_id: AtomicU64,
     done_notify: Notify,
 }
 
 impl LinkCoordinator {
-    fn begin(&self) -> CancellationToken {
-        let token = CancellationToken::new();
-        let mut phase = self.phase.lock().unwrap_or_else(|p| p.into_inner());
-        if let LinkPhase::InFlight(prev) =
-            std::mem::replace(&mut *phase, LinkPhase::InFlight(token.clone()))
-        {
-            prev.cancel();
-        }
-        token
+    fn lock(&self) -> std::sync::MutexGuard<'_, LinkPhase> {
+        self.phase.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn finish(&self) {
-        *self.phase.lock().unwrap_or_else(|p| p.into_inner()) = LinkPhase::Idle;
+    /// Registers a new request, superseding (cancelling) any earlier one.
+    fn request(&self) -> LinkTicket {
+        let ticket = LinkTicket {
+            id: self.next_id.fetch_add(1, Ordering::Relaxed),
+            token: CancellationToken::new(),
+        };
+        match std::mem::replace(&mut *self.lock(), LinkPhase::Requested(ticket.clone())) {
+            LinkPhase::Requested(prev) | LinkPhase::InFlight(prev) => prev.token.cancel(),
+            LinkPhase::Idle => {}
+        }
+        ticket
+    }
+
+    /// Marks `ticket` in flight, unless it was cancelled, superseded, or is
+    /// already being completed.
+    fn start(&self, ticket: &LinkTicket) -> Result<(), ObscuraError> {
+        let mut phase = self.lock();
+        match &*phase {
+            LinkPhase::Requested(t) if t.id == ticket.id && !t.token.is_cancelled() => {
+                *phase = LinkPhase::InFlight(ticket.clone());
+                Ok(())
+            }
+            LinkPhase::InFlight(t) if t.id == ticket.id => {
+                Err(ObscuraError::link_failed("Link already in progress"))
+            }
+            _ => Err(ObscuraError::link_failed("Link cancelled")),
+        }
+    }
+
+    /// Ends `ticket`'s completion attempt. An uncancelled request stays
+    /// requested so `complete_link` can be retried after a transient error.
+    fn finish(&self, ticket: &LinkTicket) {
+        {
+            let mut phase = self.lock();
+            if matches!(&*phase, LinkPhase::InFlight(t) if t.id == ticket.id) {
+                *phase = if ticket.token.is_cancelled() {
+                    LinkPhase::Idle
+                } else {
+                    LinkPhase::Requested(ticket.clone())
+                };
+            }
+        }
         self.done_notify.notify_waiters();
     }
 
     fn cancel_now(&self) {
-        if let LinkPhase::InFlight(ref token) =
-            *self.phase.lock().unwrap_or_else(|p| p.into_inner())
-        {
-            token.cancel();
+        let mut phase = self.lock();
+        match &*phase {
+            LinkPhase::Requested(t) => {
+                t.token.cancel();
+                *phase = LinkPhase::Idle;
+            }
+            LinkPhase::InFlight(t) => t.token.cancel(),
+            LinkPhase::Idle => {}
         }
     }
 
@@ -107,10 +156,7 @@ impl LinkCoordinator {
         self.cancel_now();
         loop {
             let notified = self.done_notify.notified();
-            if matches!(
-                *self.phase.lock().unwrap_or_else(|p| p.into_inner()),
-                LinkPhase::Idle
-            ) {
+            if !matches!(&*self.lock(), LinkPhase::InFlight(_)) {
                 break;
             }
             notified.await;
@@ -326,13 +372,15 @@ impl ObscuraClient {
             ephemeral_private_key: ephemeral.private_key,
             username,
             device_name,
+            ticket: self.link_coordinator.request(),
         }))
     }
 
     pub async fn complete_link(&self, request: Arc<LinkRequest>) -> Result<(), ObscuraError> {
-        let token = self.link_coordinator.begin();
-        let res = self.complete_link_inner(&request, &token).await;
-        self.link_coordinator.finish();
+        let ticket = &request.ticket;
+        self.link_coordinator.start(ticket)?;
+        let res = self.complete_link_inner(&request, &ticket.token).await;
+        self.link_coordinator.finish(ticket);
         res
     }
 

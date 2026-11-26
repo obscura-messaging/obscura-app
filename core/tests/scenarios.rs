@@ -154,6 +154,9 @@ struct FakeServerState {
     fail_send_messages: bool,
     reject_refresh: bool,
     malformed_reset_response: bool,
+    /// Fire `on_open` inside `open_websocket`, before it returns, as a
+    /// platform socket may.
+    open_synchronously: bool,
 }
 
 #[derive(Clone, Default)]
@@ -746,8 +749,9 @@ impl Transport for FakeServerTransport {
             .map(|(_, v)| v.into_owned())
             .ok_or_else(|| ObscuraError::connection("Missing ticket"))?;
 
-        let (device_id, queued) = {
+        let (device_id, queued, open_synchronously) = {
             let mut st = self.state.lock().unwrap();
+            let open_synchronously = st.open_synchronously;
             let dev_id = st
                 .tickets
                 .remove(&ticket)
@@ -757,9 +761,12 @@ impl Transport for FakeServerTransport {
                 .get_mut(&dev_id)
                 .ok_or_else(|| ObscuraError::connection("Unknown device"))?;
             dev.ws_sink = Some(Arc::clone(&sink));
-            (dev_id, dev.mailbox.clone())
+            (dev_id, dev.mailbox.clone(), open_synchronously)
         };
 
+        if open_synchronously {
+            sink.on_open();
+        }
         let sink_clone = Arc::clone(&sink);
         obscura_core::runtime::spawn(async move {
             sink_clone.on_open();
@@ -895,6 +902,26 @@ async fn wait_until(mut cond: impl FnMut() -> bool) {
 }
 
 #[tokio::test]
+async fn connect_completes_when_socket_opens_before_open_websocket_returns() {
+    let server = FakeServerTransport::default();
+    server.state.lock().unwrap().open_synchronously = true;
+    let alice = make_client(&server, "Alice Phone", None);
+    alice
+        .client
+        .register("alice".to_owned(), "secret123".to_owned())
+        .await
+        .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(5), alice.client.connect())
+        .await
+        .expect("connect must not miss an open that lands before it subscribes")
+        .unwrap();
+    assert_eq!(alice.client.connection_state(), ConnectionState::Connected);
+
+    alice.client.shutdown().await;
+}
+
+#[tokio::test]
 async fn registration_login_linking_history_sync_and_cancel_link() {
     let server = FakeServerTransport::default();
     let temp = tempfile::tempdir().unwrap();
@@ -1011,6 +1038,25 @@ async fn registration_login_linking_history_sync_and_cancel_link() {
     alice_ipad.client.cancel_link().await;
     let cancel_res = link_task.await.unwrap();
     assert!(matches!(cancel_res, Err(ObscuraError::LinkFailed { .. })));
+
+    // A cancel that lands before complete_link starts still cancels the request.
+    let req_cancelled_early = alice_ipad
+        .client
+        .begin_link(
+            "alice".to_owned(),
+            "secret123".to_owned(),
+            "Alice iPad".to_owned(),
+        )
+        .await
+        .unwrap();
+    alice_ipad.client.cancel_link().await;
+    let early_res = tokio::time::timeout(
+        Duration::from_secs(5),
+        alice_ipad.client.complete_link(req_cancelled_early),
+    )
+    .await
+    .expect("complete_link on a cancelled request must not wait for approval");
+    assert!(matches!(early_res, Err(ObscuraError::LinkFailed { .. })));
 
     // 5. Link Alice iPad with approval from Alice Phone
     let link_req = alice_ipad
